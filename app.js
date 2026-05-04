@@ -19,6 +19,15 @@ const ALL_BRANDS_ID = "all-brands";
 const LAUNCH_MODE = true;
 const launchModuleKeys = ["dashboard", "work-orders", "team", "notifications", "settings"];
 const launchBlockedModules = modules.filter((module) => !launchModuleKeys.includes(module.key));
+let supabaseClient = null;
+
+const dataState = {
+  mode: "demo",
+  loading: true,
+  error: "",
+  session: null,
+  profile: null,
+};
 
 const clients = [
   { id: "continental", name: "Continental Motores" },
@@ -816,6 +825,7 @@ const workOrderStatusLabels = {
   in_progress: "En proceso",
   in_review: "En revision",
   completed: "Completada",
+  cancelled: "Cancelada",
 };
 
 const roleLabels = {
@@ -827,6 +837,177 @@ const roleLabels = {
   pauta: "Pauta",
   cliente: "Cliente",
 };
+
+function getSupabaseConfig() {
+  const config = window.LUMEN_SUPABASE_CONFIG || {};
+  const url = (config.url || "").trim();
+  const anonKey = (config.anonKey || "").trim();
+  if (!url || !anonKey || url.includes("TU-PROYECTO") || anonKey.includes("TU_SUPABASE")) return null;
+  return { url, anonKey };
+}
+
+function setupSupabaseClient() {
+  const config = getSupabaseConfig();
+  if (!config || !window.supabase?.createClient) return false;
+  supabaseClient = window.supabase.createClient(config.url, config.anonKey);
+  dataState.mode = "supabase";
+  return true;
+}
+
+function isSupabaseMode() {
+  return dataState.mode === "supabase" && supabaseClient;
+}
+
+function setCollection(target, rows) {
+  target.splice(0, target.length, ...rows);
+}
+
+function mapDbBrand(row) {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    name: row.name,
+    shortName: row.name,
+    slug: row.slug,
+    color: row.color_primary || "#18345d",
+    platforms: row.platforms || [],
+    services: row.services || [],
+    monthlyGoal: 10,
+    canvaFolder: "",
+    isActive: row.is_active,
+  };
+}
+
+function mapDbUser(row, memberships = []) {
+  return {
+    id: row.id,
+    name: row.full_name,
+    email: row.email,
+    role: row.role,
+    brands: memberships.filter((membership) => membership.user_id === row.id).map((membership) => membership.brand_id),
+  };
+}
+
+function mapDbWorkOrder(row) {
+  const assignees = (row.assignees || []).map((assignee) => assignee.user_id);
+  const files = (row.files || []).map((file) => ({
+    id: file.id,
+    name: file.file_name,
+    size: file.file_size,
+    type: file.file_type,
+    storagePath: file.storage_path,
+  }));
+  return {
+    id: row.code,
+    dbId: row.id,
+    brandId: row.brand_id,
+    title: row.title,
+    status: row.status,
+    priority: row.priority,
+    category: row.category,
+    dueDate: row.due_date,
+    assignee: assignees[0] || null,
+    assignees,
+    description: row.description || "",
+    files,
+    createdBy: row.created_by,
+    notifyOnEmail: row.notify_on_email,
+    linkedContentId: null,
+  };
+}
+
+async function loadSupabaseData() {
+  if (!isSupabaseMode() || !dataState.session) return;
+
+  const [profileResult, clientsResult, brandsResult, membershipsResult, profilesResult, ordersResult] = await Promise.all([
+    supabaseClient.from("profiles").select("*").eq("id", dataState.session.user.id).maybeSingle(),
+    supabaseClient.from("clients").select("*").order("name"),
+    supabaseClient.from("brands").select("*").eq("is_active", true).order("name"),
+    supabaseClient.from("brand_memberships").select("*"),
+    supabaseClient.from("profiles").select("*").eq("is_active", true).order("full_name"),
+    supabaseClient
+      .from("work_orders")
+      .select(
+        `
+          *,
+          assignees:work_order_assignees(user_id),
+          files:work_order_files(id,file_name,file_type,file_size,storage_path)
+        `,
+      )
+      .order("due_date", { ascending: true }),
+  ]);
+
+  const error =
+    profileResult.error ||
+    clientsResult.error ||
+    brandsResult.error ||
+    membershipsResult.error ||
+    profilesResult.error ||
+    ordersResult.error;
+
+  if (error) throw error;
+
+  dataState.profile = profileResult.data;
+  setCollection(
+    clients,
+    (clientsResult.data || []).map((client) => ({
+      id: client.id,
+      name: client.name,
+      slug: client.slug,
+    })),
+  );
+  setCollection(brands, (brandsResult.data || []).map(mapDbBrand));
+  setCollection(users, (profilesResult.data || []).map((profile) => mapDbUser(profile, membershipsResult.data || [])));
+  workOrders = (ordersResult.data || []).map(mapDbWorkOrder);
+
+  if (!isAllBrandsScope() && !brands.some((brand) => brand.id === state.currentBrandId)) {
+    state.currentBrandId = ALL_BRANDS_ID;
+  }
+}
+
+async function initializeApp() {
+  const hasSupabase = setupSupabaseClient();
+  if (!hasSupabase) {
+    dataState.mode = "demo";
+    dataState.loading = false;
+    render();
+    return;
+  }
+
+  dataState.loading = true;
+  render();
+
+  try {
+    const {
+      data: { session },
+      error,
+    } = await supabaseClient.auth.getSession();
+    if (error) throw error;
+    dataState.session = session;
+    if (session) await loadSupabaseData();
+  } catch (error) {
+    dataState.error = error.message || "No se pudo conectar Supabase";
+  } finally {
+    dataState.loading = false;
+    render();
+  }
+
+  supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+    dataState.session = session;
+    dataState.error = "";
+    if (session) {
+      dataState.loading = true;
+      render();
+      try {
+        await loadSupabaseData();
+      } catch (error) {
+        dataState.error = error.message || "No se pudo cargar Supabase";
+      }
+      dataState.loading = false;
+    }
+    render();
+  });
+}
 
 function getBrand(id = state.currentBrandId) {
   return brands.find((brand) => brand.id === id) || brands[0];
@@ -973,6 +1154,7 @@ function saveContentItems() {
 }
 
 function saveWorkOrders() {
+  if (isSupabaseMode()) return;
   localStorage.setItem("lumen_work_orders_v1", JSON.stringify(workOrders));
 }
 
@@ -1043,6 +1225,7 @@ function userEmail(userId) {
 }
 
 function daysUntil(dateValue) {
+  if (!dateValue) return 999;
   const today = new Date("2026-05-04T12:00:00");
   const date = new Date(`${dateValue}T12:00:00`);
   return Math.ceil((date - today) / 86400000);
@@ -1105,6 +1288,7 @@ function getCanvaDesign(id) {
 }
 
 function formatDate(value) {
+  if (!value) return "Sin fecha";
   const date = new Date(value);
   return date.toLocaleDateString("es-GT", {
     day: "2-digit",
@@ -1131,6 +1315,17 @@ function clsStatus(status) {
 }
 
 function render() {
+  if (isSupabaseMode() && dataState.loading) {
+    document.getElementById("app").innerHTML = renderLoadingScreen();
+    return;
+  }
+
+  if (isSupabaseMode() && !dataState.session) {
+    document.getElementById("app").innerHTML = renderLoginScreen();
+    bindAuthEvents();
+    return;
+  }
+
   const allBrands = isAllBrandsScope();
   const brand = allBrands ? null : getBrand();
   document.documentElement.style.setProperty("--brand-color", allBrands ? "#18345d" : brand.color);
@@ -1174,10 +1369,11 @@ function render() {
         }
         <div class="sidebar-footer">
           <div class="user-block">
-            <strong>Giuliana Uzcategui</strong>
-            <span>guzcategui@grupolumen.com</span>
+            <strong>${dataState.profile?.full_name || "Giuliana Uzcategui"}</strong>
+            <span>${dataState.profile?.email || "guzcategui@grupolumen.com"}</span>
+            <span>${isSupabaseMode() ? "Supabase conectado" : "Modo demo local"}</span>
           </div>
-          <button class="button-ghost logout">Cerrar sesion</button>
+          <button class="button-ghost logout" data-action="logout">Cerrar sesion</button>
         </div>
       </aside>
       <main class="main">
@@ -1202,6 +1398,41 @@ function render() {
     ${state.toast ? `<div class="toast">${state.toast}</div>` : ""}
   `;
   bindEvents();
+}
+
+function renderLoadingScreen() {
+  return `
+    <main class="auth-screen">
+      <section class="auth-card">
+        <div class="logo">L</div>
+        <h1>Lumen Workspace</h1>
+        <p class="muted">Conectando con Supabase...</p>
+      </section>
+    </main>
+  `;
+}
+
+function renderLoginScreen() {
+  return `
+    <main class="auth-screen">
+      <section class="auth-card">
+        <div class="logo">L</div>
+        <h1>Lumen Workspace</h1>
+        <p class="muted">Ingresa con el usuario creado en Supabase Auth.</p>
+        ${dataState.error ? `<div class="auth-error">${escapeHtml(dataState.error)}</div>` : ""}
+        <div class="field">
+          <label>Email</label>
+          <input class="input" id="login-email" type="email" autocomplete="email" placeholder="jmeza@grupolumen.com" />
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input class="input" id="login-password" type="password" autocomplete="current-password" placeholder="Tu password" />
+        </div>
+        <button class="button full" data-action="login">Entrar</button>
+        <p class="small-muted">Si el usuario fue invitado, primero debe aceptar la invitacion y crear password.</p>
+      </section>
+    </main>
+  `;
 }
 
 function renderModule() {
@@ -2966,8 +3197,16 @@ function bindEvents() {
   });
 }
 
-function handleAction(action, id) {
+function bindAuthEvents() {
+  document.querySelectorAll("[data-action]").forEach((button) => {
+    button.addEventListener("click", () => handleAction(button.dataset.action, button.dataset.id));
+  });
+}
+
+async function handleAction(action, id) {
   const actionMap = {
+    login: () => loginWithPassword(),
+    logout: () => logout(),
     "approve-content": () => updateContentStatus(id, "approved", "Pieza aprobada"),
     "request-changes": () =>
       updateContentStatus(id, "changes_requested", "Cambios solicitados al equipo"),
@@ -3000,8 +3239,40 @@ function handleAction(action, id) {
   };
 
   if (actionMap[action]) {
-    actionMap[action]();
+    await actionMap[action]();
   }
+}
+
+async function loginWithPassword() {
+  if (!isSupabaseMode()) return;
+  const email = document.getElementById("login-email")?.value.trim();
+  const password = document.getElementById("login-password")?.value;
+  if (!email || !password) {
+    dataState.error = "Escribe email y password";
+    render();
+    return;
+  }
+
+  dataState.loading = true;
+  dataState.error = "";
+  render();
+  const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  if (error) {
+    dataState.loading = false;
+    dataState.error = error.message;
+    render();
+  }
+}
+
+async function logout() {
+  if (isSupabaseMode()) {
+    await supabaseClient.auth.signOut();
+    dataState.session = null;
+    dataState.profile = null;
+    render();
+    return;
+  }
+  showToast("Sesion demo cerrada");
 }
 
 function updateContentStatus(id, status, message) {
@@ -3052,7 +3323,7 @@ function addContentComment(id) {
   showToast("Comentario guardado");
 }
 
-function createWorkOrderFromForm() {
+async function createWorkOrderFromForm() {
   if (isAllBrandsScope()) {
     showToast("Selecciona una marca antes de crear una OT");
     return;
@@ -3084,6 +3355,89 @@ function createWorkOrderFromForm() {
     return;
   }
   const code = `OT-${getBrand().shortName.toUpperCase().replaceAll(" ", "-")}-${String(workOrders.length + 1).padStart(3, "0")}`;
+
+  if (isSupabaseMode()) {
+    const { data: insertedOrder, error: orderError } = await supabaseClient
+      .from("work_orders")
+      .insert({
+        code,
+        brand_id: state.currentBrandId,
+        title,
+        status: "new",
+        priority,
+        category,
+        due_date: dueDate,
+        description,
+        created_by: dataState.session?.user?.id,
+        notify_on_email: notifyOnEmail,
+      })
+      .select()
+      .single();
+
+    if (orderError) {
+      showToast(`No se pudo crear la OT: ${orderError.message}`);
+      return;
+    }
+
+    if (assignees.length) {
+      const { error: assigneeError } = await supabaseClient.from("work_order_assignees").insert(
+        assignees.map((userId) => ({
+          work_order_id: insertedOrder.id,
+          user_id: userId,
+          assigned_by: dataState.session?.user?.id,
+        })),
+      );
+      if (assigneeError) {
+        showToast(`OT creada, pero fallo responsables: ${assigneeError.message}`);
+      }
+    }
+
+    for (const file of filesInput ? Array.from(filesInput.files) : []) {
+      const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+      const storagePath = `${state.currentBrandId}/${insertedOrder.id}/${Date.now()}-${safeName}`;
+      const { error: uploadError } = await supabaseClient.storage.from("work-order-files").upload(storagePath, file);
+      if (uploadError) {
+        showToast(`OT creada, pero fallo archivo: ${uploadError.message}`);
+        continue;
+      }
+      await supabaseClient.from("work_order_files").insert({
+        work_order_id: insertedOrder.id,
+        storage_path: storagePath,
+        file_name: file.name,
+        file_type: file.type || "application/octet-stream",
+        file_size: file.size,
+        uploaded_by: dataState.session?.user?.id,
+      });
+    }
+
+    await supabaseClient.from("work_order_activity").insert({
+      work_order_id: insertedOrder.id,
+      actor_id: dataState.session?.user?.id,
+      action: "created",
+      details: { title, assignees: assignees.length, files: files.length },
+    });
+
+    if (notifyOnEmail) {
+      const recipients = users.filter((user) => assignees.includes(user.id));
+      await supabaseClient.from("email_notifications").insert(
+        recipients.map((user) => ({
+          brand_id: state.currentBrandId,
+          work_order_id: insertedOrder.id,
+          recipient_user_id: user.id,
+          recipient_email: user.email,
+          notification_type: "assignment",
+          subject: `Nueva OT asignada: ${code}`,
+          html_body: `<p>Se te asigno la orden <strong>${code}</strong>: ${escapeHtml(title)}</p>`,
+          status: "queued",
+        })),
+      );
+    }
+
+    await loadSupabaseData();
+    showToast(`OT creada en Supabase: ${code}`);
+    return;
+  }
+
   workOrders.push({
     id: code,
     brandId: state.currentBrandId,
@@ -3104,7 +3458,7 @@ function createWorkOrderFromForm() {
   showToast(`OT creada y ${notifyOnEmail ? "email preparado" : "sin email"}`);
 }
 
-function advanceWorkOrder(id) {
+async function advanceWorkOrder(id) {
   const order = workOrders.find((candidate) => candidate.id === id);
   if (!order) return;
   const next = {
@@ -3113,7 +3467,29 @@ function advanceWorkOrder(id) {
     in_review: "completed",
     completed: "completed",
   };
-  order.status = next[order.status] || "in_progress";
+  const nextStatus = next[order.status] || "in_progress";
+
+  if (isSupabaseMode()) {
+    const { error } = await supabaseClient
+      .from("work_orders")
+      .update({ status: nextStatus })
+      .eq("id", order.dbId);
+    if (error) {
+      showToast(`No se pudo avanzar la OT: ${error.message}`);
+      return;
+    }
+    await supabaseClient.from("work_order_activity").insert({
+      work_order_id: order.dbId,
+      actor_id: dataState.session?.user?.id,
+      action: "status_changed",
+      details: { from: order.status, to: nextStatus },
+    });
+    await loadSupabaseData();
+    showToast(`${order.id} avanzó a ${workOrderStatusLabels[nextStatus]}`);
+    return;
+  }
+
+  order.status = nextStatus;
   if (order.linkedContentId && order.status === "completed") {
     const linked = contentItems.find((item) => item.id === order.linkedContentId);
     if (linked && linked.status !== "approved") linked.status = "internal_review";
@@ -3202,4 +3578,4 @@ function showToast(message) {
   }, 2200);
 }
 
-render();
+initializeApp();

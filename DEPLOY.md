@@ -45,18 +45,32 @@ Nota: este metodo requiere login de Vercel y acceso a internet.
 
 ## Cuando conectemos Supabase real
 
-En Vercel, agrega variables en `Project Settings` -> `Environment Variables`:
+Edita `config.js` antes de subir/pushear el cambio:
 
-```text
-VITE_SUPABASE_URL=https://TU-PROYECTO.supabase.co
-VITE_SUPABASE_ANON_KEY=TU_ANON_KEY
+```js
+window.LUMEN_SUPABASE_CONFIG = {
+  url: "https://TU-PROYECTO.supabase.co",
+  anonKey: "TU_SUPABASE_ANON_KEY",
+};
 ```
 
-No agregues `SUPABASE_SERVICE_ROLE_KEY` al frontend. Esa llave solo debe vivir en Supabase Edge Functions o backend seguro.
+La `anonKey` puede estar en frontend si RLS esta activo. No agregues `SUPABASE_SERVICE_ROLE_KEY` al frontend. Esa llave solo debe vivir en Supabase Edge Functions o backend seguro.
+
+Cuando `config.js` tiene valores reales, la app muestra login y lee/escribe:
+
+- `clients`
+- `brands`
+- `profiles`
+- `brand_memberships`
+- `work_orders`
+- `work_order_assignees`
+- `work_order_files`
+- `email_notifications`
 
 ## Checklist antes de compartir con el equipo
 
 - Ejecutar `supabase/launch_mvp.sql` en Supabase.
+- Si ya ejecutaste el schema antes de esta version, ejecuta tambien `supabase/patch_memberships_policy.sql`.
 - Cargar `clients`, `brands`, `profiles` y `brand_memberships`.
 - Probar que el usuario admin entra.
 - Conectar OTs reales a Supabase.

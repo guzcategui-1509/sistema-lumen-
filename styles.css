@@ -31,6 +31,41 @@ body {
   min-height: 100vh;
 }
 
+.auth-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+  background:
+    linear-gradient(135deg, rgba(24, 52, 93, 0.08), rgba(47, 154, 104, 0.08)),
+    var(--bg);
+}
+
+.auth-card {
+  display: grid;
+  gap: 14px;
+  width: min(420px, 100%);
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.auth-card h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.auth-error {
+  padding: 10px 12px;
+  border: 1px solid rgba(200, 78, 72, 0.24);
+  border-radius: var(--radius);
+  background: #fbe7e5;
+  color: #a63a34;
+  font-weight: 700;
+}
+
 button,
 input,
 select,

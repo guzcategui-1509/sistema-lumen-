@@ -23,6 +23,7 @@ Implementacion base del plan maestro para convertir Lumen Workspace en un sistem
 - Schema Supabase en `supabase/schema.sql` con roles, permisos, RLS y tablas nuevas.
 - Schema Supabase enfocado en lanzamiento interno en `supabase/launch_mvp.sql`.
 - Edge Functions base para emails en `supabase/functions/email-worker` y digest semanal en `supabase/functions/weekly-digest`.
+- Conexion opcional a Supabase desde `config.js`; si queda vacio, la app sigue en modo demo.
 
 ## Lanzamiento interno recomendado
 
@@ -36,6 +37,8 @@ Release 1 se enfoca solo en operar ordenes de trabajo:
 6. Configurar variables de Edge Functions: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `EMAIL_FROM`.
 7. Programar `weekly-digest` los lunes y correr `email-worker` para procesar la cola.
 8. Invitar primero solo al equipo interno de Lumen.
+
+Si ya ejecutaste `launch_mvp.sql` antes de conectar el frontend, ejecuta `supabase/patch_memberships_policy.sql` para que el equipo pueda ver responsables por marca.
 
 ## Roadmap incorporado
 
