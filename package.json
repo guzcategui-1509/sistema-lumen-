@@ -1,0 +1,16 @@
+{
+  "name": "lumen-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lumen Workspace MVP interno para ordenes de trabajo, equipo y notificaciones.",
+  "scripts": {
+    "dev": "python3 -m http.server 4174 --bind 127.0.0.1",
+    "check": "node --check app.js"
+  },
+  "keywords": [
+    "lumen",
+    "workspace",
+    "work-orders"
+  ],
+  "license": "UNLICENSED"
+}
