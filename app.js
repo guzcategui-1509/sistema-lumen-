@@ -11,14 +11,12 @@ const modules = [
   { key: "reports", label: "Reporteria", icon: "RP" },
   { key: "team", label: "Equipo", icon: "EQ" },
   { key: "client-portal", label: "Portal cliente", icon: "CL" },
-  { key: "roadmap", label: "Roadmap", icon: "RM" },
-  { key: "settings", label: "Sistema", icon: "CF" },
+  { key: "settings", label: "Admin", icon: "AD" },
 ];
 
 const ALL_BRANDS_ID = "all-brands";
-const LAUNCH_MODE = true;
-const launchModuleKeys = ["dashboard", "work-orders", "team", "notifications", "settings"];
-const launchBlockedModules = modules.filter((module) => !launchModuleKeys.includes(module.key));
+const OPERATIONS_MODE = true;
+const operationalModuleKeys = ["dashboard", "work-orders", "team", "notifications", "settings"];
 let supabaseClient = null;
 
 const dataState = {
@@ -35,147 +33,6 @@ const clients = [
   { id: "solarsa", name: "Solarsa" },
   { id: "wash-go", name: "Wash and Go" },
   { id: "lumen", name: "Lumen" },
-];
-
-const roadmapPhases = [
-  {
-    id: "fase-0",
-    label: "Fase 0",
-    title: "Fundamento de datos",
-    duration: "1 semana",
-    status: "in_progress",
-    items: ["clients + brands.client_id", "7 roles", "brand_memberships", "module_permissions + RLS"],
-  },
-  {
-    id: "fase-1",
-    label: "Fase 1",
-    title: "Configuracion de Marca",
-    duration: "1-2 semanas",
-    status: "in_progress",
-    items: ["7 secciones fundacionales", "auto-save", "rail como se usa", "Gemini config"],
-  },
-  {
-    id: "fase-2",
-    label: "Fase 2",
-    title: "Contenido + Calendario dos fases",
-    duration: "2 semanas",
-    status: "planned",
-    items: ["calendarios mensuales", "estados explicitos", "toggle concepto/final/programado", "composer de concepto"],
-  },
-  {
-    id: "fase-3",
-    label: "Fase 3",
-    title: "Canva Visual Workflow",
-    duration: "1 semana",
-    status: "planned",
-    items: ["canva_designs", "preview + link", "version aprobada bloqueada", "asset vinculado a pieza"],
-  },
-  {
-    id: "fase-4",
-    label: "Fase 4",
-    title: "Loop OT - Contenido",
-    duration: "3-5 dias",
-    status: "planned",
-    items: ["linked_content_item_id", "OT desde concepto", "actualizar pieza al completar OT"],
-  },
-  {
-    id: "fase-5",
-    label: "Fase 5",
-    title: "Portal Cliente",
-    duration: "1-2 semanas",
-    status: "planned",
-    items: ["login cliente", "magic link invitado", "calendario read-only", "comentarios internos ocultos"],
-  },
-  {
-    id: "fase-6",
-    label: "Fase 6",
-    title: "Reporteria v1",
-    duration: "1 semana",
-    status: "planned",
-    items: ["CSV manual", "report_snapshots", "dashboards", "PDF mensual"],
-  },
-  {
-    id: "fase-7",
-    label: "Fase 7",
-    title: "Conexiones e IA en flujos",
-    duration: "1 semana",
-    status: "planned",
-    items: ["IA dentro de pieza", "ideas al calendario", "producciones a multiples piezas"],
-  },
-];
-
-const nextImprovements = [
-  {
-    title: "Conectar Configuracion de Marca a datos reales",
-    owner: "Fase 1",
-    impact: "Hace que IA, contenido y reporteria lean la misma verdad de marca.",
-  },
-  {
-    title: "Convertir Contenido en flujo operable",
-    owner: "Fase 2",
-    impact: "Estados, versiones, comentarios y aprobaciones dejan de ser mock visual.",
-  },
-  {
-    title: "Separar experiencia interna y cliente",
-    owner: "Fase 5",
-    impact: "Evita que clientes vean comentarios internos o configuracion sensible.",
-  },
-  {
-    title: "Pulir mobile y dashboard ejecutivo",
-    owner: "UX",
-    impact: "El workspace se siente confiable en reuniones y revisiones rapidas.",
-  },
-];
-
-const moduleHealth = [
-  ["Datos base", 68, "Fase 0"],
-  ["Config. marca", 45, "Fase 1"],
-  ["Contenido", 36, "Fase 2"],
-  ["Portal cliente", 28, "Fase 5"],
-  ["Reporteria", 22, "Fase 6"],
-];
-
-const launchChecklist = [
-  {
-    title: "UI operativa de OTs",
-    status: "done",
-    detail: "Dashboard global, kanban, responsables multiples, archivos mock y carga de equipo.",
-  },
-  {
-    title: "Schema MVP Supabase",
-    status: "done",
-    detail: "Archivo launch_mvp.sql preparado para OTs, equipo, emails, RLS y storage.",
-  },
-  {
-    title: "Auth y usuarios reales",
-    status: "next",
-    detail: "Crear perfiles internos, roles y brand_memberships en el proyecto Supabase real.",
-  },
-  {
-    title: "Conectar CRUD de OTs",
-    status: "next",
-    detail: "Reemplazar datos mock/localStorage por queries y mutations contra Supabase.",
-  },
-  {
-    title: "Storage de adjuntos",
-    status: "next",
-    detail: "Subir archivos al bucket privado work-order-files por marca y OT.",
-  },
-  {
-    title: "Emails reales",
-    status: "next",
-    detail: "Conectar assignment, vencimientos y digest lunes con Edge Function + proveedor email.",
-  },
-  {
-    title: "QA piloto interno",
-    status: "pending",
-    detail: "Probar 5 usuarios, 3 marcas, permisos, mobile, errores y carga lenta.",
-  },
-  {
-    title: "Deploy interno",
-    status: "pending",
-    detail: "Variables de entorno, dominio, backups y monitoreo basico antes de invitar al equipo.",
-  },
 ];
 
 const brandConfigSections = [
@@ -429,43 +286,7 @@ const brands = [
   },
 ];
 
-const users = [
-  {
-    id: "giu",
-    name: "Giuliana Uzcategui",
-    email: "guzcategui@grupolumen.com",
-    role: "directora",
-    brands: brands.map((brand) => brand.id),
-  },
-  {
-    id: "vale",
-    name: "Valeria Morales",
-    email: "valeria@grupolumen.com",
-    role: "creativo",
-    brands: ["danone-gt", "silk-gt", "danonino-gt", "lumen-agencia"],
-  },
-  {
-    id: "andrea",
-    name: "Andrea Reyes",
-    email: "andrea@grupolumen.com",
-    role: "disenador",
-    brands: ["repuestos-continental", "seguros-continental", "jim-gt", "silk-gt"],
-  },
-  {
-    id: "diego",
-    name: "Diego Castillo",
-    email: "diego@grupolumen.com",
-    role: "community",
-    brands: ["jim-gt", "leap-gt", "volkswagen-gt", "camiones-vw-gt", "bestune-gt"],
-  },
-  {
-    id: "cliente-danone",
-    name: "Cliente Danone",
-    email: "marketing.gt@danone.com",
-    role: "cliente",
-    brands: ["danone-gt", "silk-gt", "danonino-gt"],
-  },
-];
+const users = loadStoredCollection("lumen_users_v1", []);
 
 let workOrders = [
   {
@@ -801,6 +622,7 @@ const state = {
   selectedContentId: "ci-silk-01",
   contentView: "concept",
   brandConfigSection: "identity",
+  adminEditingUserId: "",
   toast: "",
 };
 
@@ -879,12 +701,15 @@ function mapDbBrand(row) {
 }
 
 function mapDbUser(row, memberships = []) {
+  const userMemberships = memberships.filter((membership) => membership.user_id === row.id);
   return {
     id: row.id,
     name: row.full_name,
     email: row.email,
     role: row.role,
-    brands: memberships.filter((membership) => membership.user_id === row.id).map((membership) => membership.brand_id),
+    isActive: row.is_active !== false,
+    brands: userMemberships.map((membership) => membership.brand_id),
+    memberships: userMemberships,
   };
 }
 
@@ -924,7 +749,7 @@ async function loadSupabaseData() {
     supabaseClient.from("clients").select("*").order("name"),
     supabaseClient.from("brands").select("*").eq("is_active", true).order("name"),
     supabaseClient.from("brand_memberships").select("*"),
-    supabaseClient.from("profiles").select("*").eq("is_active", true).order("full_name"),
+    supabaseClient.from("profiles").select("*").order("full_name"),
     supabaseClient
       .from("work_orders")
       .select(
@@ -1018,7 +843,7 @@ function getClient(id) {
 }
 
 function visibleModules() {
-  return LAUNCH_MODE ? modules.filter((module) => launchModuleKeys.includes(module.key)) : modules;
+  return OPERATIONS_MODE ? modules.filter((module) => operationalModuleKeys.includes(module.key)) : modules;
 }
 
 function getModuleMeta(key = state.currentModule) {
@@ -1026,7 +851,7 @@ function getModuleMeta(key = state.currentModule) {
 }
 
 function canOpenModule(key) {
-  return !LAUNCH_MODE || launchModuleKeys.includes(key);
+  return !OPERATIONS_MODE || operationalModuleKeys.includes(key);
 }
 
 function isAllBrandsScope(brandId = state.currentBrandId) {
@@ -1158,6 +983,11 @@ function saveWorkOrders() {
   localStorage.setItem("lumen_work_orders_v1", JSON.stringify(workOrders));
 }
 
+function saveUsers() {
+  if (isSupabaseMode()) return;
+  localStorage.setItem("lumen_users_v1", JSON.stringify(users));
+}
+
 function getBrandConfig(brandId = state.currentBrandId) {
   const store = loadBrandConfigStore();
   if (!store[brandId]) {
@@ -1213,7 +1043,23 @@ function orderFiles(order) {
 }
 
 function internalUsers() {
-  return users.filter((user) => user.role !== "cliente");
+  return users.filter((user) => user.role !== "cliente" && user.isActive !== false);
+}
+
+function activeUsers() {
+  return users.filter((user) => user.isActive !== false);
+}
+
+function isSystemAdmin() {
+  return ["admin", "directora"].includes(dataState.profile?.role);
+}
+
+function hasGlobalBrandAccess(user) {
+  return ["admin", "directora"].includes(user?.role);
+}
+
+function canUserAccessBrand(user, brandId) {
+  return hasGlobalBrandAccess(user) || (user?.brands || []).includes(brandId);
 }
 
 function userName(userId) {
@@ -1222,6 +1068,17 @@ function userName(userId) {
 
 function userEmail(userId) {
   return users.find((user) => user.id === userId)?.email || "";
+}
+
+function userBrandLabel(user) {
+  if (hasGlobalBrandAccess(user)) return "Todas las marcas";
+  const userBrands = user.brands || [];
+  if (!userBrands.length) return "Sin marcas asignadas";
+  return userBrands
+    .slice(0, 3)
+    .map((id) => getBrand(id)?.shortName || "Marca")
+    .join(", ")
+    .concat(userBrands.length > 3 ? ` +${userBrands.length - 3}` : "");
 }
 
 function daysUntil(dateValue) {
@@ -1357,20 +1214,10 @@ function render() {
             )
             .join("")}
         </nav>
-        ${
-          LAUNCH_MODE
-            ? `
-              <div class="launch-note">
-                <strong>Lanzamiento interno</strong>
-                <span>OTs, equipo, emails y dashboard. Modulos beta estacionados.</span>
-              </div>
-            `
-            : ""
-        }
         <div class="sidebar-footer">
           <div class="user-block">
-            <strong>${dataState.profile?.full_name || "Giuliana Uzcategui"}</strong>
-            <span>${dataState.profile?.email || "guzcategui@grupolumen.com"}</span>
+            <strong>${dataState.profile?.full_name || "Usuario"}</strong>
+            <span>${dataState.profile?.email || "Sin sesion activa"}</span>
             <span>${isSupabaseMode() ? "Supabase conectado" : "Modo demo local"}</span>
           </div>
           <button class="button-ghost logout" data-action="logout">Cerrar sesion</button>
@@ -1386,8 +1233,9 @@ function render() {
             <select class="brand-select topbar-brand-select js-brand-select" aria-label="Marca activa">
               ${renderBrandOptions(state.currentBrandId)}
             </select>
-            <button class="button-ghost small" data-module="client-portal">Portal cliente</button>
-            <button class="button-ghost small">Notificaciones 6</button>
+            <button class="button-ghost small" data-module="work-orders">OTs</button>
+            <button class="button-ghost small" data-module="team">Equipo</button>
+            <button class="button-ghost small" data-module="notifications">Notificaciones</button>
           </div>
         </header>
         <div class="content">
@@ -1449,10 +1297,9 @@ function renderModule() {
     reports: renderReports,
     team: renderTeam,
     "client-portal": renderClientPortal,
-    roadmap: renderRoadmap,
     settings: renderSettings,
   };
-  return views[state.currentModule]();
+  return (views[state.currentModule] || renderDashboard)();
 }
 
 function renderBrandHero() {
@@ -1472,10 +1319,9 @@ function renderBrandHero() {
         </div>
       </div>
       <div class="quick-links">
-        <a class="button-ghost small" href="https://www.canva.com" target="_blank" rel="noreferrer">Canva</a>
-        <button class="button-ghost small" data-module="content">Calendario</button>
-        <button class="button-ghost small" data-module="assets">Assets</button>
-        <button class="button-ghost small" data-module="reports">Reporte</button>
+        <button class="button-ghost small" data-module="work-orders">OTs</button>
+        <button class="button-ghost small" data-module="team">Equipo</button>
+        <button class="button-ghost small" data-module="notifications">Notificaciones</button>
       </div>
     </section>
   `;
@@ -1483,22 +1329,17 @@ function renderBrandHero() {
 
 function getBrandSnapshot(brand) {
   const brandOpen = workOrders.filter((order) => order.brandId === brand.id && order.status !== "completed");
-  const brandReview = contentItems.filter(
-    (item) =>
-      item.brandId === brand.id &&
-      ["internal_review", "client_review", "changes_requested"].includes(item.status),
-  );
-  const brandApproved = contentItems.filter(
-    (item) => item.brandId === brand.id && ["approved", "completed", "published"].includes(item.status),
-  );
+  const brandReview = brandOpen.filter((order) => order.status === "in_review");
+  const brandCompleted = workOrders.filter((order) => order.brandId === brand.id && order.status === "completed");
   const brandOverdue = brandOpen.filter((order) => daysUntil(order.dueDate) < 0);
-  const completion = Math.min(100, Math.round((brandApproved.length / Math.max(brand.monthlyGoal, 1)) * 100));
+  const totalOrders = brandOpen.length + brandCompleted.length;
+  const completion = totalOrders ? Math.round((brandCompleted.length / totalOrders) * 100) : 0;
   const risk = brandOverdue.length ? "red" : brandReview.length ? "amber" : brandOpen.length ? "blue" : "green";
   return {
     brand,
     open: brandOpen.length,
     review: brandReview.length,
-    approved: brandApproved.length,
+    approved: brandCompleted.length,
     overdue: brandOverdue.length,
     completion,
     risk,
@@ -1508,21 +1349,18 @@ function getBrandSnapshot(brand) {
 function renderAllBrandsHero() {
   const globalOpenOrders = workOrders.filter((order) => order.status !== "completed");
   const globalOverdueOrders = globalOpenOrders.filter((order) => daysUntil(order.dueDate) < 0);
-  const globalReviewItems = contentItems.filter((item) =>
-    ["internal_review", "client_review", "changes_requested"].includes(item.status),
-  );
+  const globalReviewOrders = globalOpenOrders.filter((order) => order.status === "in_review");
   const activeBrands = brands.filter((brand) => brand.isActive !== false);
-  const monthlyGoal = activeBrands.reduce((sum, brand) => sum + brand.monthlyGoal, 0);
   return `
     <section class="panel all-hero">
       <div class="all-hero-copy">
         <span class="eyebrow">Vista general</span>
         <h2>Todas las marcas</h2>
-        <p class="muted">Un tablero ejecutivo para ver carga, riesgos, revisiones y avance sin entrar marca por marca.</p>
+        <p class="muted">Un tablero ejecutivo para ver carga, responsables, vencimientos y avance sin entrar marca por marca.</p>
         <div class="badge-row">
           <span class="badge blue">${clients.length} clientes</span>
           <span class="badge green">${activeBrands.length} marcas activas</span>
-          <span class="badge amber">${monthlyGoal} piezas meta mensual</span>
+          <span class="badge amber">${workOrders.length} OTs registradas</span>
           <span class="badge purple">${internalUsers().length} responsables</span>
         </div>
       </div>
@@ -1536,7 +1374,7 @@ function renderAllBrandsHero() {
           <span>vencidas</span>
         </div>
         <div>
-          <strong>${globalReviewItems.length}</strong>
+          <strong>${globalReviewOrders.length}</strong>
           <span>en revision</span>
         </div>
       </div>
@@ -1566,10 +1404,6 @@ function renderAllBrandCard(snapshot) {
 function renderAllBrandsDashboard() {
   const snapshots = brands.map(getBrandSnapshot);
   const globalOpenOrders = workOrders.filter((order) => order.status !== "completed");
-  const globalOverdueOrders = globalOpenOrders.filter((order) => daysUntil(order.dueDate) < 0);
-  const globalReviewItems = contentItems.filter((item) =>
-    ["internal_review", "client_review", "changes_requested"].includes(item.status),
-  );
   const topBrands = snapshots
     .filter((row) => row.open || row.review || row.overdue)
     .sort((a, b) => b.overdue - a.overdue || b.open - a.open)
@@ -1584,14 +1418,12 @@ function renderAllBrandsDashboard() {
     .slice()
     .sort((a, b) => daysUntil(a.dueDate) - daysUntil(b.dueDate))
     .slice(0, 6);
-  const reviewItems = globalReviewItems.slice(0, 6);
   const teamRows = weeklyDigestRows()
     .sort((a, b) => b.overdue - a.overdue || b.open - a.open)
     .slice(0, 5);
 
   return `
     ${renderAllBrandsHero()}
-    ${renderLaunchReadiness()}
     <section class="overview-layout">
       <div class="panel section visual-panel">
         <div class="section-header">
@@ -1699,123 +1531,28 @@ function renderAllBrandsDashboard() {
         </div>
       </div>
     </section>
-    <section class="grid grid-2">
-      <div class="panel section">
-        <div class="section-header">
-          <h2 class="section-title">Madurez del workspace</h2>
-          <button class="button-ghost small" data-module="settings">Plan launch</button>
-        </div>
-        <div class="health-list">
-          ${moduleHealth
-            .map(
-              ([label, value, phase]) => `
-                <div class="health-row">
-                  <div class="row between">
-                    <strong>${label}</strong>
-                    <span class="muted">${phase} / ${value}%</span>
-                  </div>
-                  <div class="bar-track"><div class="bar-fill" style="width:${value}%"></div></div>
-                </div>
-              `,
-            )
-            .join("")}
-        </div>
-      </div>
-      <div class="panel section">
-        <div class="section-header">
-          <h2 class="section-title">Modulos estacionados</h2>
-          <span class="badge amber">Despues del piloto</span>
-        </div>
-        <div class="beta-module-grid">
-          ${launchBlockedModules
-            .map((module) => `<span class="badge">${module.label}</span>`)
-            .join("")}
-        </div>
-      </div>
-    </section>
   `;
 }
 
 function renderDashboard() {
   if (isAllBrandsScope()) return renderAllBrandsDashboard();
-  const items = brandItems();
   const orders = brandOrders();
-  const pendingOrders = orders.filter((order) => order.status !== "completed").length;
-  const reviewItems = items.filter((item) =>
-    ["internal_review", "client_review", "changes_requested"].includes(item.status),
-  ).length;
-  const approvedItems = items.filter((item) => item.status === "approved").length;
-  const nextProduction = relatedProductions().sort((a, b) => a.date.localeCompare(b.date))[0];
+  const openOrders = orders.filter((order) => order.status !== "completed");
+  const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
+  const reviewOrders = openOrders.filter((order) => order.status === "in_review");
+  const responsibleCount = new Set(openOrders.flatMap(orderAssignees)).size;
+  const recentOrders = orders
+    .slice()
+    .sort((a, b) => daysUntil(a.dueDate) - daysUntil(b.dueDate))
+    .slice(0, 5);
 
   return `
     ${renderBrandHero()}
     <section class="grid grid-4">
-      ${renderMetric("OTs pendientes", pendingOrders, "Abiertas para esta marca")}
-      ${renderMetric("Piezas en revision", reviewItems, "Internas y cliente")}
-      ${renderMetric("Aprobadas", approvedItems, `${getBrand().monthlyGoal} piezas meta mensual`)}
-      ${renderMetric("Proxima produccion", nextProduction ? formatDate(nextProduction.date) : "Ninguna", nextProduction ? nextProduction.title : "Sin llamado activo")}
-    </section>
-    <section class="grid grid-2">
-      <div class="panel section">
-        <div class="section-header">
-          <h2 class="section-title">Que mejoramos ahora</h2>
-          <span class="badge green">Prioridad recomendada</span>
-        </div>
-        <div class="stack">
-          ${nextImprovements
-            .map(
-              (item) => `
-                <div class="priority-card">
-                  <div>
-                    <strong>${item.title}</strong>
-                    <p class="muted">${item.impact}</p>
-                  </div>
-                  <span class="badge blue">${item.owner}</span>
-                </div>
-              `,
-            )
-            .join("")}
-        </div>
-      </div>
-      <div class="panel section">
-        <div class="section-header">
-          <h2 class="section-title">Madurez del workspace</h2>
-          <button class="button-ghost small" data-module="roadmap">Roadmap</button>
-        </div>
-        <div class="health-list">
-          ${moduleHealth
-            .map(
-              ([label, value, phase]) => `
-                <div class="health-row">
-                  <div class="row between">
-                    <strong>${label}</strong>
-                    <span class="muted">${phase} / ${value}%</span>
-                  </div>
-                  <div class="bar-track"><div class="bar-fill" style="width:${value}%"></div></div>
-                </div>
-              `,
-            )
-            .join("")}
-        </div>
-      </div>
-    </section>
-    <section class="panel section">
-      <div class="section-header">
-        <h2 class="section-title">Plan de implementacion actualizado</h2>
-        <button class="button-ghost small" data-module="roadmap">Ver roadmap completo</button>
-      </div>
-      <div class="phase-strip">
-        ${roadmapPhases
-          .map(
-            (phase) => `
-              <div class="phase-pill ${phase.status}">
-                <strong>${phase.label}</strong>
-                <span>${phase.title}</span>
-              </div>
-            `,
-          )
-          .join("")}
-      </div>
+      ${renderMetric("OTs abiertas", openOrders.length, "Pendientes para esta marca")}
+      ${renderMetric("Vencidas", overdueOrders.length, "Necesitan seguimiento")}
+      ${renderMetric("En revision", reviewOrders.length, "Esperando validacion")}
+      ${renderMetric("Responsables", responsibleCount, "Equipo asignado")}
     </section>
     <section class="grid grid-2">
       <div class="panel section">
@@ -1824,8 +1561,7 @@ function renderDashboard() {
           <button class="button-ghost small" data-module="work-orders">Ver OTs</button>
         </div>
         <div class="stack">
-          ${orders
-            .slice(0, 4)
+          ${recentOrders
             .map(
               (order) => `
                 <div class="mini-card">
@@ -1845,24 +1581,30 @@ function renderDashboard() {
       </div>
       <div class="panel section">
         <div class="section-header">
-          <h2 class="section-title">Actividad reciente</h2>
-          <button class="button-ghost small" data-module="content">Ver contenido</button>
+          <h2 class="section-title">OTs recientes</h2>
+          <button class="button-ghost small" data-module="work-orders">Ver kanban</button>
         </div>
         <div class="stack">
-          ${items
+          ${orders
+            .slice()
+            .reverse()
             .slice(0, 5)
             .map(
-              (item) => `
+              (order) => {
+                const urgency = workOrderUrgency(order);
+                return `
                 <div class="mini-card">
                   <div class="row between">
-                    <strong>${item.title}</strong>
-                    <span class="badge ${clsStatus(item.status)}">${statusLabels[item.status]}</span>
+                    <strong>${order.id}</strong>
+                    <span class="badge ${urgency.cls}">${urgency.label}</span>
                   </div>
-                  <span class="muted">${item.platform} / ${item.format} / ${formatDateTime(item.scheduledAt)}</span>
+                  <span>${order.title}</span>
+                  <span class="muted">${orderAssignees(order).map((userId) => userName(userId)).join(", ") || "Sin asignar"}</span>
                 </div>
-              `,
+              `;
+              },
             )
-            .join("")}
+            .join("") || `<div class="empty">Sin OTs todavia</div>`}
         </div>
       </div>
     </section>
@@ -1876,57 +1618,6 @@ function renderMetric(label, value, detail) {
       <div class="metric-value">${value}</div>
       <div class="metric-detail">${detail}</div>
     </div>
-  `;
-}
-
-function renderLaunchReadiness() {
-  const doneCount = launchChecklist.filter((item) => item.status === "done").length;
-  const nextCount = launchChecklist.filter((item) => item.status === "next").length;
-  const pendingCount = launchChecklist.filter((item) => item.status === "pending").length;
-  const percent = Math.round((doneCount / launchChecklist.length) * 100);
-  const statusClass = {
-    done: "green",
-    next: "blue",
-    pending: "amber",
-  };
-  const statusLabel = {
-    done: "Listo",
-    next: "Siguiente",
-    pending: "Pendiente",
-  };
-  return `
-    <section class="panel section launch-readiness">
-      <div class="section-header">
-        <div>
-          <h2 class="section-title">Lanzamiento interno MVP</h2>
-          <div class="small-muted">Primer release enfocado en ordenes de trabajo, equipo, adjuntos y emails.</div>
-        </div>
-        <div class="launch-score">
-          <strong>${percent}%</strong>
-          <span>preparado</span>
-        </div>
-      </div>
-      <div class="launch-summary-grid">
-        <div><strong>${doneCount}</strong><span>listos</span></div>
-        <div><strong>${nextCount}</strong><span>siguientes</span></div>
-        <div><strong>${pendingCount}</strong><span>pendientes</span></div>
-      </div>
-      <div class="launch-check-grid">
-        ${launchChecklist
-          .map(
-            (item) => `
-              <article class="launch-check-card ${item.status}">
-                <div class="row between">
-                  <strong>${item.title}</strong>
-                  <span class="badge ${statusClass[item.status]}">${statusLabel[item.status]}</span>
-                </div>
-                <p class="muted">${item.detail}</p>
-              </article>
-            `,
-          )
-          .join("")}
-      </div>
-    </section>
   `;
 }
 
@@ -2002,7 +1693,7 @@ function renderBrandConfig() {
         <div class="section-header">
           <div>
             <h2 class="section-title">Configuracion fundacional de marca</h2>
-            <div class="small-muted">Fase 1 / fuente de verdad / ${brand.name}</div>
+            <div class="small-muted">Fuente de verdad para operar ${brand.name}</div>
           </div>
           <div class="row wrap">
             <span class="badge green">Auto-save activo</span>
@@ -2198,7 +1889,7 @@ function renderWorkOrders() {
                   <label>Responsables</label>
                   <select class="input multi-select" id="ot-assignees" multiple>
                     ${internalUsers()
-                      .filter((user) => user.brands.includes(state.currentBrandId) || user.role === "directora")
+                      .filter((user) => canUserAccessBrand(user, state.currentBrandId))
                       .map((user) => `<option value="${user.id}">${user.name}</option>`)
                       .join("")}
                   </select>
@@ -2233,7 +1924,7 @@ function renderWorkOrders() {
                 <div class="field full">
                   <label>Archivos adjuntos</label>
                   <input class="input file-input" id="ot-files" type="file" multiple />
-                  <div class="field-help">En el prototipo se guarda nombre, tipo y peso. En Supabase se subira a Storage.</div>
+                  <div class="field-help">Los archivos quedan vinculados a la OT y disponibles para el equipo asignado.</div>
                 </div>
                 <div class="full row wrap">
                   <label class="checkbox-line">
@@ -2347,7 +2038,7 @@ function renderNotifications() {
             <h2>Notificaciones de OTs</h2>
             <span class="badge blue">Email operativo</span>
           </div>
-          <p class="muted">Reglas para avisos de asignacion, vencimientos y digest semanal del equipo. En este prototipo se prepara el email; el envio real se conecta luego por Edge Function + proveedor email.</p>
+          <p class="muted">Reglas para avisos de asignacion, vencimientos y digest semanal del equipo.</p>
         </div>
         <div class="quick-links">
           <button class="button" data-action="preview-weekly-digest">Preparar digest lunes</button>
@@ -2445,7 +2136,7 @@ function renderContent() {
     <section class="section">
       <div class="section-header">
         <div>
-          <h2 class="section-title">Calendario de contenido dos fases</h2>
+          <h2 class="section-title">Calendario de contenido</h2>
           <div class="small-muted">${getScopeTitle()} / Mayo 2026 / vista ${stageLabels[state.contentView]}</div>
         </div>
         <div class="row wrap">
@@ -2847,7 +2538,7 @@ function renderTeam() {
         </div>
         <div class="row wrap">
           <button class="button-ghost" data-module="notifications">Configurar emails</button>
-          <button class="button">Agregar usuario</button>
+          <button class="button" data-module="settings">Administrar usuarios</button>
         </div>
       </div>
       <div class="grid grid-4">
@@ -2857,55 +2548,65 @@ function renderTeam() {
         ${renderMetric("Digest lunes", "8:00", weeklyDigestConfig.timezone)}
       </div>
       <div class="grid grid-2">
-        ${teamRows
-          .map((user) => {
-            const workload = teamWorkload(user.id);
-            const collaborative = workload.open.filter((order) => orderAssignees(order).length > 1).length;
-            const capacity = Math.min(100, workload.open.length * 22 + workload.overdue.length * 18 + collaborative * 8);
-            return `
-              <article class="panel team-card">
-                <div class="row between">
-                  <div>
-                    <h3 class="section-title">${user.name}</h3>
-                    <div class="muted">${user.email}</div>
-                  </div>
-                  <span class="badge blue">${roleLabels[user.role]}</span>
+        ${
+          teamRows.length
+            ? teamRows
+                .map((user) => {
+                  const workload = teamWorkload(user.id);
+                  const collaborative = workload.open.filter((order) => orderAssignees(order).length > 1).length;
+                  const capacity = Math.min(100, workload.open.length * 22 + workload.overdue.length * 18 + collaborative * 8);
+                  return `
+                    <article class="panel team-card">
+                      <div class="row between">
+                        <div>
+                          <h3 class="section-title">${user.name}</h3>
+                          <div class="muted">${user.email}</div>
+                        </div>
+                        <span class="badge blue">${roleLabels[user.role] || user.role}</span>
+                      </div>
+                      <div class="team-load">
+                        <div class="row between">
+                          <strong>Carga operativa</strong>
+                          <span class="muted">${capacity}%</span>
+                        </div>
+                        <div class="bar-track"><div class="bar-fill" style="width:${capacity}%"></div></div>
+                      </div>
+                      <div class="badge-row">
+                        <span class="badge ${workload.overdue.length ? "red" : "green"}">${workload.overdue.length} vencidas</span>
+                        <span class="badge blue">${workload.open.length} abiertas</span>
+                        <span class="badge amber">${workload.review.length} revision</span>
+                        <span class="badge purple">${collaborative} compartidas</span>
+                      </div>
+                      <div class="stack">
+                        ${
+                          workload.open
+                            .slice(0, 3)
+                            .map(
+                              (order) => `
+                                <div class="mini-card">
+                                  <div class="row between">
+                                    <strong>${order.id}</strong>
+                                    <span class="badge ${workOrderUrgency(order).cls}">${workOrderUrgency(order).label}</span>
+                                  </div>
+                                  <span class="muted">${getBrand(order.brandId).shortName} / ${order.title}</span>
+                                </div>
+                              `,
+                            )
+                            .join("") || `<div class="empty">Sin OTs abiertas</div>`
+                        }
+                      </div>
+                    </article>
+                  `;
+                })
+                .join("")
+            : `
+              <div class="panel section">
+                <div class="empty">
+                  No hay usuarios internos activos. Agrega perfiles reales desde Admin para asignar OTs.
                 </div>
-                <div class="team-load">
-                  <div class="row between">
-                    <strong>Carga operativa</strong>
-                    <span class="muted">${capacity}%</span>
-                  </div>
-                  <div class="bar-track"><div class="bar-fill" style="width:${capacity}%"></div></div>
-                </div>
-                <div class="badge-row">
-                  <span class="badge ${workload.overdue.length ? "red" : "green"}">${workload.overdue.length} vencidas</span>
-                  <span class="badge blue">${workload.open.length} abiertas</span>
-                  <span class="badge amber">${workload.review.length} revision</span>
-                  <span class="badge purple">${collaborative} compartidas</span>
-                </div>
-                <div class="stack">
-                  ${
-                    workload.open
-                      .slice(0, 3)
-                      .map(
-                        (order) => `
-                          <div class="mini-card">
-                            <div class="row between">
-                              <strong>${order.id}</strong>
-                              <span class="badge ${workOrderUrgency(order).cls}">${workOrderUrgency(order).label}</span>
-                            </div>
-                            <span class="muted">${getBrand(order.brandId).shortName} / ${order.title}</span>
-                          </div>
-                        `,
-                      )
-                      .join("") || `<div class="empty">Sin OTs abiertas</div>`
-                  }
-                </div>
-              </article>
-            `;
-          })
-          .join("")}
+              </div>
+            `
+        }
       </div>
       <div class="table-wrap">
         <table>
@@ -2913,26 +2614,32 @@ function renderTeam() {
             <tr>
               <th>Usuario</th>
               <th>Rol</th>
+              <th>Estado</th>
               <th>Marcas</th>
               <th>Email operativo</th>
             </tr>
           </thead>
           <tbody>
-            ${users
-              .map(
-                (user) => `
-                  <tr>
-                    <td>
-                      <strong>${user.name}</strong>
-                      <div class="muted">${user.email}</div>
-                    </td>
-                    <td><span class="badge ${user.role === "cliente" ? "amber" : "blue"}">${roleLabels[user.role]}</span></td>
-                    <td>${user.brands.slice(0, 4).map((id) => `<span class="badge">${getBrand(id).shortName}</span>`).join(" ")}${user.brands.length > 4 ? ` <span class="badge">+${user.brands.length - 4}</span>` : ""}</td>
-                    <td>${user.role === "cliente" ? "Solo portal cliente" : "Asignaciones, vencimientos, digest lunes"}</td>
-                  </tr>
-                `,
-              )
-              .join("")}
+            ${
+              users.length
+                ? users
+                    .map(
+                      (user) => `
+                        <tr>
+                          <td>
+                            <strong>${user.name}</strong>
+                            <div class="muted">${user.email}</div>
+                          </td>
+                          <td><span class="badge ${user.role === "cliente" ? "amber" : "blue"}">${roleLabels[user.role] || user.role}</span></td>
+                          <td><span class="badge ${user.isActive === false ? "red" : "green"}">${user.isActive === false ? "Inactivo" : "Activo"}</span></td>
+                          <td>${userBrandLabel(user)}</td>
+                          <td>${user.role === "cliente" ? "Portal cliente" : "Asignaciones, vencimientos, digest lunes"}</td>
+                        </tr>
+                      `,
+                    )
+                    .join("")
+                : `<tr><td colspan="5">Sin usuarios reales cargados.</td></tr>`
+            }
           </tbody>
         </table>
       </div>
@@ -2988,128 +2695,209 @@ function renderClientPortal() {
   `;
 }
 
-function renderRoadmap() {
-  const totalWeeks = "9-11 semanas";
+function getAdminEditingUser() {
+  if (state.adminEditingUserId === "__new__") return null;
+  return users.find((user) => user.id === state.adminEditingUserId) || users[0] || null;
+}
+
+function renderAdminBrandChecks(selectedBrandIds = [], disabled = false) {
+  const selected = new Set(selectedBrandIds);
   return `
-    <section class="section">
-      <div class="panel brand-hero">
-        <div>
-          <div class="hero-title">
-            <h2>Roadmap operativo</h2>
-            <span class="badge blue">${totalWeeks}</span>
+    <div class="brand-check-groups">
+      ${clients
+        .map((clientItem) => {
+          const clientBrands = brands.filter((brand) => brand.clientId === clientItem.id);
+          if (!clientBrands.length) return "";
+          return `
+            <div class="brand-check-group">
+              <strong>${clientItem.name}</strong>
+              <div class="brand-check-list">
+                ${clientBrands
+                  .map(
+                    (brand) => `
+                      <label class="checkbox-line">
+                        <input
+                          type="checkbox"
+                          data-admin-user-brand="${brand.id}"
+                          ${selected.has(brand.id) ? "checked" : ""}
+                          ${disabled ? "disabled" : ""}
+                        />
+                        ${brand.shortName}
+                      </label>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderAdminUserManager(canManage) {
+  const selectedUser = getAdminEditingUser();
+  const disabled = canManage ? "" : "disabled";
+  const isEditing = Boolean(selectedUser);
+  const selectedRole = selectedUser?.role || "creativo";
+  return `
+    <section class="grid admin-layout">
+      <div class="panel section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Usuarios reales</h2>
+            <div class="small-muted">Perfiles, roles, estado y marcas asignadas.</div>
           </div>
-          <p class="muted">Plan actualizado para construir Lumen Workspace por capas sin convertir el calendario en el centro de la plataforma.</p>
+          <button class="button small" data-action="new-admin-user" ${canManage ? "" : "disabled"}>Nuevo perfil</button>
         </div>
-        <div class="quick-links">
-          <button class="button-ghost small" data-module="brand-config">Ir a Fase 1</button>
-          <button class="button-ghost small" data-module="content">Ir a Fase 2</button>
-          <button class="button-ghost small" data-module="client-portal">Ir a Fase 5</button>
+        <div class="table-wrap compact-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Usuario</th>
+                <th>Rol</th>
+                <th>Estado</th>
+                <th>Marcas</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${
+                users.length
+                  ? users
+                      .map(
+                        (user) => `
+                          <tr>
+                            <td>
+                              <strong>${escapeHtml(user.name)}</strong>
+                              <div class="muted">${escapeHtml(user.email)}</div>
+                            </td>
+                            <td><span class="badge ${user.role === "cliente" ? "amber" : "blue"}">${roleLabels[user.role] || user.role}</span></td>
+                            <td><span class="badge ${user.isActive === false ? "red" : "green"}">${user.isActive === false ? "Inactivo" : "Activo"}</span></td>
+                            <td>${userBrandLabel(user)}</td>
+                            <td><button class="button-ghost small" data-edit-user="${user.id}">Editar</button></td>
+                          </tr>
+                        `,
+                      )
+                      .join("")
+                  : `<tr><td colspan="5">Todavia no hay perfiles reales cargados.</td></tr>`
+              }
+            </tbody>
+          </table>
         </div>
       </div>
-      <div class="phase-grid">
-        ${roadmapPhases
-          .map(
-            (phase) => `
-              <article class="panel phase-card ${phase.status}">
-                <div class="row between">
-                  <span class="badge ${phase.status === "in_progress" ? "green" : "blue"}">${phase.label}</span>
-                  <span class="muted">${phase.duration}</span>
-                </div>
-                <h3 class="section-title">${phase.title}</h3>
-                <ul>
-                  ${phase.items.map((item) => `<li>${item}</li>`).join("")}
-                </ul>
-              </article>
-            `,
-          )
-          .join("")}
+      <div class="panel section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">${isEditing ? "Editar usuario" : "Agregar usuario"}</h2>
+            <div class="small-muted">El usuario debe existir primero en Supabase Auth.</div>
+          </div>
+          <span class="badge ${canManage ? "green" : "amber"}">${canManage ? "Admin activo" : "Solo lectura"}</span>
+        </div>
+        <div class="admin-note">
+          Crea o invita a la persona en Supabase Auth, copia su UUID y guardala aqui con su rol y marcas. La app nunca usa service_role en el navegador.
+        </div>
+        <div class="form-grid">
+          <div class="field full">
+            <label>UUID de Supabase Auth</label>
+            <input class="input mono-input" id="admin-user-id" value="${escapeHtml(selectedUser?.id || "")}" ${isEditing ? "readonly" : ""} ${disabled} placeholder="00000000-0000-0000-0000-000000000000" />
+          </div>
+          <div class="field">
+            <label>Nombre completo</label>
+            <input class="input" id="admin-user-name" value="${escapeHtml(selectedUser?.name || "")}" ${disabled} />
+          </div>
+          <div class="field">
+            <label>Email</label>
+            <input class="input" id="admin-user-email" type="email" value="${escapeHtml(selectedUser?.email || "")}" ${disabled} />
+          </div>
+          <div class="field">
+            <label>Rol</label>
+            <select class="input" id="admin-user-role" ${disabled}>
+              ${Object.keys(roleLabels)
+                .map((role) => `<option value="${role}" ${selectedRole === role ? "selected" : ""}>${roleLabels[role]}</option>`)
+                .join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label>Estado</label>
+            <select class="input" id="admin-user-active" ${disabled}>
+              <option value="true" ${selectedUser?.isActive === false ? "" : "selected"}>Activo</option>
+              <option value="false" ${selectedUser?.isActive === false ? "selected" : ""}>Inactivo</option>
+            </select>
+          </div>
+          <div class="field full">
+            <label>Marcas asignadas</label>
+            ${renderAdminBrandChecks(selectedUser?.brands || [], !canManage)}
+            <div class="field-help">Admin y Directora pueden ver todo; las marcas ayudan a ordenar asignaciones y carga.</div>
+          </div>
+          <div class="full row wrap">
+            <button class="button" data-action="save-admin-user" ${canManage ? "" : "disabled"}>Guardar usuario</button>
+            <button class="button-ghost" data-action="new-admin-user" ${canManage ? "" : "disabled"}>Limpiar formulario</button>
+            ${
+              isEditing
+                ? `<button class="button-danger" data-action="${selectedUser.isActive === false ? "activate-admin-user" : "deactivate-admin-user"}" data-id="${selectedUser.id}" ${canManage ? "" : "disabled"}>
+                    ${selectedUser.isActive === false ? "Activar" : "Desactivar"}
+                  </button>`
+                : ""
+            }
+          </div>
+        </div>
       </div>
     </section>
   `;
 }
 
 function renderSettings() {
-  if (isAllBrandsScope()) {
-    return `
-      <section class="section">
-        ${renderLaunchReadiness()}
-        <section class="grid grid-2">
-          <div class="panel section">
-            <div class="section-header">
-              <h2 class="section-title">Plan tecnico inmediato</h2>
-              <span class="badge blue">Produccion interna</span>
-            </div>
-            <div class="stack">
-              <div class="mini-card">
-                <strong>1. Ejecutar schema MVP</strong>
-                <span class="muted">Usar supabase/launch_mvp.sql en el proyecto real.</span>
-              </div>
-              <div class="mini-card">
-                <strong>2. Crear usuarios y memberships</strong>
-                <span class="muted">Cada persona debe tener role y marcas asignadas antes de entrar.</span>
-              </div>
-              <div class="mini-card">
-                <strong>3. Conectar el frontend a Supabase</strong>
-                <span class="muted">OTs, responsables, comentarios, archivos y actividad dejan de ser mock.</span>
-              </div>
-              <div class="mini-card">
-                <strong>4. Activar emails</strong>
-                <span class="muted">Assignment, vencimientos y digest lunes con Edge Function.</span>
-              </div>
-            </div>
-          </div>
-          <div class="panel section">
-            <div class="section-header">
-              <h2 class="section-title">Modulos fuera del release 1</h2>
-              <span class="badge amber">Beta</span>
-            </div>
-            <p class="muted">Siguen en el prototipo, pero no aparecen en la navegacion del lanzamiento interno para que el equipo se enfoque en operar OTs.</p>
-            <div class="beta-module-grid">
-              ${launchBlockedModules.map((module) => `<span class="badge">${module.label}</span>`).join("")}
-            </div>
-          </div>
-        </section>
-      </section>
-    `;
-  }
-  const brand = getBrand();
+  const openOrders = workOrders.filter((order) => order.status !== "completed");
+  const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
+  const profile = dataState.profile;
+  const connectionLabel = isSupabaseMode() ? "Supabase" : "Demo local";
+  const connectionDetail = isSupabaseMode() ? "Datos compartidos activos" : "Usando datos del navegador";
+  const canManage = isSystemAdmin() || !isSupabaseMode();
   return `
-    <section class="grid grid-2">
-      <div class="panel section">
-        <h2 class="section-title">Marca</h2>
-        <div class="form-grid">
-          <div class="field">
-            <label>Nombre</label>
-            <input class="input" value="${brand.name}" />
+    <section class="section">
+      <section class="grid grid-4">
+        ${renderMetric("Conexion", connectionLabel, connectionDetail)}
+        ${renderMetric("Usuarios", users.length, `${internalUsers().length} internos activos`)}
+        ${renderMetric("Marcas", brands.length, `${clients.length} clientes`)}
+        ${renderMetric("OTs abiertas", openOrders.length, `${overdueOrders.length} vencidas`)}
+      </section>
+      <section class="grid grid-2">
+        <div class="panel section">
+          <div class="section-header">
+            <h2 class="section-title">Sesion</h2>
+            <span class="badge ${isSupabaseMode() ? "green" : "amber"}">${connectionLabel}</span>
           </div>
-          <div class="field">
-            <label>Cliente</label>
-            <input class="input" value="${getClient(brand.clientId).name}" />
-          </div>
-          <div class="field full">
-            <label>Servicios activos</label>
-            <input class="input" value="${brand.services.join(", ")}" />
-          </div>
-          <div class="field full">
-            <label>Canva folder</label>
-            <input class="input" value="${brand.canvaFolder}" />
+          <div class="stack">
+            <div class="mini-card">
+              <strong>${profile?.full_name || "Usuario demo"}</strong>
+              <span class="muted">${profile?.email || "Sin sesion Supabase"}</span>
+            </div>
+            <div class="mini-card">
+              <strong>Rol</strong>
+              <span class="muted">${roleLabels[profile?.role] || "Admin demo"}</span>
+            </div>
+            <div class="mini-card">
+              <strong>Permisos</strong>
+              <span class="muted">${canManage ? "Puede administrar usuarios y marcas" : "Puede consultar datos operativos"}</span>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="panel section">
-        <h2 class="section-title">Brand context IA</h2>
-        <div class="form-grid">
-          <div class="field full">
-            <label>Tono de voz</label>
-            <textarea class="textarea">Claro, util, cercano y orientado a accion.</textarea>
+        <div class="panel section">
+          <div class="section-header">
+            <h2 class="section-title">Sistema</h2>
+            <span class="badge blue">Operativo</span>
           </div>
-          <div class="field full">
-            <label>Frases prohibidas</label>
-            <input class="input" value="claims no validados, exceso de hashtags" />
+          <div class="quick-action-grid">
+            <button class="button" data-module="work-orders">Ordenes de trabajo</button>
+            <button class="button-ghost" data-module="team">Equipo</button>
+            <button class="button-ghost" data-module="notifications">Notificaciones</button>
+            <button class="button-danger" data-action="logout">Cerrar sesion</button>
           </div>
-          <button class="button full">Guardar configuracion</button>
         </div>
-      </div>
+      </section>
+      ${renderAdminUserManager(canManage)}
     </section>
   `;
 }
@@ -3118,7 +2906,7 @@ function bindEvents() {
   document.querySelectorAll("[data-module]").forEach((button) => {
     button.addEventListener("click", () => {
       if (!canOpenModule(button.dataset.module)) {
-        showToast("Modulo estacionado para despues del piloto interno");
+        showToast("Esta vista no esta disponible en el workspace operativo");
         return;
       }
       state.currentModule = button.dataset.module;
@@ -3140,8 +2928,8 @@ function bindEvents() {
       const contentId = button.dataset.content;
       const item = contentItems.find((contentItem) => contentItem.id === contentId);
       if (item) {
-        if (LAUNCH_MODE && !canOpenModule("content")) {
-          showToast("Contenido queda fuera del lanzamiento interno");
+        if (OPERATIONS_MODE && !canOpenModule("content")) {
+          showToast("Contenido no esta disponible en el workspace operativo");
           return;
         }
         state.currentBrandId = item.brandId;
@@ -3157,6 +2945,13 @@ function bindEvents() {
       state.currentBrandId = button.dataset.brandJump;
       const firstContent = brandItems(state.currentBrandId)[0];
       state.selectedContentId = firstContent?.id || null;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-edit-user]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.adminEditingUserId = button.dataset.editUser;
       render();
     });
   });
@@ -3210,7 +3005,7 @@ async function handleAction(action, id) {
     "approve-content": () => updateContentStatus(id, "approved", "Pieza aprobada"),
     "request-changes": () =>
       updateContentStatus(id, "changes_requested", "Cambios solicitados al equipo"),
-    "move-final": () => updateContentStage(id, "final", "Pieza movida a fase final"),
+    "move-final": () => updateContentStage(id, "final", "Pieza movida a etapa final"),
     "move-scheduled": () => updateContentStage(id, "scheduled", "Pieza programada dentro del calendario"),
     "add-comment": () => addContentComment(id),
     "approve-asset": () => approveAsset(id),
@@ -3236,6 +3031,10 @@ async function handleAction(action, id) {
     "create-work-order": () => createWorkOrderFromForm(),
     "advance-order": () => advanceWorkOrder(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
+    "new-admin-user": () => newAdminUser(),
+    "save-admin-user": () => saveAdminUser(),
+    "deactivate-admin-user": () => setAdminUserActive(id, false),
+    "activate-admin-user": () => setAdminUserActive(id, true),
   };
 
   if (actionMap[action]) {
@@ -3273,6 +3072,139 @@ async function logout() {
     return;
   }
   showToast("Sesion demo cerrada");
+}
+
+function newAdminUser() {
+  state.adminEditingUserId = "__new__";
+  render();
+}
+
+function getAdminUserFormValues() {
+  const id = document.getElementById("admin-user-id")?.value.trim();
+  const name = document.getElementById("admin-user-name")?.value.trim();
+  const email = document.getElementById("admin-user-email")?.value.trim();
+  const role = document.getElementById("admin-user-role")?.value || "creativo";
+  const isActive = document.getElementById("admin-user-active")?.value !== "false";
+  const brandIds = Array.from(document.querySelectorAll("[data-admin-user-brand]:checked")).map(
+    (input) => input.dataset.adminUserBrand,
+  );
+  return { id, name, email, role, isActive, brandIds };
+}
+
+function validateAdminUserForm(values) {
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!values.id || !uuidPattern.test(values.id)) return "Pega un UUID valido de Supabase Auth";
+  if (!values.name) return "Escribe el nombre completo";
+  if (!values.email || !values.email.includes("@")) return "Escribe un email valido";
+  if (!roleLabels[values.role]) return "Selecciona un rol valido";
+  return "";
+}
+
+async function saveAdminUser() {
+  if (isSupabaseMode() && !isSystemAdmin()) {
+    showToast("Solo Admin o Directora puede editar usuarios");
+    return;
+  }
+
+  const values = getAdminUserFormValues();
+  const validationError = validateAdminUserForm(values);
+  if (validationError) {
+    showToast(validationError);
+    return;
+  }
+  if (isSupabaseMode() && values.id === dataState.session?.user?.id && !["admin", "directora"].includes(values.role)) {
+    showToast("No puedes quitarte permisos de admin desde aqui");
+    return;
+  }
+  if (isSupabaseMode() && values.id === dataState.session?.user?.id && !values.isActive) {
+    showToast("No puedes desactivar tu propio usuario");
+    return;
+  }
+
+  try {
+    if (isSupabaseMode()) {
+      const { error: profileError } = await supabaseClient.from("profiles").upsert(
+        {
+          id: values.id,
+          full_name: values.name,
+          email: values.email,
+          role: values.role,
+          is_active: values.isActive,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "id" },
+      );
+      if (profileError) throw profileError;
+
+      const { error: deleteError } = await supabaseClient.from("brand_memberships").delete().eq("user_id", values.id);
+      if (deleteError) throw deleteError;
+
+      if (values.brandIds.length) {
+        const { error: membershipError } = await supabaseClient.from("brand_memberships").insert(
+          values.brandIds.map((brandId) => ({
+            user_id: values.id,
+            brand_id: brandId,
+            role: values.role,
+          })),
+        );
+        if (membershipError) throw membershipError;
+      }
+
+      await loadSupabaseData();
+    } else {
+      const existingIndex = users.findIndex((user) => user.id === values.id);
+      const nextUser = {
+        id: values.id,
+        name: values.name,
+        email: values.email,
+        role: values.role,
+        isActive: values.isActive,
+        brands: values.brandIds,
+        memberships: values.brandIds.map((brandId) => ({ user_id: values.id, brand_id: brandId, role: values.role })),
+      };
+      if (existingIndex >= 0) users.splice(existingIndex, 1, nextUser);
+      else users.push(nextUser);
+      saveUsers();
+    }
+
+    state.adminEditingUserId = values.id;
+    showToast("Usuario guardado");
+    render();
+  } catch (error) {
+    showToast(error.message || "No se pudo guardar el usuario");
+  }
+}
+
+async function setAdminUserActive(id, isActive) {
+  if (!id) return;
+  if (isSupabaseMode() && !isSystemAdmin()) {
+    showToast("Solo Admin o Directora puede editar usuarios");
+    return;
+  }
+  if (isSupabaseMode() && id === dataState.session?.user?.id && !isActive) {
+    showToast("No puedes desactivar tu propio usuario");
+    return;
+  }
+
+  try {
+    if (isSupabaseMode()) {
+      const { error } = await supabaseClient
+        .from("profiles")
+        .update({ is_active: isActive, updated_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+      await loadSupabaseData();
+    } else {
+      const user = users.find((item) => item.id === id);
+      if (user) user.isActive = isActive;
+      saveUsers();
+    }
+    state.adminEditingUserId = id;
+    showToast(isActive ? "Usuario activado" : "Usuario desactivado");
+    render();
+  } catch (error) {
+    showToast(error.message || "No se pudo actualizar el usuario");
+  }
 }
 
 function updateContentStatus(id, status, message) {
