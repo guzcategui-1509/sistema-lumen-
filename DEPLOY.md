@@ -75,4 +75,4 @@ Cuando `config.js` tiene valores reales, la app muestra login y lee/escribe:
 - Probar que el usuario admin entra.
 - Conectar OTs reales a Supabase.
 - Subir archivos a `work-order-files`.
-- Configurar emails con `email-worker` y `weekly-digest`.
+- Configurar emails con `email-worker` y `weekly-digest` siguiendo `EMAIL_SETUP.md`.

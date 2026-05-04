@@ -14,8 +14,20 @@ type WorkOrder = {
   brand_id: string;
 };
 
+type RequestProfile = {
+  role: string;
+  is_active: boolean;
+};
+
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const CRON_SECRET = Deno.env.get("CRON_SECRET") ?? "";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
 const headers = {
   "Content-Type": "application/json",
@@ -31,6 +43,56 @@ async function supabaseRequest(path: string, init: RequestInit = {}) {
     ...init,
     headers: requestHeaders,
   });
+}
+
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return Response.json(body, {
+    status,
+    headers: corsHeaders,
+  });
+}
+
+async function authorizeRequest(request: Request) {
+  if (CRON_SECRET && request.headers.get("x-cron-secret") === CRON_SECRET) {
+    return { ok: true };
+  }
+
+  const authHeader = request.headers.get("Authorization") ?? "";
+  if (!authHeader.startsWith("Bearer ")) {
+    return { ok: false, status: 401, error: "Missing Authorization header" };
+  }
+
+  const userResponse = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: {
+      apikey: SERVICE_ROLE_KEY,
+      Authorization: authHeader,
+    },
+  });
+
+  if (!userResponse.ok) {
+    return { ok: false, status: 401, error: "Invalid session" };
+  }
+
+  const user = (await userResponse.json()) as { id?: string };
+  if (!user.id) {
+    return { ok: false, status: 401, error: "Invalid session user" };
+  }
+
+  const profileResponse = await supabaseRequest(
+    `profiles?id=eq.${user.id}&select=role,is_active&limit=1`,
+  );
+
+  if (!profileResponse.ok) {
+    return { ok: false, status: 500, error: await profileResponse.text() };
+  }
+
+  const profiles = (await profileResponse.json()) as RequestProfile[];
+  const profile = profiles[0];
+  if (!profile?.is_active || !["admin", "directora"].includes(profile.role)) {
+    return { ok: false, status: 403, error: "Only admin or directora can queue weekly digest" };
+  }
+
+  return { ok: true };
 }
 
 function daysUntil(dateValue: string | null) {
@@ -85,9 +147,18 @@ function buildDigestHtml(orders: WorkOrder[]) {
   `;
 }
 
-Deno.serve(async () => {
+Deno.serve(async (request) => {
+  if (request.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-    return Response.json({ error: "Missing environment variables" }, { status: 500 });
+    return jsonResponse({ error: "Missing environment variables" }, 500);
+  }
+
+  const auth = await authorizeRequest(request);
+  if (!auth.ok) {
+    return jsonResponse({ error: auth.error ?? "Unauthorized" }, auth.status ?? 401);
   }
 
   const [profilesResponse, ordersResponse] = await Promise.all([
@@ -95,8 +166,8 @@ Deno.serve(async () => {
     supabaseRequest("work_orders?status=neq.completed&select=id,code,title,priority,status,due_date,brand_id"),
   ]);
 
-  if (!profilesResponse.ok) return Response.json({ error: await profilesResponse.text() }, { status: 500 });
-  if (!ordersResponse.ok) return Response.json({ error: await ordersResponse.text() }, { status: 500 });
+  if (!profilesResponse.ok) return jsonResponse({ error: await profilesResponse.text() }, 500);
+  if (!ordersResponse.ok) return jsonResponse({ error: await ordersResponse.text() }, 500);
 
   const profiles = (await profilesResponse.json()) as Profile[];
   const orders = (await ordersResponse.json()) as WorkOrder[];
@@ -124,7 +195,7 @@ Deno.serve(async () => {
   });
 
   if (!insertNotifications.ok) {
-    return Response.json({ error: await insertNotifications.text() }, { status: 500 });
+    return jsonResponse({ error: await insertNotifications.text() }, 500);
   }
 
   await supabaseRequest("weekly_digest_runs", {
@@ -140,7 +211,7 @@ Deno.serve(async () => {
     }),
   });
 
-  return Response.json({
+  return jsonResponse({
     queued: profiles.length,
     open_orders: openOrders.length,
     overdue_orders: overdueOrders.length,

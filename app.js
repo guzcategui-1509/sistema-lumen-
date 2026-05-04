@@ -2041,7 +2041,8 @@ function renderNotifications() {
           <p class="muted">Reglas para avisos de asignacion, vencimientos y digest semanal del equipo.</p>
         </div>
         <div class="quick-links">
-          <button class="button" data-action="preview-weekly-digest">Preparar digest lunes</button>
+          <button class="button" data-action="run-weekly-digest-now">Enviar digest ahora</button>
+          <button class="button-ghost" data-action="send-email-queue">Enviar cola</button>
           <button class="button-ghost" data-module="work-orders">Ver OTs</button>
         </div>
       </div>
@@ -2050,6 +2051,43 @@ function renderNotifications() {
         ${renderMetric("Vencidas", overdueOrders.length, "Incluidas como alerta roja")}
         ${renderMetric("Vencen manana", dueTomorrow.length, "Recordatorio 24h")}
         ${renderMetric("Destinatarios", internalUsers().length, "Equipo interno")}
+      </section>
+      <section class="grid grid-3">
+        <div class="panel section">
+          <h2 class="section-title">Proveedor de correo</h2>
+          <div class="stack">
+            <div class="mini-card">
+              <strong>Resend</strong>
+              <span class="muted">Usa RESEND_API_KEY y EMAIL_FROM en Supabase Edge Functions.</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel section">
+          <h2 class="section-title">Funciones activas</h2>
+          <div class="stack">
+            <div class="mini-card">
+              <strong>weekly-digest</strong>
+              <span class="muted">Crea emails en cola para el equipo interno.</span>
+            </div>
+            <div class="mini-card">
+              <strong>email-worker</strong>
+              <span class="muted">Envia correos reales pendientes en la cola.</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel section">
+          <h2 class="section-title">Seguridad</h2>
+          <div class="stack">
+            <div class="mini-card">
+              <strong>Admin / Directora</strong>
+              <span class="muted">Solo estos roles pueden disparar emails desde la app.</span>
+            </div>
+            <div class="mini-card">
+              <strong>CRON_SECRET</strong>
+              <span class="muted">Permite automatizar lunes 8:00 sin exponer service_role.</span>
+            </div>
+          </div>
+        </div>
       </section>
       <section class="grid grid-2">
         <div class="panel section">
@@ -2076,7 +2114,10 @@ function renderNotifications() {
         <div class="panel section">
           <div class="section-header">
             <h2 class="section-title">Preview digest lunes</h2>
-            <button class="button-ghost small" data-action="preview-weekly-digest">Actualizar preview</button>
+            <div class="row wrap">
+              <button class="button-ghost small" data-action="queue-weekly-digest">Crear cola</button>
+              <button class="button-ghost small" data-action="preview-weekly-digest">Preview</button>
+            </div>
           </div>
           ${renderWeeklyDigestPreview()}
         </div>
@@ -3031,6 +3072,9 @@ async function handleAction(action, id) {
     "create-work-order": () => createWorkOrderFromForm(),
     "advance-order": () => advanceWorkOrder(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
+    "queue-weekly-digest": () => queueWeeklyDigest(),
+    "send-email-queue": () => sendEmailQueue(),
+    "run-weekly-digest-now": () => runWeeklyDigestNow(),
     "new-admin-user": () => newAdminUser(),
     "save-admin-user": () => saveAdminUser(),
     "deactivate-admin-user": () => setAdminUserActive(id, false),
@@ -3434,7 +3478,63 @@ async function advanceWorkOrder(id) {
 function previewWeeklyDigest() {
   const totalOpen = workOrders.filter((order) => order.status !== "completed").length;
   const totalOverdue = workOrders.filter((order) => order.status !== "completed" && daysUntil(order.dueDate) < 0).length;
-  showToast(`Digest preparado: ${totalOpen} abiertas, ${totalOverdue} vencidas. No se envio email real.`);
+  showToast(`Preview digest: ${totalOpen} abiertas, ${totalOverdue} vencidas. No se envio email real.`);
+}
+
+async function invokeEmailFunction(functionName, successMessage) {
+  if (!isSupabaseMode()) {
+    showToast("Conecta Supabase para usar emails reales");
+    return null;
+  }
+  if (!isSystemAdmin()) {
+    showToast("Solo Admin o Directora puede enviar correos");
+    return null;
+  }
+
+  try {
+    const { data, error } = await supabaseClient.functions.invoke(functionName, {
+      body: { triggered_by: dataState.session?.user?.id },
+    });
+    if (error) throw error;
+    showToast(typeof successMessage === "function" ? successMessage(data) : successMessage);
+    return data;
+  } catch (error) {
+    showToast(error.message || `No se pudo ejecutar ${functionName}`);
+    return null;
+  }
+}
+
+async function queueWeeklyDigest() {
+  return invokeEmailFunction(
+    "weekly-digest",
+    (data) => `Digest en cola para ${data?.queued ?? 0} personas`,
+  );
+}
+
+async function sendEmailQueue() {
+  const confirmed = window.confirm(
+    "Esto enviara correos reales a los destinatarios que estan en la cola de email_notifications usando Resend. ¿Enviar ahora?",
+  );
+  if (!confirmed) return null;
+
+  return invokeEmailFunction(
+    "email-worker",
+    (data) => `Correos procesados: ${data?.processed ?? 0}`,
+  );
+}
+
+async function runWeeklyDigestNow() {
+  const confirmed = window.confirm(
+    "Esto creara el digest semanal y enviara correos reales al equipo interno activo. ¿Enviar digest ahora?",
+  );
+  if (!confirmed) return;
+
+  const queued = await queueWeeklyDigest();
+  if (!queued) return;
+  await invokeEmailFunction(
+    "email-worker",
+    (data) => `Digest enviado. Correos procesados: ${data?.processed ?? 0}`,
+  );
 }
 
 function approveAsset(id) {
