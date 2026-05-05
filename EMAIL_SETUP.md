@@ -19,6 +19,7 @@ Variables necesarias en Supabase:
 - `BREVO_API_KEY`: API key de Brevo.
 - `EMAIL_FROM`: remitente validado, por ejemplo `Lumen Workspace <workspace@grupolumen.com>`.
 - `CRON_SECRET`: texto secreto largo para automatizaciones externas.
+- `APP_URL`: URL publica de Vercel, para que los botones de los correos abran Lumen Workspace.
 
 En Brevo:
 
@@ -58,6 +59,7 @@ supabase link --project-ref gxvvamripgwtzrmhmaiz
 supabase secrets set BREVO_API_KEY="xkeysib_xxx"
 supabase secrets set EMAIL_FROM="Lumen Workspace <workspace@grupolumen.com>"
 supabase secrets set CRON_SECRET="un-secreto-largo-y-privado"
+supabase secrets set APP_URL="https://tu-app.vercel.app"
 supabase functions deploy weekly-digest --no-verify-jwt
 supabase functions deploy email-worker --no-verify-jwt
 ```
