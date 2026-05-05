@@ -12,7 +12,7 @@ type Profile = {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
+const BREVO_API_KEY = Deno.env.get("BREVO_API_KEY") ?? "";
 const EMAIL_FROM = Deno.env.get("EMAIL_FROM") ?? "Lumen Workspace <workspace@grupolumen.com>";
 const CRON_SECRET = Deno.env.get("CRON_SECRET") ?? "";
 
@@ -96,28 +96,49 @@ async function markNotification(id: string, payload: Record<string, unknown>) {
   });
 }
 
+function parseEmailFrom(value: string) {
+  const match = value.match(/^(.*)<([^>]+)>$/);
+  if (match) {
+    return {
+      name: match[1].trim().replace(/^"|"$/g, "") || "Lumen Workspace",
+      email: match[2].trim(),
+    };
+  }
+  return {
+    name: "Lumen Workspace",
+    email: value.trim(),
+  };
+}
+
 async function sendEmail(notification: EmailNotification) {
-  const response = await fetch("https://api.resend.com/emails", {
+  const sender = parseEmailFrom(EMAIL_FROM);
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: {
+      accept: "application/json",
       "Content-Type": "application/json",
-      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "api-key": BREVO_API_KEY,
     },
     body: JSON.stringify({
-      from: EMAIL_FROM,
-      to: [notification.recipient_email],
+      sender,
+      to: [{ email: notification.recipient_email }],
       subject: notification.subject,
-      html: notification.html_body ?? "<p>Tienes una actualizacion en Lumen Workspace.</p>",
+      htmlContent: notification.html_body ?? "<p>Tienes una actualizacion en Lumen Workspace.</p>",
+      tags: ["lumen-workspace"],
     }),
   });
 
-  const result = (await response.json().catch(() => ({}))) as { id?: string; message?: string };
+  const result = (await response.json().catch(() => ({}))) as {
+    code?: string;
+    message?: string;
+    messageId?: string;
+  };
 
   if (!response.ok) {
-    throw new Error(result?.message ?? "Email provider failed");
+    throw new Error(result?.message ?? result?.code ?? "Brevo email provider failed");
   }
 
-  return result?.id ?? null;
+  return result?.messageId ?? null;
 }
 
 Deno.serve(async (request) => {
@@ -125,7 +146,7 @@ Deno.serve(async (request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !RESEND_API_KEY) {
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !BREVO_API_KEY) {
     return jsonResponse({ error: "Missing environment variables" }, 500);
   }
 

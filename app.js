@@ -365,28 +365,28 @@ const notificationRules = [
   {
     id: "assignment",
     title: "Asignacion de OT",
-    channel: "Email + in-app",
-    recipients: "Responsable asignado",
+    channel: "Correo + aviso dentro del sistema",
+    recipients: "Responsables asignados",
     enabled: true,
   },
   {
     id: "deadline-24h",
     title: "Deadline en 24h",
-    channel: "Email",
-    recipients: "Responsable + directora",
+    channel: "Correo",
+    recipients: "Responsables + directora",
     enabled: true,
   },
   {
     id: "overdue",
     title: "OT vencida",
-    channel: "Email + in-app",
-    recipients: "Responsable + creador + directora",
+    channel: "Correo + aviso dentro del sistema",
+    recipients: "Responsables + creador + directora",
     enabled: true,
   },
   {
     id: "weekly-digest",
     title: "Digest lunes 8:00am",
-    channel: "Email",
+    channel: "Correo",
     recipients: "Equipo interno completo",
     enabled: true,
   },
@@ -2012,7 +2012,7 @@ function renderWorkOrders() {
             <h2 class="section-title">Digest semanal</h2>
             <div class="small-muted">${weeklyDigestConfig.day} ${weeklyDigestConfig.time} / ${weeklyDigestConfig.timezone}</div>
           </div>
-          <button class="button small" data-action="preview-weekly-digest">Preparar email</button>
+          <button class="button small" data-action="preview-weekly-digest">Ver resumen</button>
         </div>
         ${renderWeeklyDigestPreview()}
       </div>
@@ -2111,13 +2111,13 @@ function renderNotifications() {
         <div>
           <div class="hero-title">
             <h2>Notificaciones de OTs</h2>
-            <span class="badge blue">Email operativo</span>
+            <span class="badge blue">Correo operativo</span>
           </div>
-          <p class="muted">Reglas para avisos de asignacion, vencimientos y digest semanal del equipo.</p>
+          <p class="muted">Correos automaticos para asignaciones, vencimientos y resumen semanal del equipo.</p>
         </div>
         <div class="quick-links">
-          <button class="button" data-action="run-weekly-digest-now">Enviar digest ahora</button>
-          <button class="button-ghost" data-action="send-email-queue">Enviar cola</button>
+          <button class="button" data-action="run-weekly-digest-now">Preparar y enviar ahora</button>
+          <button class="button-ghost" data-action="send-email-queue">Enviar pendientes</button>
           <button class="button-ghost" data-module="work-orders">Ver OTs</button>
         </div>
       </div>
@@ -2129,24 +2129,32 @@ function renderNotifications() {
       </section>
       <section class="grid grid-3">
         <div class="panel section">
-          <h2 class="section-title">Proveedor de correo</h2>
+          <h2 class="section-title">Proveedor recomendado</h2>
           <div class="stack">
             <div class="mini-card">
-              <strong>Resend</strong>
-              <span class="muted">Usa RESEND_API_KEY y EMAIL_FROM en Supabase Edge Functions.</span>
+              <strong>Brevo</strong>
+              <span class="muted">Proveedor elegido para correos transaccionales, con API, logs y base para futuras automatizaciones.</span>
+            </div>
+            <div class="mini-card">
+              <strong>Que hay que configurar</strong>
+              <span class="muted">Sender validado, API key y remitente tipo Lumen Workspace &lt;workspace@grupolumen.com&gt;.</span>
             </div>
           </div>
         </div>
         <div class="panel section">
-          <h2 class="section-title">Funciones activas</h2>
+          <h2 class="section-title">Como funciona</h2>
           <div class="stack">
             <div class="mini-card">
-              <strong>weekly-digest</strong>
-              <span class="muted">Crea emails en cola para el equipo interno.</span>
+              <strong>1. Preparar correos</strong>
+              <span class="muted">El sistema arma los mensajes y los deja listos para enviar.</span>
             </div>
             <div class="mini-card">
-              <strong>email-worker</strong>
-              <span class="muted">Envia correos reales pendientes en la cola.</span>
+              <strong>2. Enviar pendientes</strong>
+              <span class="muted">Brevo toma los correos preparados y los manda al equipo.</span>
+            </div>
+            <div class="mini-card">
+              <strong>3. Automatizar</strong>
+              <span class="muted">El digest puede correr solo todos los lunes a las 8:00am.</span>
             </div>
           </div>
         </div>
@@ -2158,8 +2166,8 @@ function renderNotifications() {
               <span class="muted">Solo estos roles pueden disparar emails desde la app.</span>
             </div>
             <div class="mini-card">
-              <strong>CRON_SECRET</strong>
-              <span class="muted">Permite automatizar lunes 8:00 sin exponer service_role.</span>
+              <strong>Llaves privadas fuera del navegador</strong>
+              <span class="muted">La API key de Brevo y el secreto de automatizacion viven solo en Supabase.</span>
             </div>
           </div>
         </div>
@@ -2188,12 +2196,13 @@ function renderNotifications() {
         </div>
         <div class="panel section">
           <div class="section-header">
-            <h2 class="section-title">Preview digest lunes</h2>
+            <h2 class="section-title">Resumen del lunes</h2>
             <div class="row wrap">
-              <button class="button-ghost small" data-action="queue-weekly-digest">Crear cola</button>
-              <button class="button-ghost small" data-action="preview-weekly-digest">Preview</button>
+              <button class="button-ghost small" data-action="queue-weekly-digest">Preparar sin enviar</button>
+              <button class="button-ghost small" data-action="preview-weekly-digest">Ver resumen</button>
             </div>
           </div>
+          <div class="small-muted">Preparar sin enviar solo deja los correos listos; no salen hasta tocar "Enviar pendientes".</div>
           ${renderWeeklyDigestPreview()}
         </div>
       </section>
@@ -2732,7 +2741,7 @@ function renderTeam() {
               <th>Rol</th>
               <th>Estado</th>
               <th>Marcas</th>
-              <th>Email operativo</th>
+              <th>Correo operativo</th>
             </tr>
           </thead>
           <tbody>
@@ -3699,7 +3708,7 @@ async function advanceWorkOrder(id) {
 function previewWeeklyDigest() {
   const totalOpen = workOrders.filter(isOpenWorkOrder).length;
   const totalOverdue = workOrders.filter((order) => isOpenWorkOrder(order) && daysUntil(order.dueDate) < 0).length;
-  showToast(`Preview digest: ${totalOpen} abiertas, ${totalOverdue} vencidas. No se envio email real.`);
+  showToast(`Resumen semanal: ${totalOpen} OTs abiertas y ${totalOverdue} vencidas. Esto solo es vista previa.`);
 }
 
 async function invokeEmailFunction(functionName, successMessage) {
@@ -3728,25 +3737,25 @@ async function invokeEmailFunction(functionName, successMessage) {
 async function queueWeeklyDigest() {
   return invokeEmailFunction(
     "weekly-digest",
-    (data) => `Digest en cola para ${data?.queued ?? 0} personas`,
+    (data) => `Correos preparados para ${data?.queued ?? 0} personas. Aun no se han enviado.`,
   );
 }
 
 async function sendEmailQueue() {
   const confirmed = window.confirm(
-    "Esto enviara correos reales a los destinatarios que estan en la cola de email_notifications usando Resend. ¿Enviar ahora?",
+    "Esto enviara los correos que ya estan preparados usando Brevo. Si hay correos pendientes, el equipo los recibira ahora. ¿Enviar pendientes?",
   );
   if (!confirmed) return null;
 
   return invokeEmailFunction(
     "email-worker",
-    (data) => `Correos procesados: ${data?.processed ?? 0}`,
+    (data) => `Correos enviados o revisados: ${data?.processed ?? 0}`,
   );
 }
 
 async function runWeeklyDigestNow() {
   const confirmed = window.confirm(
-    "Esto creara el digest semanal y enviara correos reales al equipo interno activo. ¿Enviar digest ahora?",
+    "Esto preparara el resumen semanal y lo enviara de inmediato al equipo interno activo. ¿Preparar y enviar ahora?",
   );
   if (!confirmed) return;
 
@@ -3754,7 +3763,7 @@ async function runWeeklyDigestNow() {
   if (!queued) return;
   await invokeEmailFunction(
     "email-worker",
-    (data) => `Digest enviado. Correos procesados: ${data?.processed ?? 0}`,
+    (data) => `Resumen semanal enviado. Correos procesados: ${data?.processed ?? 0}`,
   );
 }
 

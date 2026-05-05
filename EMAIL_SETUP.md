@@ -1,32 +1,48 @@
 # Lumen Workspace Email Setup
 
-## Proveedor
+## Recomendacion
 
-El sistema queda preparado para enviar correos con Resend desde Supabase Edge Functions.
+Usar **Brevo** para el MVP. Ya queda conectado por API transaccional y tambien deja abierta la puerta para listas, templates y automatizaciones mas adelante.
+
+Lenguaje dentro del sistema:
+
+- **Preparar correos**: el sistema arma los mensajes y los deja listos.
+- **Enviar pendientes**: manda los correos preparados usando Brevo.
+- **Preparar y enviar ahora**: hace ambos pasos en una sola accion.
+
+Por debajo esos correos preparados viven en `email_notifications`, pero el equipo no necesita ver ni entender la palabra "cola".
+
+## Variables
 
 Variables necesarias en Supabase:
 
-- `RESEND_API_KEY`: API key de Resend.
+- `BREVO_API_KEY`: API key de Brevo.
 - `EMAIL_FROM`: remitente validado, por ejemplo `Lumen Workspace <workspace@grupolumen.com>`.
 - `CRON_SECRET`: texto secreto largo para automatizaciones externas.
+
+En Brevo:
+
+1. Crea o confirma un **sender** transaccional.
+2. Verifica el dominio o sender antes de usarlo en produccion.
+3. Crea una API key con permiso para enviar emails transaccionales.
 
 Supabase ya expone por defecto dentro de Edge Functions:
 
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
-Nunca pongas `SUPABASE_SERVICE_ROLE_KEY` ni `RESEND_API_KEY` en `config.js`, Vercel frontend o navegador.
+Nunca pongas `SUPABASE_SERVICE_ROLE_KEY` ni `BREVO_API_KEY` en `config.js`, Vercel frontend o navegador.
 
 ## Funciones
 
-- `weekly-digest`: crea emails en cola para todo el equipo interno activo.
-- `email-worker`: procesa `email_notifications` y envia correos reales con Resend.
+- `weekly-digest`: prepara el resumen semanal para todo el equipo interno activo.
+- `email-worker`: envia los correos preparados con Brevo.
 
 Desde la app:
 
-- `Notificaciones > Crear cola`: crea el digest en `email_notifications`.
-- `Notificaciones > Enviar cola`: envia correos reales pendientes.
-- `Notificaciones > Enviar digest ahora`: crea la cola y la envia en un solo flujo.
+- `Notificaciones > Preparar sin enviar`: prepara el digest en `email_notifications`.
+- `Notificaciones > Enviar pendientes`: envia correos reales pendientes.
+- `Notificaciones > Preparar y enviar ahora`: prepara el digest y lo envia en un solo flujo.
 
 Solo usuarios `admin` o `directora` pueden disparar estas funciones desde la app.
 
@@ -37,7 +53,7 @@ Si tienes Supabase CLI instalado:
 ```bash
 supabase login
 supabase link --project-ref gxvvamripgwtzrmhmaiz
-supabase secrets set RESEND_API_KEY="re_xxx"
+supabase secrets set BREVO_API_KEY="xkeysib_xxx"
 supabase secrets set EMAIL_FROM="Lumen Workspace <workspace@grupolumen.com>"
 supabase secrets set CRON_SECRET="un-secreto-largo-y-privado"
 supabase functions deploy weekly-digest --no-verify-jwt
@@ -49,10 +65,14 @@ usuario `admin/directora` desde la app, o `x-cron-secret` para automatizaciones.
 
 ## Automatizacion lunes 8:00
 
-Para automatizar, programa dos llamadas seguras:
+Opcion recomendada: programarlo dentro de Supabase con `pg_cron` + `pg_net`.
 
-1. Lunes 8:00: invocar `weekly-digest`.
-2. Lunes 8:02: invocar `email-worker`.
+Programa dos llamadas seguras:
+
+1. Lunes 8:00 Guatemala/Mexico: invocar `weekly-digest`.
+2. Lunes 8:02 Guatemala/Mexico: invocar `email-worker`.
+
+En el SQL usamos `14:00 UTC` y `14:02 UTC`, equivalente a 8:00am y 8:02am en Guatemala/Mexico.
 
 Cada request debe enviar el header:
 
@@ -61,3 +81,11 @@ x-cron-secret: un-secreto-largo-y-privado
 ```
 
 Tambien puedes correr `email-worker` cada 5 minutos si quieres que asignaciones de OTs salgan casi en tiempo real.
+
+Hay un SQL base listo en:
+
+```text
+supabase/schedule_email_automation.sql
+```
+
+Antes de ejecutarlo, reemplaza `REPLACE_WITH_YOUR_CRON_SECRET` por el mismo valor que guardaste en `CRON_SECRET`.
