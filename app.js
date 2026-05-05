@@ -133,13 +133,35 @@ const brands = [
   {
     id: "repuestos-continental",
     clientId: "continental",
-    name: "Repuestos y Talleres Continental",
+    name: "Repuestos",
     shortName: "Repuestos",
     color: "#2d2d2d",
     platforms: ["Facebook", "Instagram"],
     services: ["Publicacion", "Comunidad", "Reporteria", "Pauta Meta"],
     monthlyGoal: 10,
     canvaFolder: "Continental / Repuestos",
+  },
+  {
+    id: "talleres-continental",
+    clientId: "continental",
+    name: "Talleres",
+    shortName: "Talleres",
+    color: "#49ee8c",
+    platforms: ["Facebook", "Instagram"],
+    services: ["Publicacion", "Comunidad", "Reporteria", "Pauta Meta"],
+    monthlyGoal: 10,
+    canvaFolder: "Continental / Talleres",
+  },
+  {
+    id: "usados-continental",
+    clientId: "continental",
+    name: "Usados",
+    shortName: "Usados",
+    color: "#5d5d56",
+    platforms: ["Facebook", "Instagram"],
+    services: ["Pauta Meta"],
+    monthlyGoal: 0,
+    canvaFolder: "Continental / Usados",
   },
   {
     id: "seguros-continental",
@@ -241,6 +263,17 @@ const brands = [
     canvaFolder: "Danone GT / Danonino",
   },
   {
+    id: "bonafont-gt",
+    clientId: "danone",
+    name: "Bonafont",
+    shortName: "Bonafont",
+    color: "#166274",
+    platforms: ["Facebook", "Instagram"],
+    services: ["Publicacion", "Comunidad", "Reporteria", "Pauta Meta"],
+    monthlyGoal: 10,
+    canvaFolder: "Danone GT / Bonafont",
+  },
+  {
     id: "solarsa-gt",
     clientId: "solarsa",
     name: "Solarsa GT",
@@ -284,79 +317,50 @@ const brands = [
     monthlyGoal: 4,
     canvaFolder: "Lumen / Agencia",
   },
+  {
+    id: "constructivos",
+    clientId: "lumen",
+    name: "Constructivos",
+    shortName: "Constructivos",
+    color: "#49ee8c",
+    platforms: ["Facebook", "Instagram"],
+    services: ["Publicacion", "Comunidad", "Reporteria"],
+    monthlyGoal: 8,
+    canvaFolder: "Lumen / Constructivos",
+  },
+  {
+    id: "lumen-proyectos",
+    clientId: "lumen",
+    name: "Proyectos",
+    shortName: "Proyectos",
+    color: "#7356a6",
+    platforms: ["Facebook", "Instagram"],
+    services: ["Publicacion", "Produccion", "Reporteria"],
+    monthlyGoal: 8,
+    canvaFolder: "Lumen / Proyectos",
+  },
+  {
+    id: "lumen-pitch",
+    clientId: "lumen",
+    name: "Pitch",
+    shortName: "Pitch",
+    color: "#2d2d2d",
+    platforms: ["Facebook", "Instagram"],
+    services: ["Publicacion", "Produccion", "Desarrollo"],
+    monthlyGoal: 6,
+    canvaFolder: "Lumen / Pitch",
+  },
 ];
 
 const users = loadStoredCollection("lumen_users_v1", []);
 
-let workOrders = [
-  {
-    id: "OT-SILK-047",
-    brandId: "silk-gt",
-    title: "Carrusel beneficios bebida de almendra",
-    status: "in_review",
-    priority: "high",
-    category: "diseno",
-    dueDate: "2026-05-02",
-    assignee: "andrea",
-    assignees: ["andrea", "vale"],
-    description: "Disenar carrusel final con beneficios, claims validados y CTA a producto.",
-    files: [
-      { name: "brief-silk-carrusel.pdf", size: 128000, type: "application/pdf" },
-      { name: "referencia-empaque.png", size: 84000, type: "image/png" },
-    ],
-    createdBy: "vale",
-    notifyOnEmail: true,
-    linkedContentId: "ci-silk-01",
-  },
-  {
-    id: "OT-DANONE-018",
-    brandId: "danone-gt",
-    title: "Copy campaña desayuno práctico",
-    status: "in_progress",
-    priority: "medium",
-    category: "copy",
-    dueDate: "2026-05-03",
-    assignee: "vale",
-    assignees: ["vale"],
-    description: "Preparar caption y variantes de hook para desayuno practico.",
-    files: [{ name: "notas-copy-danone.docx", size: 67000, type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }],
-    createdBy: "giu",
-    notifyOnEmail: true,
-    linkedContentId: "ci-danone-01",
-  },
-  {
-    id: "OT-JIM-012",
-    brandId: "jim-gt",
-    title: "Guion TikTok prueba de manejo",
-    status: "new",
-    priority: "medium",
-    category: "produccion",
-    dueDate: "2026-05-05",
-    assignee: "diego",
-    assignees: ["diego", "andrea"],
-    description: "Estructurar guion con escenas, hook y CTA para test drive.",
-    files: [],
-    createdBy: "giu",
-    notifyOnEmail: true,
-    linkedContentId: "ci-jim-01",
-  },
-  {
-    id: "OT-LUMEN-021",
-    brandId: "lumen-agencia",
-    title: "Post cultura interna Lumen",
-    status: "completed",
-    priority: "low",
-    category: "diseno",
-    dueDate: "2026-04-29",
-    assignee: "andrea",
-    assignees: ["andrea"],
-    description: "Post interno de cultura Lumen con visual final aprobado.",
-    files: [{ name: "bts-equipo-final.jpg", size: 214000, type: "image/jpeg" }],
-    createdBy: "giu",
-    notifyOnEmail: false,
-    linkedContentId: "ci-lumen-01",
-  },
-];
+const demoWorkOrdersResetVersion = "2026-05-05-clean-work-orders";
+if (localStorage.getItem("lumen_work_orders_reset_version") !== demoWorkOrdersResetVersion) {
+  localStorage.removeItem("lumen_work_orders_v1");
+  localStorage.setItem("lumen_work_orders_reset_version", demoWorkOrdersResetVersion);
+}
+
+let workOrders = [];
 
 const initialWorkOrders = workOrders.map((order) => ({ ...order }));
 workOrders = loadStoredCollection("lumen_work_orders_v1", initialWorkOrders);
@@ -373,14 +377,14 @@ const notificationRules = [
     id: "deadline-24h",
     title: "Deadline en 24h",
     channel: "Correo",
-    recipients: "Responsables + directora",
+    recipients: "Responsables + direccion",
     enabled: true,
   },
   {
     id: "overdue",
     title: "OT vencida",
     channel: "Correo + aviso dentro del sistema",
-    recipients: "Responsables + creador + directora",
+    recipients: "Responsables + creador + direccion",
     enabled: true,
   },
   {
@@ -670,11 +674,17 @@ const workOrderCategoryLabels = {
 
 const roleLabels = {
   admin: "Admin",
-  directora: "Directora",
+  directora: "Direccion",
+  cuentas: "Cuentas",
+  medios: "Medios",
   creativo: "Creativo",
   disenador: "Disenador",
+  editor: "Editor",
+  generador: "Generador",
   community: "Community",
   pauta: "Pauta",
+  operaciones: "Operaciones",
+  ejecutivo: "Ejecutivo",
   cliente: "Cliente",
 };
 
@@ -2243,7 +2253,7 @@ function renderNotifications() {
           <h2 class="section-title">Seguridad</h2>
           <div class="stack">
             <div class="mini-card">
-              <strong>Admin / Directora</strong>
+              <strong>Admin / Direccion</strong>
               <span class="muted">Solo estos roles pueden disparar emails desde la app.</span>
             </div>
             <div class="mini-card">
@@ -3035,7 +3045,7 @@ function renderAdminUserManager(canManage) {
           <div class="field full">
             <label>Marcas asignadas</label>
             ${renderAdminBrandChecks(selectedUser?.brands || [], !canManage)}
-            <div class="field-help">Admin y Directora pueden ver todo; las marcas ayudan a ordenar asignaciones y carga.</div>
+            <div class="field-help">Admin y Direccion pueden ver todo; las marcas ayudan a ordenar asignaciones y carga.</div>
           </div>
           <div class="full row wrap">
             <button class="button" data-action="save-admin-user" ${canManage ? "" : "disabled"}>Guardar usuario</button>
@@ -3321,7 +3331,7 @@ function validateAdminUserForm(values) {
 
 async function saveAdminUser() {
   if (isSupabaseMode() && !isSystemAdmin()) {
-    showToast("Solo Admin o Directora puede editar usuarios");
+    showToast("Solo Admin o Direccion puede editar usuarios");
     return;
   }
 
@@ -3397,7 +3407,7 @@ async function saveAdminUser() {
 async function setAdminUserActive(id, isActive) {
   if (!id) return;
   if (isSupabaseMode() && !isSystemAdmin()) {
-    showToast("Solo Admin o Directora puede editar usuarios");
+    showToast("Solo Admin o Direccion puede editar usuarios");
     return;
   }
   if (isSupabaseMode() && id === dataState.session?.user?.id && !isActive) {
@@ -3883,7 +3893,7 @@ async function invokeEmailFunction(functionName, successMessage) {
     return null;
   }
   if (!isSystemAdmin()) {
-    showToast("Solo Admin o Directora puede enviar correos");
+    showToast("Solo Admin o Direccion puede enviar correos");
     return null;
   }
 

@@ -9,10 +9,16 @@ BEGIN
   CREATE TYPE app_role AS ENUM (
     'admin',
     'directora',
+    'cuentas',
+    'medios',
     'creativo',
     'disenador',
+    'editor',
+    'generador',
     'community',
     'pauta',
+    'operaciones',
+    'ejecutivo',
     'cliente'
   );
 EXCEPTION
@@ -538,8 +544,8 @@ INSERT INTO notification_rules (rule_key, title, channel, recipients, is_enabled
   ('assignment', 'Asignacion de OT', 'email,in_app', 'assigned_user', true),
   ('comment', 'Comentario en OT', 'email,in_app', 'assigned_users,created_by', true),
   ('status_change', 'Cambio de estado de OT', 'in_app', 'assigned_users,created_by', true),
-  ('deadline_24h', 'Deadline en 24h', 'email', 'assigned_users,directora', true),
-  ('overdue', 'OT vencida', 'email,in_app', 'assigned_users,created_by,directora', true),
+  ('deadline_24h', 'Deadline en 24h', 'email', 'assigned_users,direccion', true),
+  ('overdue', 'OT vencida', 'email,in_app', 'assigned_users,created_by,direccion', true),
   ('weekly_digest', 'Digest lunes 8am', 'email', 'internal_team', true)
 ON CONFLICT (rule_key) DO UPDATE SET
   title = EXCLUDED.title,

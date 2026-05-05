@@ -97,7 +97,7 @@ async function authorizeRequest(request: Request) {
   const profiles = (await profileResponse.json()) as RequestProfile[];
   const profile = profiles[0];
   if (!profile?.is_active || !["admin", "directora"].includes(profile.role)) {
-    return { ok: false, status: 403, error: "Only admin or directora can queue weekly digest" };
+    return { ok: false, status: 403, error: "Only admin or direccion can queue weekly digest" };
   }
 
   return { ok: true };
