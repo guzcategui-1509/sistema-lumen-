@@ -135,7 +135,7 @@ const brands = [
     clientId: "continental",
     name: "Repuestos y Talleres Continental",
     shortName: "Repuestos",
-    color: "#18345d",
+    color: "#2d2d2d",
     platforms: ["Facebook", "Instagram"],
     services: ["Publicacion", "Comunidad", "Reporteria", "Pauta Meta"],
     monthlyGoal: 10,
@@ -146,7 +146,7 @@ const brands = [
     clientId: "continental",
     name: "Seguros y Fianzas Continental",
     shortName: "Seguros",
-    color: "#2f9a68",
+    color: "#49ee8c",
     platforms: ["Facebook", "Instagram"],
     services: ["Publicacion", "Pauta Meta"],
     monthlyGoal: 5,
@@ -168,7 +168,7 @@ const brands = [
     clientId: "continental",
     name: "Leap GT",
     shortName: "Leap",
-    color: "#127990",
+    color: "#3f7060",
     platforms: ["TikTok"],
     services: ["Publicacion", "Comunidad", "Reporteria", "Pauta TikTok", "ManyChat"],
     monthlyGoal: 10,
@@ -201,7 +201,7 @@ const brands = [
     clientId: "continental",
     name: "Bestune GT",
     shortName: "Bestune",
-    color: "#24466f",
+    color: "#5d5d56",
     platforms: ["TikTok"],
     services: ["Publicacion", "Comunidad", "Reporteria", "Pauta TikTok", "ManyChat"],
     monthlyGoal: 10,
@@ -212,7 +212,7 @@ const brands = [
     clientId: "danone",
     name: "Danone",
     shortName: "Danone",
-    color: "#127990",
+    color: "#3f7060",
     platforms: ["Facebook", "Instagram"],
     services: ["Publicacion", "Comunidad", "Reporteria", "Pauta Meta"],
     monthlyGoal: 10,
@@ -223,7 +223,7 @@ const brands = [
     clientId: "danone",
     name: "Silk",
     shortName: "Silk",
-    color: "#2f9a68",
+    color: "#49ee8c",
     platforms: ["Facebook", "Instagram"],
     services: ["Publicacion", "Comunidad", "Reporteria", "Pauta Meta"],
     monthlyGoal: 10,
@@ -256,7 +256,7 @@ const brands = [
     clientId: "wash-go",
     name: "Wash and Go GT",
     shortName: "Wash and Go",
-    color: "#18345d",
+    color: "#2d2d2d",
     platforms: ["Facebook", "Instagram"],
     services: ["Publicacion", "Comunidad", "Reporteria", "Pauta Meta"],
     monthlyGoal: 9,
@@ -278,7 +278,7 @@ const brands = [
     clientId: "lumen",
     name: "Lumen Agencia",
     shortName: "Agencia",
-    color: "#127990",
+    color: "#3f7060",
     platforms: ["Facebook", "Instagram"],
     services: ["Publicacion", "Comunidad", "Reporteria"],
     monthlyGoal: 4,
@@ -692,7 +692,7 @@ function mapDbBrand(row) {
     name: row.name,
     shortName: row.name,
     slug: row.slug,
-    color: row.color_primary || "#18345d",
+    color: row.color_primary || "#2d2d2d",
     platforms: row.platforms || [],
     services: row.services || [],
     monthlyGoal: 10,
@@ -903,6 +903,10 @@ function renderBrandOptions(activeBrandId = state.currentBrandId) {
       )
       .join("")}
   `;
+}
+
+function renderLumenLogo(className = "") {
+  return `<img class="lumen-logo-img ${className}" src="./assets/lumen-logo.png" alt="Lumen Workspace" />`;
 }
 
 function createDefaultBrandConfig(brand) {
@@ -1191,16 +1195,12 @@ function render() {
 
   const allBrands = isAllBrandsScope();
   const brand = allBrands ? null : getBrand();
-  document.documentElement.style.setProperty("--brand-color", allBrands ? "#18345d" : brand.color);
+  document.documentElement.style.setProperty("--brand-color", allBrands ? "#2d2d2d" : brand.color);
   document.getElementById("app").innerHTML = `
     <div class="workspace">
       <aside class="sidebar">
         <div class="brand-mark">
-          <div class="logo">L</div>
-          <div>
-            <strong>Lumen</strong>
-            <span>Workspace</span>
-          </div>
+          ${renderLumenLogo("brand-logo-img")}
         </div>
         <div class="selector-wrap">
           <label>Marca activa</label>
@@ -1258,7 +1258,7 @@ function renderLoadingScreen() {
   return `
     <main class="auth-screen">
       <section class="auth-card">
-        <div class="logo">L</div>
+        ${renderLumenLogo("auth-logo-img")}
         <h1>Lumen Workspace</h1>
         <p class="muted">Conectando con Supabase...</p>
       </section>
@@ -1270,7 +1270,7 @@ function renderLoginScreen() {
   return `
     <main class="auth-screen">
       <section class="auth-card">
-        <div class="logo">L</div>
+        ${renderLumenLogo("auth-logo-img")}
         <h1>Lumen Workspace</h1>
         <p class="muted">Ingresa con el usuario creado en Supabase Auth.</p>
         ${dataState.error ? `<div class="auth-error">${escapeHtml(dataState.error)}</div>` : ""}
