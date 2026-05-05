@@ -662,7 +662,7 @@ tr:last-child td {
 
 .kanban {
   display: grid;
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
 }
 
@@ -1160,11 +1160,17 @@ tr:last-child td {
 
 .email-preview-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--line);
+}
+
+.email-preview-header strong,
+.email-preview-header span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .email-preview-header span {
@@ -1185,7 +1191,17 @@ tr:last-child td {
 }
 
 .digest-row {
-  grid-template-columns: minmax(160px, 0.8fr) minmax(180px, 1fr) minmax(160px, 0.8fr);
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+.digest-row > * {
+  min-width: 0;
+}
+
+.digest-row strong,
+.digest-row .muted {
+  overflow-wrap: anywhere;
 }
 
 .digest-stats {

@@ -623,6 +623,7 @@ const state = {
   contentView: "concept",
   brandConfigSection: "identity",
   adminEditingUserId: "",
+  editingWorkOrderId: "",
   toast: "",
 };
 
@@ -1090,6 +1091,7 @@ function daysUntil(dateValue) {
 
 function workOrderUrgency(order) {
   if (order.status === "completed") return { label: "Completada", cls: "green" };
+  if (order.status === "cancelled") return { label: "Cancelada", cls: "neutral" };
   const days = daysUntil(order.dueDate);
   if (days < 0) return { label: `Vencida hace ${Math.abs(days)}d`, cls: "red" };
   if (days === 0) return { label: "Vence hoy", cls: "red" };
@@ -1097,9 +1099,13 @@ function workOrderUrgency(order) {
   return { label: `${days}d restantes`, cls: "blue" };
 }
 
+function isOpenWorkOrder(order) {
+  return !["completed", "cancelled"].includes(order.status);
+}
+
 function teamWorkload(userId) {
   const assigned = workOrders.filter((order) => orderAssignees(order).includes(userId));
-  const open = assigned.filter((order) => order.status !== "completed");
+  const open = assigned.filter(isOpenWorkOrder);
   const overdue = open.filter((order) => daysUntil(order.dueDate) < 0);
   const review = open.filter((order) => order.status === "in_review");
   return { assigned, open, overdue, review };
@@ -1328,7 +1334,7 @@ function renderBrandHero() {
 }
 
 function getBrandSnapshot(brand) {
-  const brandOpen = workOrders.filter((order) => order.brandId === brand.id && order.status !== "completed");
+  const brandOpen = workOrders.filter((order) => order.brandId === brand.id && isOpenWorkOrder(order));
   const brandReview = brandOpen.filter((order) => order.status === "in_review");
   const brandCompleted = workOrders.filter((order) => order.brandId === brand.id && order.status === "completed");
   const brandOverdue = brandOpen.filter((order) => daysUntil(order.dueDate) < 0);
@@ -1347,7 +1353,7 @@ function getBrandSnapshot(brand) {
 }
 
 function renderAllBrandsHero() {
-  const globalOpenOrders = workOrders.filter((order) => order.status !== "completed");
+  const globalOpenOrders = workOrders.filter(isOpenWorkOrder);
   const globalOverdueOrders = globalOpenOrders.filter((order) => daysUntil(order.dueDate) < 0);
   const globalReviewOrders = globalOpenOrders.filter((order) => order.status === "in_review");
   const activeBrands = brands.filter((brand) => brand.isActive !== false);
@@ -1403,7 +1409,7 @@ function renderAllBrandCard(snapshot) {
 
 function renderAllBrandsDashboard() {
   const snapshots = brands.map(getBrandSnapshot);
-  const globalOpenOrders = workOrders.filter((order) => order.status !== "completed");
+  const globalOpenOrders = workOrders.filter(isOpenWorkOrder);
   const topBrands = snapshots
     .filter((row) => row.open || row.review || row.overdue)
     .sort((a, b) => b.overdue - a.overdue || b.open - a.open)
@@ -1537,7 +1543,7 @@ function renderAllBrandsDashboard() {
 function renderDashboard() {
   if (isAllBrandsScope()) return renderAllBrandsDashboard();
   const orders = brandOrders();
-  const openOrders = orders.filter((order) => order.status !== "completed");
+  const openOrders = orders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
   const reviewOrders = openOrders.filter((order) => order.status === "in_review");
   const responsibleCount = new Set(openOrders.flatMap(orderAssignees)).size;
@@ -1839,10 +1845,137 @@ function renderBrandConfig() {
   `;
 }
 
+function selectedEditingOrder() {
+  return workOrders.find((order) => order.id === state.editingWorkOrderId) || null;
+}
+
+function renderWorkOrderSelectOption(value, label, activeValue) {
+  return `<option value="${value}" ${value === activeValue ? "selected" : ""}>${label}</option>`;
+}
+
+function renderWorkOrderForm(order = null) {
+  const isEditing = Boolean(order);
+  const selectedAssignees = new Set(isEditing ? orderAssignees(order) : []);
+  const availableUsers = users.filter(
+    (user) =>
+      user.role !== "cliente" &&
+      (user.isActive !== false || selectedAssignees.has(user.id)) &&
+      canUserAccessBrand(user, state.currentBrandId),
+  );
+  const files = isEditing ? orderFiles(order) : [];
+  const titleValue = isEditing ? order.title : `Nueva solicitud para ${getBrand().shortName}`;
+  const descriptionValue = isEditing
+    ? order.description || ""
+    : "Contexto, entregable esperado y criterios de aprobacion.";
+  const dueDateValue = isEditing ? order.dueDate || "" : "2026-05-08";
+  const priorityValue = isEditing ? order.priority : "medium";
+  const statusValue = isEditing ? order.status : "new";
+  const categoryValue = isEditing ? order.category : "diseno";
+  const notifyOnEmail = isEditing ? order.notifyOnEmail !== false : true;
+
+  return `
+    <div class="panel section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">${isEditing ? `Editar ${order.id}` : "Crear orden de trabajo"}</h2>
+          <div class="small-muted">
+            ${isEditing ? "Actualiza responsables, estado, deadline, descripcion o adjuntos." : "Asignacion + email de notificacion + seguimiento semanal."}
+          </div>
+        </div>
+        <span class="badge blue">${isEditing ? "Edicion activa" : "Foco operativo"}</span>
+      </div>
+      <div class="form-grid">
+        <div class="field full">
+          <label>Titulo</label>
+          <input class="input" id="ot-title" value="${escapeHtml(titleValue)}" />
+        </div>
+        <div class="field">
+          <label>Responsables</label>
+          <select class="input multi-select" id="ot-assignees" multiple>
+            ${availableUsers
+              .map(
+                (user) => `
+                  <option value="${user.id}" ${selectedAssignees.has(user.id) ? "selected" : ""}>
+                    ${escapeHtml(user.name)}
+                  </option>
+                `,
+              )
+              .join("")}
+          </select>
+          <div class="field-help">Puedes seleccionar varias personas con Cmd/Ctrl o Shift.</div>
+        </div>
+        <div class="field">
+          <label>Deadline</label>
+          <input class="input" id="ot-due-date" type="date" value="${escapeHtml(dueDateValue)}" />
+        </div>
+        <div class="field">
+          <label>Prioridad</label>
+          <select class="input" id="ot-priority">
+            ${renderWorkOrderSelectOption("medium", "Media", priorityValue)}
+            ${renderWorkOrderSelectOption("high", "Alta", priorityValue)}
+            ${renderWorkOrderSelectOption("low", "Baja", priorityValue)}
+          </select>
+        </div>
+        <div class="field">
+          <label>Estado</label>
+          <select class="input" id="ot-status">
+            ${renderWorkOrderSelectOption("new", "Nueva", statusValue)}
+            ${renderWorkOrderSelectOption("in_progress", "En proceso", statusValue)}
+            ${renderWorkOrderSelectOption("in_review", "En revision", statusValue)}
+            ${renderWorkOrderSelectOption("completed", "Completada", statusValue)}
+            ${renderWorkOrderSelectOption("cancelled", "Cancelada", statusValue)}
+          </select>
+        </div>
+        <div class="field">
+          <label>Categoria</label>
+          <select class="input" id="ot-category">
+            ${renderWorkOrderSelectOption("diseno", "Diseno", categoryValue)}
+            ${renderWorkOrderSelectOption("copy", "Copy", categoryValue)}
+            ${renderWorkOrderSelectOption("pauta", "Pauta", categoryValue)}
+            ${renderWorkOrderSelectOption("produccion", "Produccion", categoryValue)}
+            ${renderWorkOrderSelectOption("desarrollo", "Desarrollo", categoryValue)}
+          </select>
+        </div>
+        <div class="field full">
+          <label>Descripcion</label>
+          <textarea class="textarea" id="ot-description">${escapeHtml(descriptionValue)}</textarea>
+        </div>
+        ${
+          files.length
+            ? `
+              <div class="field full">
+                <label>Archivos actuales</label>
+                <div class="file-list">
+                  ${files.map((file) => `<span class="file-chip">${escapeHtml(file.name)}</span>`).join("")}
+                </div>
+              </div>
+            `
+            : ""
+        }
+        <div class="field full">
+          <label>${isEditing ? "Agregar archivos" : "Archivos adjuntos"}</label>
+          <input class="input file-input" id="ot-files" type="file" multiple />
+          <div class="field-help">${isEditing ? "Los nuevos archivos se agregan sin quitar los existentes." : "Los archivos quedan vinculados a la OT y disponibles para el equipo asignado."}</div>
+        </div>
+        <div class="full row wrap form-actions">
+          <label class="checkbox-line">
+            <input id="ot-email" type="checkbox" ${notifyOnEmail ? "checked" : ""} />
+            Notificar por email a responsables
+          </label>
+          <button class="button" data-action="${isEditing ? "update-work-order" : "create-work-order"}">
+            ${isEditing ? "Guardar cambios" : "Crear OT"}
+          </button>
+          ${isEditing ? `<button class="button-ghost" data-action="cancel-edit-work-order">Cancelar</button>` : ""}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderWorkOrders() {
-  const columns = ["new", "in_progress", "in_review", "completed"];
+  const columns = ["new", "in_progress", "in_review", "completed", "cancelled"];
   const orders = brandOrders();
-  const openOrders = orders.filter((order) => order.status !== "completed");
+  const openOrders = orders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
   const emailOrders = openOrders.filter((order) => order.notifyOnEmail);
   const allBrands = isAllBrandsScope();
@@ -1871,71 +2004,7 @@ function renderWorkOrders() {
               </div>
             </div>
           `
-          : `
-            <div class="panel section">
-              <div class="section-header">
-                <div>
-                  <h2 class="section-title">Crear orden de trabajo</h2>
-                  <div class="small-muted">Asignacion + email de notificacion + seguimiento semanal.</div>
-                </div>
-                <span class="badge blue">Foco operativo</span>
-              </div>
-              <div class="form-grid">
-                <div class="field full">
-                  <label>Titulo</label>
-                  <input class="input" id="ot-title" value="Nueva solicitud para ${getBrand().shortName}" />
-                </div>
-                <div class="field">
-                  <label>Responsables</label>
-                  <select class="input multi-select" id="ot-assignees" multiple>
-                    ${internalUsers()
-                      .filter((user) => canUserAccessBrand(user, state.currentBrandId))
-                      .map((user) => `<option value="${user.id}">${user.name}</option>`)
-                      .join("")}
-                  </select>
-                  <div class="field-help">Puedes seleccionar varias personas con Cmd/Ctrl o Shift.</div>
-                </div>
-                <div class="field">
-                  <label>Deadline</label>
-                  <input class="input" id="ot-due-date" type="date" value="2026-05-08" />
-                </div>
-                <div class="field">
-                  <label>Prioridad</label>
-                  <select class="input" id="ot-priority">
-                    <option value="medium">Media</option>
-                    <option value="high">Alta</option>
-                    <option value="low">Baja</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label>Categoria</label>
-                  <select class="input" id="ot-category">
-                    <option value="diseno">Diseno</option>
-                    <option value="copy">Copy</option>
-                    <option value="pauta">Pauta</option>
-                    <option value="produccion">Produccion</option>
-                    <option value="desarrollo">Desarrollo</option>
-                  </select>
-                </div>
-                <div class="field full">
-                  <label>Descripcion</label>
-                  <textarea class="textarea" id="ot-description">Contexto, entregable esperado y criterios de aprobacion.</textarea>
-                </div>
-                <div class="field full">
-                  <label>Archivos adjuntos</label>
-                  <input class="input file-input" id="ot-files" type="file" multiple />
-                  <div class="field-help">Los archivos quedan vinculados a la OT y disponibles para el equipo asignado.</div>
-                </div>
-                <div class="full row wrap">
-                  <label class="checkbox-line">
-                    <input id="ot-email" type="checkbox" checked />
-                    Notificar por email al asignado
-                  </label>
-                  <button class="button" data-action="create-work-order">Crear OT</button>
-                </div>
-              </div>
-            </div>
-          `
+          : renderWorkOrderForm(selectedEditingOrder())
       }
       <div class="panel section">
         <div class="section-header">
@@ -2015,6 +2084,7 @@ function renderOrderCard(order) {
       }
       <div class="row wrap">
         ${order.notifyOnEmail ? `<span class="badge blue">Email activo</span>` : `<span class="badge">Sin email</span>`}
+        <button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>
         <button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar</button>
       </div>
       ${
@@ -2027,7 +2097,7 @@ function renderOrderCard(order) {
 }
 
 function renderNotifications() {
-  const openOrders = workOrders.filter((order) => order.status !== "completed");
+  const openOrders = workOrders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
   const dueTomorrow = openOrders.filter((order) => daysUntil(order.dueDate) === 1);
   return `
@@ -2584,8 +2654,8 @@ function renderTeam() {
       </div>
       <div class="grid grid-4">
         ${renderMetric("Equipo interno", teamRows.length, "Usuarios operativos")}
-        ${renderMetric("OTs abiertas", workOrders.filter((order) => order.status !== "completed").length, "Todas las marcas")}
-        ${renderMetric("Vencidas", workOrders.filter((order) => order.status !== "completed" && daysUntil(order.dueDate) < 0).length, "Necesitan seguimiento")}
+        ${renderMetric("OTs abiertas", workOrders.filter(isOpenWorkOrder).length, "Todas las marcas")}
+        ${renderMetric("Vencidas", workOrders.filter((order) => isOpenWorkOrder(order) && daysUntil(order.dueDate) < 0).length, "Necesitan seguimiento")}
         ${renderMetric("Digest lunes", "8:00", weeklyDigestConfig.timezone)}
       </div>
       <div class="grid grid-2">
@@ -2890,7 +2960,7 @@ function renderAdminUserManager(canManage) {
 }
 
 function renderSettings() {
-  const openOrders = workOrders.filter((order) => order.status !== "completed");
+  const openOrders = workOrders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
   const profile = dataState.profile;
   const connectionLabel = isSupabaseMode() ? "Supabase" : "Demo local";
@@ -2951,6 +3021,7 @@ function bindEvents() {
         return;
       }
       state.currentModule = button.dataset.module;
+      if (state.currentModule !== "work-orders") state.editingWorkOrderId = "";
       render();
     });
   });
@@ -2958,6 +3029,7 @@ function bindEvents() {
   document.querySelectorAll(".js-brand-select").forEach((brandSelect) => {
     brandSelect.addEventListener("change", (event) => {
       state.currentBrandId = event.target.value;
+      state.editingWorkOrderId = "";
       const firstContent = brandItems(event.target.value)[0];
       state.selectedContentId = firstContent?.id || null;
       render();
@@ -2984,6 +3056,7 @@ function bindEvents() {
   document.querySelectorAll("[data-brand-jump]").forEach((button) => {
     button.addEventListener("click", () => {
       state.currentBrandId = button.dataset.brandJump;
+      state.editingWorkOrderId = "";
       const firstContent = brandItems(state.currentBrandId)[0];
       state.selectedContentId = firstContent?.id || null;
       render();
@@ -3070,6 +3143,9 @@ async function handleAction(action, id) {
     },
     "export-brand-config": () => showToast("Resumen de marca preparado para compartir internamente"),
     "create-work-order": () => createWorkOrderFromForm(),
+    "edit-work-order": () => editWorkOrder(id),
+    "cancel-edit-work-order": () => cancelEditWorkOrder(),
+    "update-work-order": () => updateWorkOrderFromForm(),
     "advance-order": () => advanceWorkOrder(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
     "queue-weekly-digest": () => queueWeeklyDigest(),
@@ -3299,37 +3375,74 @@ function addContentComment(id) {
   showToast("Comentario guardado");
 }
 
+function getWorkOrderFormValues() {
+  const title = document.getElementById("ot-title")?.value.trim() || "";
+  const assigneeSelect = document.getElementById("ot-assignees");
+  const assignees = assigneeSelect
+    ? Array.from(assigneeSelect.selectedOptions).map((option) => option.value)
+    : [];
+  const dueDate = document.getElementById("ot-due-date")?.value || "";
+  const priority = document.getElementById("ot-priority")?.value || "medium";
+  const status = document.getElementById("ot-status")?.value || "new";
+  const category = document.getElementById("ot-category")?.value || "diseno";
+  const description = document.getElementById("ot-description")?.value.trim() || "";
+  const notifyOnEmail = document.getElementById("ot-email")?.checked ?? true;
+  const filesInput = document.getElementById("ot-files");
+  const fileUploads = filesInput ? Array.from(filesInput.files) : [];
+  const files = fileUploads.map((file) => ({
+    name: file.name,
+    size: file.size,
+    type: file.type || "application/octet-stream",
+  }));
+  return { title, assignees, dueDate, priority, status, category, description, notifyOnEmail, fileUploads, files };
+}
+
+function validateWorkOrderValues(values) {
+  if (!values.title) {
+    showToast("Agrega un titulo para crear la OT");
+    return false;
+  }
+  if (!values.assignees.length) {
+    showToast("Selecciona al menos un responsable");
+    return false;
+  }
+  return true;
+}
+
+async function uploadWorkOrderFiles(orderDbId, brandId, fileUploads) {
+  let uploadedCount = 0;
+  for (const file of fileUploads) {
+    const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+    const storagePath = `${brandId}/${orderDbId}/${Date.now()}-${safeName}`;
+    const { error: uploadError } = await supabaseClient.storage.from("work-order-files").upload(storagePath, file);
+    if (uploadError) {
+      showToast(`No se pudo subir ${file.name}: ${uploadError.message}`);
+      continue;
+    }
+    const { error: fileError } = await supabaseClient.from("work_order_files").insert({
+      work_order_id: orderDbId,
+      storage_path: storagePath,
+      file_name: file.name,
+      file_type: file.type || "application/octet-stream",
+      file_size: file.size,
+      uploaded_by: dataState.session?.user?.id,
+    });
+    if (fileError) {
+      showToast(`Archivo subido, pero no se pudo registrar: ${fileError.message}`);
+      continue;
+    }
+    uploadedCount += 1;
+  }
+  return uploadedCount;
+}
+
 async function createWorkOrderFromForm() {
   if (isAllBrandsScope()) {
     showToast("Selecciona una marca antes de crear una OT");
     return;
   }
-  const title = document.getElementById("ot-title")?.value.trim();
-  const assigneeSelect = document.getElementById("ot-assignees");
-  const assignees = assigneeSelect
-    ? Array.from(assigneeSelect.selectedOptions).map((option) => option.value)
-    : [];
-  const dueDate = document.getElementById("ot-due-date")?.value || "2026-05-08";
-  const priority = document.getElementById("ot-priority")?.value || "medium";
-  const category = document.getElementById("ot-category")?.value || "diseno";
-  const description = document.getElementById("ot-description")?.value.trim();
-  const notifyOnEmail = document.getElementById("ot-email")?.checked ?? true;
-  const filesInput = document.getElementById("ot-files");
-  const files = filesInput
-    ? Array.from(filesInput.files).map((file) => ({
-        name: file.name,
-        size: file.size,
-        type: file.type || "application/octet-stream",
-      }))
-    : [];
-  if (!title) {
-    showToast("Agrega un titulo para crear la OT");
-    return;
-  }
-  if (!assignees.length) {
-    showToast("Selecciona al menos un responsable");
-    return;
-  }
+  const values = getWorkOrderFormValues();
+  if (!validateWorkOrderValues(values)) return;
   const code = `OT-${getBrand().shortName.toUpperCase().replaceAll(" ", "-")}-${String(workOrders.length + 1).padStart(3, "0")}`;
 
   if (isSupabaseMode()) {
@@ -3338,14 +3451,14 @@ async function createWorkOrderFromForm() {
       .insert({
         code,
         brand_id: state.currentBrandId,
-        title,
-        status: "new",
-        priority,
-        category,
-        due_date: dueDate,
-        description,
+        title: values.title,
+        status: values.status,
+        priority: values.priority,
+        category: values.category,
+        due_date: values.dueDate || null,
+        description: values.description,
         created_by: dataState.session?.user?.id,
-        notify_on_email: notifyOnEmail,
+        notify_on_email: values.notifyOnEmail,
       })
       .select()
       .single();
@@ -3355,9 +3468,9 @@ async function createWorkOrderFromForm() {
       return;
     }
 
-    if (assignees.length) {
+    if (values.assignees.length) {
       const { error: assigneeError } = await supabaseClient.from("work_order_assignees").insert(
-        assignees.map((userId) => ({
+        values.assignees.map((userId) => ({
           work_order_id: insertedOrder.id,
           user_id: userId,
           assigned_by: dataState.session?.user?.id,
@@ -3368,45 +3481,32 @@ async function createWorkOrderFromForm() {
       }
     }
 
-    for (const file of filesInput ? Array.from(filesInput.files) : []) {
-      const safeName = file.name.replace(/[^\w.\-]+/g, "_");
-      const storagePath = `${state.currentBrandId}/${insertedOrder.id}/${Date.now()}-${safeName}`;
-      const { error: uploadError } = await supabaseClient.storage.from("work-order-files").upload(storagePath, file);
-      if (uploadError) {
-        showToast(`OT creada, pero fallo archivo: ${uploadError.message}`);
-        continue;
-      }
-      await supabaseClient.from("work_order_files").insert({
-        work_order_id: insertedOrder.id,
-        storage_path: storagePath,
-        file_name: file.name,
-        file_type: file.type || "application/octet-stream",
-        file_size: file.size,
-        uploaded_by: dataState.session?.user?.id,
-      });
-    }
+    const uploadedCount = await uploadWorkOrderFiles(insertedOrder.id, state.currentBrandId, values.fileUploads);
 
     await supabaseClient.from("work_order_activity").insert({
       work_order_id: insertedOrder.id,
       actor_id: dataState.session?.user?.id,
       action: "created",
-      details: { title, assignees: assignees.length, files: files.length },
+      details: { title: values.title, assignees: values.assignees.length, files: uploadedCount },
     });
 
-    if (notifyOnEmail) {
-      const recipients = users.filter((user) => assignees.includes(user.id));
-      await supabaseClient.from("email_notifications").insert(
-        recipients.map((user) => ({
-          brand_id: state.currentBrandId,
-          work_order_id: insertedOrder.id,
-          recipient_user_id: user.id,
-          recipient_email: user.email,
-          notification_type: "assignment",
-          subject: `Nueva OT asignada: ${code}`,
-          html_body: `<p>Se te asigno la orden <strong>${code}</strong>: ${escapeHtml(title)}</p>`,
-          status: "queued",
-        })),
-      );
+    if (values.notifyOnEmail) {
+      const recipients = users.filter((user) => values.assignees.includes(user.id));
+      if (recipients.length) {
+        const { error: emailError } = await supabaseClient.from("email_notifications").insert(
+          recipients.map((user) => ({
+            brand_id: state.currentBrandId,
+            work_order_id: insertedOrder.id,
+            recipient_user_id: user.id,
+            recipient_email: user.email,
+            notification_type: "assignment",
+            subject: `Nueva OT asignada: ${code}`,
+            html_body: `<p>Se te asigno la orden <strong>${code}</strong>: ${escapeHtml(values.title)}</p>`,
+            status: "queued",
+          })),
+        );
+        if (emailError) showToast(`OT creada, pero fallo email: ${emailError.message}`);
+      }
     }
 
     await loadSupabaseData();
@@ -3417,21 +3517,137 @@ async function createWorkOrderFromForm() {
   workOrders.push({
     id: code,
     brandId: state.currentBrandId,
-    title,
-    status: "new",
-    priority,
-    category,
-    dueDate,
-    assignee: assignees[0],
-    assignees,
-    description,
-    files,
+    title: values.title,
+    status: values.status,
+    priority: values.priority,
+    category: values.category,
+    dueDate: values.dueDate || "2026-05-08",
+    assignee: values.assignees[0],
+    assignees: values.assignees,
+    description: values.description,
+    files: values.files,
     createdBy: "giu",
-    notifyOnEmail,
+    notifyOnEmail: values.notifyOnEmail,
     linkedContentId: state.selectedContentId,
   });
   saveWorkOrders();
-  showToast(`OT creada y ${notifyOnEmail ? "email preparado" : "sin email"}`);
+  showToast(`OT creada y ${values.notifyOnEmail ? "email preparado" : "sin email"}`);
+}
+
+function editWorkOrder(id) {
+  const order = workOrders.find((candidate) => candidate.id === id);
+  if (!order) return;
+  state.currentModule = "work-orders";
+  state.currentBrandId = order.brandId;
+  state.editingWorkOrderId = id;
+  showToast(`Editando ${id}`);
+}
+
+function cancelEditWorkOrder() {
+  state.editingWorkOrderId = "";
+  showToast("Edicion cancelada");
+}
+
+async function updateWorkOrderFromForm() {
+  const order = selectedEditingOrder();
+  if (!order) {
+    showToast("Selecciona una OT para editar");
+    return;
+  }
+  const values = getWorkOrderFormValues();
+  if (!validateWorkOrderValues(values)) return;
+
+  if (isSupabaseMode()) {
+    if (!order.dbId) {
+      showToast("Esta OT no tiene ID de Supabase");
+      return;
+    }
+
+    const { error: orderError } = await supabaseClient
+      .from("work_orders")
+      .update({
+        title: values.title,
+        status: values.status,
+        priority: values.priority,
+        category: values.category,
+        due_date: values.dueDate || null,
+        description: values.description,
+        notify_on_email: values.notifyOnEmail,
+      })
+      .eq("id", order.dbId);
+    if (orderError) {
+      showToast(`No se pudo actualizar la OT: ${orderError.message}`);
+      return;
+    }
+
+    const existingAssignees = orderAssignees(order);
+    const removedAssignees = existingAssignees.filter((userId) => !values.assignees.includes(userId));
+    const addedAssignees = values.assignees.filter((userId) => !existingAssignees.includes(userId));
+
+    if (removedAssignees.length) {
+      const { error: removeError } = await supabaseClient
+        .from("work_order_assignees")
+        .delete()
+        .eq("work_order_id", order.dbId)
+        .in("user_id", removedAssignees);
+      if (removeError) {
+        showToast(`OT actualizada, pero fallo responsables: ${removeError.message}`);
+        return;
+      }
+    }
+
+    if (addedAssignees.length) {
+      const { error: addError } = await supabaseClient.from("work_order_assignees").insert(
+        addedAssignees.map((userId) => ({
+          work_order_id: order.dbId,
+          user_id: userId,
+          assigned_by: dataState.session?.user?.id,
+        })),
+      );
+      if (addError) {
+        showToast(`OT actualizada, pero fallo responsables: ${addError.message}`);
+        return;
+      }
+    }
+
+    const uploadedCount = await uploadWorkOrderFiles(order.dbId, order.brandId, values.fileUploads);
+    await supabaseClient.from("work_order_activity").insert({
+      work_order_id: order.dbId,
+      actor_id: dataState.session?.user?.id,
+      action: "updated",
+      details: {
+        title: values.title,
+        status_from: order.status,
+        status_to: values.status,
+        assignees: values.assignees.length,
+        files_added: uploadedCount,
+      },
+    });
+
+    await loadSupabaseData();
+    state.editingWorkOrderId = "";
+    showToast(`${order.id} actualizada`);
+    return;
+  }
+
+  order.title = values.title;
+  order.status = values.status;
+  order.priority = values.priority;
+  order.category = values.category;
+  order.dueDate = values.dueDate || order.dueDate;
+  order.assignee = values.assignees[0];
+  order.assignees = values.assignees;
+  order.description = values.description;
+  order.files = [...orderFiles(order), ...values.files];
+  order.notifyOnEmail = values.notifyOnEmail;
+  if (order.linkedContentId && order.status === "completed") {
+    const linked = contentItems.find((item) => item.id === order.linkedContentId);
+    if (linked && linked.status !== "approved") linked.status = "internal_review";
+    saveContentItems();
+  }
+  saveWorkOrders();
+  state.editingWorkOrderId = "";
+  showToast(`${order.id} actualizada`);
 }
 
 async function advanceWorkOrder(id) {
@@ -3476,8 +3692,8 @@ async function advanceWorkOrder(id) {
 }
 
 function previewWeeklyDigest() {
-  const totalOpen = workOrders.filter((order) => order.status !== "completed").length;
-  const totalOverdue = workOrders.filter((order) => order.status !== "completed" && daysUntil(order.dueDate) < 0).length;
+  const totalOpen = workOrders.filter(isOpenWorkOrder).length;
+  const totalOverdue = workOrders.filter((order) => isOpenWorkOrder(order) && daysUntil(order.dueDate) < 0).length;
   showToast(`Preview digest: ${totalOpen} abiertas, ${totalOverdue} vencidas. No se envio email real.`);
 }
 
