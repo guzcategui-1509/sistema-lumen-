@@ -2025,20 +2025,25 @@ function renderWorkOrders() {
           <button class="button-ghost small" data-module="notifications">Reglas email</button>
         </div>
       </div>
-      <div class="kanban">
+      <div class="kanban-scroll">
+        <div class="kanban" aria-label="Kanban operativo de ordenes de trabajo">
         ${columns
           .map(
-            (status) => `
+            (status) => {
+              const statusOrders = orders.filter((order) => order.status === status);
+              return `
               <div class="kanban-column">
-                <h3>${workOrderStatusLabels[status]}</h3>
-                ${orders
-                  .filter((order) => order.status === status)
-                  .map((order) => renderOrderCard(order))
-                  .join("") || `<div class="empty">Sin OTs</div>`}
+                <h3>
+                  <span>${workOrderStatusLabels[status]}</span>
+                  <span class="badge">${statusOrders.length}</span>
+                </h3>
+                ${statusOrders.map((order) => renderOrderCard(order)).join("") || `<div class="empty">Sin OTs</div>`}
               </div>
-            `,
+            `;
+            },
           )
           .join("")}
+        </div>
       </div>
     </section>
   `;

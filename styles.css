@@ -679,9 +679,35 @@ tr:last-child td {
   color: var(--muted);
 }
 
+.kanban-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding: 2px 2px 14px;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.kanban-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+
+.kanban-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.kanban-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+
 .kanban {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(272px, 300px);
+  grid-template-columns: none;
+  align-items: start;
+  width: max-content;
+  min-width: 100%;
   gap: 12px;
 }
 
@@ -689,6 +715,7 @@ tr:last-child td {
   display: grid;
   align-content: start;
   gap: 10px;
+  min-width: 0;
   min-height: 240px;
   padding: 12px;
   border: 1px solid var(--line);
@@ -697,6 +724,10 @@ tr:last-child td {
 }
 
 .kanban-column h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0;
   font-size: 14px;
 }
@@ -704,14 +735,46 @@ tr:last-child td {
 .mini-card {
   display: grid;
   gap: 8px;
+  min-width: 0;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: white;
 }
 
+.mini-card > * {
+  min-width: 0;
+}
+
 .mini-card strong {
   line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.mini-card .row.between {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.mini-card p {
+  margin: 0;
+}
+
+.mini-card .muted,
+.mini-card .badge,
+.avatar-pill,
+.file-chip {
+  overflow-wrap: anywhere;
+}
+
+.mini-card .badge {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+}
+
+.kanban-column h3 .badge {
+  white-space: nowrap;
 }
 
 .calendar-layout {
@@ -1474,9 +1537,20 @@ tr:last-child td {
   .quick-action-grid,
   .admin-layout,
   .brand-check-list,
-  .form-grid,
-  .kanban {
+  .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .kanban-scroll {
+    overflow-x: visible;
+  }
+
+  .kanban {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    grid-template-columns: 1fr;
+    width: 100%;
+    min-width: 0;
   }
 
   .team-mini-row {
