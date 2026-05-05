@@ -624,6 +624,8 @@ const state = {
   brandConfigSection: "identity",
   adminEditingUserId: "",
   editingWorkOrderId: "",
+  focusedWorkOrderId: "",
+  initialRouteApplied: false,
   toast: "",
 };
 
@@ -649,6 +651,21 @@ const workOrderStatusLabels = {
   in_review: "En revision",
   completed: "Completada",
   cancelled: "Cancelada",
+};
+
+const workOrderPriorityLabels = {
+  high: "Alta",
+  medium: "Media",
+  low: "Baja",
+};
+
+const workOrderCategoryLabels = {
+  diseno: "Diseno",
+  copy: "Copy",
+  pauta: "Pauta",
+  produccion: "Produccion",
+  desarrollo: "Desarrollo",
+  otro: "Otro",
 };
 
 const roleLabels = {
@@ -810,7 +827,10 @@ async function initializeApp() {
     } = await supabaseClient.auth.getSession();
     if (error) throw error;
     dataState.session = session;
-    if (session) await loadSupabaseData();
+    if (session) {
+      await loadSupabaseData();
+      applyInitialRouteParams();
+    }
   } catch (error) {
     dataState.error = error.message || "No se pudo conectar Supabase";
   } finally {
@@ -826,6 +846,7 @@ async function initializeApp() {
       render();
       try {
         await loadSupabaseData();
+        applyInitialRouteParams();
       } catch (error) {
         dataState.error = error.message || "No se pudo cargar Supabase";
       }
@@ -877,6 +898,64 @@ function escapeHtml(value = "") {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function plainText(value = "") {
+  return String(value).replace(/\s+/g, " ").trim();
+}
+
+function getAppBaseUrl() {
+  const configuredUrl = (window.LUMEN_SUPABASE_CONFIG?.appUrl || "").trim();
+  if (configuredUrl) return configuredUrl.replace(/\/$/, "");
+
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  if (url.pathname.endsWith("/index.html")) {
+    url.pathname = url.pathname.replace(/index\.html$/, "");
+  }
+  return url.href.replace(/\/$/, "");
+}
+
+function buildWorkOrderUrl(orderCode, brandId) {
+  const url = new URL(getAppBaseUrl());
+  url.searchParams.set("module", "work-orders");
+  url.searchParams.set("brand", brandId);
+  url.searchParams.set("ot", orderCode);
+  return url.toString();
+}
+
+function applyInitialRouteParams() {
+  if (state.initialRouteApplied) return;
+  const params = new URLSearchParams(window.location.search);
+  const moduleParam = params.get("module");
+  const brandParam = params.get("brand");
+  const orderParam = params.get("ot");
+
+  if (moduleParam && canOpenModule(moduleParam)) {
+    state.currentModule = moduleParam;
+  }
+  if (brandParam && (brandParam === ALL_BRANDS_ID || brands.some((brand) => brand.id === brandParam))) {
+    state.currentBrandId = brandParam;
+  }
+  if (orderParam) {
+    const order = workOrders.find((candidate) => candidate.id === orderParam || candidate.dbId === orderParam);
+    state.currentModule = "work-orders";
+    state.focusedWorkOrderId = order?.id || orderParam;
+    if (order?.brandId) state.currentBrandId = order.brandId;
+  }
+
+  state.initialRouteApplied = true;
+}
+
+function focusLinkedWorkOrder() {
+  if (state.currentModule !== "work-orders" || !state.focusedWorkOrderId) return;
+  window.setTimeout(() => {
+    const card = Array.from(document.querySelectorAll("[data-order-card]")).find(
+      (candidate) => candidate.dataset.orderCard === state.focusedWorkOrderId,
+    );
+    card?.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+  }, 150);
 }
 
 function renderBrandOptions(activeBrandId = state.currentBrandId) {
@@ -1252,6 +1331,7 @@ function render() {
     ${state.toast ? `<div class="toast">${state.toast}</div>` : ""}
   `;
   bindEvents();
+  focusLinkedWorkOrder();
 }
 
 function renderLoadingScreen() {
@@ -2053,8 +2133,9 @@ function renderOrderCard(order) {
   const assignees = orderAssignees(order);
   const files = orderFiles(order);
   const urgency = workOrderUrgency(order);
+  const isFocused = order.id === state.focusedWorkOrderId;
   return `
-    <div class="mini-card">
+    <div class="mini-card ${isFocused ? "focused-card" : ""}" data-order-card="${escapeHtml(order.id)}">
       <div class="row between">
         <span class="badge">${order.id}</span>
         <span class="badge ${order.priority === "high" ? "red" : order.priority === "medium" ? "amber" : "green"}">${order.priority}</span>
@@ -3035,7 +3116,10 @@ function bindEvents() {
         return;
       }
       state.currentModule = button.dataset.module;
-      if (state.currentModule !== "work-orders") state.editingWorkOrderId = "";
+      if (state.currentModule !== "work-orders") {
+        state.editingWorkOrderId = "";
+        state.focusedWorkOrderId = "";
+      }
       render();
     });
   });
@@ -3044,6 +3128,7 @@ function bindEvents() {
     brandSelect.addEventListener("change", (event) => {
       state.currentBrandId = event.target.value;
       state.editingWorkOrderId = "";
+      state.focusedWorkOrderId = "";
       const firstContent = brandItems(event.target.value)[0];
       state.selectedContentId = firstContent?.id || null;
       render();
@@ -3450,6 +3535,80 @@ async function uploadWorkOrderFiles(orderDbId, brandId, fileUploads) {
   return uploadedCount;
 }
 
+function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedCount }) {
+  const brand = getBrand(brandId);
+  const client = getClient(brand.clientId);
+  const workOrderUrl = buildWorkOrderUrl(code, brandId);
+  const assigneeNames = values.assignees.map((userId) => userName(userId)).join(", ");
+  const creatorName = dataState.profile?.full_name || "Lumen Workspace";
+  const description = plainText(values.description);
+  const fileLabel =
+    uploadedCount === 0 ? "Sin archivos adjuntos" : uploadedCount === 1 ? "1 archivo adjunto" : `${uploadedCount} archivos adjuntos`;
+
+  return `
+    <div style="margin:0;background:#f6f6f3;padding:28px 16px;font-family:Arial,Helvetica,sans-serif;color:#2d2d2d;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #deded8;border-radius:14px;overflow:hidden;">
+        <div style="padding:26px 28px 20px;border-left:7px solid #49ee8c;">
+          <div style="font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#5f6b61;margin-bottom:10px;">
+            Nueva orden asignada
+          </div>
+          <h1 style="margin:0 0 8px;font-size:28px;line-height:1.15;color:#2d2d2d;">${escapeHtml(code)}</h1>
+          <p style="margin:0;color:#5f6760;font-size:17px;line-height:1.45;">${escapeHtml(title)}</p>
+        </div>
+
+        <div style="padding:0 28px 24px;">
+          <table role="presentation" style="width:100%;border-collapse:collapse;margin:10px 0 22px;">
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Cliente / marca</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(client?.name || "Cliente")} / ${escapeHtml(brand.name)}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Deadline</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(formatDate(values.dueDate))}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Prioridad</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(workOrderPriorityLabels[values.priority] || values.priority)}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Estado</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(workOrderStatusLabels[values.status] || values.status)}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Categoria</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(workOrderCategoryLabels[values.category] || values.category)}</td>
+            </tr>
+          </table>
+
+          <div style="margin-bottom:18px;">
+            <div style="font-size:13px;font-weight:700;text-transform:uppercase;color:#6b726c;margin-bottom:6px;">Responsables</div>
+            <div style="font-size:16px;line-height:1.45;">${escapeHtml(assigneeNames || "Sin responsables")}</div>
+          </div>
+
+          <div style="margin-bottom:22px;">
+            <div style="font-size:13px;font-weight:700;text-transform:uppercase;color:#6b726c;margin-bottom:6px;">Contexto</div>
+            <div style="font-size:16px;line-height:1.55;color:#3c403d;">${escapeHtml(description || "Sin descripcion agregada.")}</div>
+          </div>
+
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px;">
+            <span style="display:inline-block;background:#e9fff1;color:#176339;border-radius:999px;padding:8px 12px;font-weight:700;">${escapeHtml(fileLabel)}</span>
+            <span style="display:inline-block;background:#f0f1ee;color:#555b56;border-radius:999px;padding:8px 12px;">Creada por ${escapeHtml(creatorName)}</span>
+          </div>
+
+          <a href="${escapeHtml(workOrderUrl)}" style="display:inline-block;background:#2d2d2d;color:#ffffff;text-decoration:none;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:800;">
+            Ver orden en Lumen
+          </a>
+
+          <p style="margin:20px 0 0;color:#7a817b;font-size:13px;line-height:1.45;">
+            Si el boton no abre, copia este link en tu navegador:<br/>
+            <a href="${escapeHtml(workOrderUrl)}" style="color:#2d2d2d;">${escapeHtml(workOrderUrl)}</a>
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 async function createWorkOrderFromForm() {
   if (isAllBrandsScope()) {
     showToast("Selecciona una marca antes de crear una OT");
@@ -3507,6 +3666,13 @@ async function createWorkOrderFromForm() {
     if (values.notifyOnEmail) {
       const recipients = users.filter((user) => values.assignees.includes(user.id));
       if (recipients.length) {
+        const htmlBody = buildWorkOrderAssignmentEmail({
+          code,
+          brandId: state.currentBrandId,
+          title: values.title,
+          values,
+          uploadedCount,
+        });
         const { error: emailError } = await supabaseClient.from("email_notifications").insert(
           recipients.map((user) => ({
             brand_id: state.currentBrandId,
@@ -3514,8 +3680,8 @@ async function createWorkOrderFromForm() {
             recipient_user_id: user.id,
             recipient_email: user.email,
             notification_type: "assignment",
-            subject: `Nueva OT asignada: ${code}`,
-            html_body: `<p>Se te asigno la orden <strong>${code}</strong>: ${escapeHtml(values.title)}</p>`,
+            subject: `Nueva OT asignada: ${code} - ${values.title}`,
+            html_body: htmlBody,
             status: "queued",
           })),
         );

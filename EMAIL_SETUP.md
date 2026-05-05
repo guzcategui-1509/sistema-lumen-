@@ -33,6 +33,8 @@ Supabase ya expone por defecto dentro de Edge Functions:
 
 Nunca pongas `SUPABASE_SERVICE_ROLE_KEY` ni `BREVO_API_KEY` en `config.js`, Vercel frontend o navegador.
 
+En `config.js`, `appUrl` es opcional. Si se llena con la URL de Vercel, los botones de correos como **Ver orden en Lumen** siempre abriran produccion. Si queda vacio, la app usa la URL desde donde se esta creando la OT.
+
 ## Funciones
 
 - `weekly-digest`: prepara el resumen semanal para todo el equipo interno activo.
