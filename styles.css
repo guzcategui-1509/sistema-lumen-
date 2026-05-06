@@ -1411,6 +1411,16 @@ tr:last-child td {
   align-items: start;
 }
 
+.notification-guide {
+  margin-top: 4px;
+}
+
+.notification-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .digest-row > * {
   min-width: 0;
 }
@@ -1673,6 +1683,7 @@ tr:last-child td {
   .brand-check-list,
   .brand-report-row,
   .report-team-row,
+  .notification-guide-grid,
   .form-grid {
     grid-template-columns: 1fr;
   }

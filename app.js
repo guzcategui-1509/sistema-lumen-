@@ -2245,51 +2245,6 @@ function renderNotifications() {
         ${renderMetric("Vencen manana", dueTomorrow.length, "Recordatorio 24h")}
         ${renderMetric("Destinatarios", internalUsers().length, "Equipo interno")}
       </section>
-      <section class="grid grid-3">
-        <div class="panel section">
-          <h2 class="section-title">Proveedor recomendado</h2>
-          <div class="stack">
-            <div class="mini-card">
-              <strong>Brevo</strong>
-              <span class="muted">Proveedor elegido para correos transaccionales, con API, logs y base para futuras automatizaciones.</span>
-            </div>
-            <div class="mini-card">
-              <strong>Que hay que configurar</strong>
-              <span class="muted">Sender validado, API key y remitente tipo Lumen Workspace &lt;workspace@grupolumen.com&gt;.</span>
-            </div>
-          </div>
-        </div>
-        <div class="panel section">
-          <h2 class="section-title">Como funciona</h2>
-          <div class="stack">
-            <div class="mini-card">
-              <strong>1. Preparar correos</strong>
-              <span class="muted">El sistema arma los mensajes y los deja listos para enviar.</span>
-            </div>
-            <div class="mini-card">
-              <strong>2. Enviar pendientes</strong>
-              <span class="muted">Brevo toma los correos preparados y los manda al equipo.</span>
-            </div>
-            <div class="mini-card">
-              <strong>3. Automatizar</strong>
-              <span class="muted">El digest puede correr solo todos los lunes a las 8:00am.</span>
-            </div>
-          </div>
-        </div>
-        <div class="panel section">
-          <h2 class="section-title">Seguridad</h2>
-          <div class="stack">
-            <div class="mini-card">
-              <strong>Admin / Direccion</strong>
-              <span class="muted">Solo estos roles pueden disparar emails desde la app.</span>
-            </div>
-            <div class="mini-card">
-              <strong>Llaves privadas fuera del navegador</strong>
-              <span class="muted">La API key de Brevo y el secreto de automatizacion viven solo en Supabase.</span>
-            </div>
-          </div>
-        </div>
-      </section>
       <section class="grid grid-2 notifications-detail-grid">
         <div class="panel section">
           <div class="section-header">
@@ -2322,6 +2277,36 @@ function renderNotifications() {
           </div>
           <div class="small-muted">Preparar sin enviar solo deja los correos listos; no salen hasta tocar "Enviar pendientes".</div>
           ${renderWeeklyDigestPreview()}
+        </div>
+      </section>
+      <section class="panel section notification-guide">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Como funcionan las notificaciones</h2>
+            <div class="small-muted">Una guia rapida para entender que hace cada boton sin tocar configuraciones tecnicas.</div>
+          </div>
+          <span class="badge green">Brevo conectado</span>
+        </div>
+        <div class="notification-guide-grid">
+          <div class="mini-card">
+            <strong>1. Se prepara el aviso</strong>
+            <span class="muted">Cuando una OT tiene email activo, Lumen crea el correo para los responsables.</span>
+          </div>
+          <div class="mini-card">
+            <strong>2. Queda pendiente</strong>
+            <span class="muted">El mensaje se guarda como pendiente para poder revisarlo o enviarlo en lote.</span>
+          </div>
+          <div class="mini-card">
+            <strong>3. Se envia por Brevo</strong>
+            <span class="muted">El boton Enviar pendientes manda los correos listos al equipo interno.</span>
+          </div>
+          <div class="mini-card">
+            <strong>4. Resumen semanal</strong>
+            <span class="muted">El digest junta carga, vencidas y proximas entregas para enviarlo los lunes.</span>
+          </div>
+        </div>
+        <div class="admin-note">
+          Solo Admin y Direccion pueden disparar correos desde la app. Las llaves privadas viven en Supabase, nunca en el navegador.
         </div>
       </section>
     </section>
