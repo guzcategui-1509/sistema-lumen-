@@ -16,7 +16,7 @@ const modules = [
 
 const ALL_BRANDS_ID = "all-brands";
 const OPERATIONS_MODE = true;
-const operationalModuleKeys = ["dashboard", "work-orders", "team", "notifications", "settings"];
+const operationalModuleKeys = ["dashboard", "work-orders", "reports", "team", "notifications", "settings"];
 let supabaseClient = null;
 
 const dataState = {
@@ -764,6 +764,8 @@ function mapDbWorkOrder(row) {
     description: row.description || "",
     files,
     createdBy: row.created_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
     notifyOnEmail: row.notify_on_email,
     linkedContentId: null,
   };
@@ -1175,11 +1177,31 @@ function userBrandLabel(user) {
     .concat(userBrands.length > 3 ? ` +${userBrands.length - 3}` : "");
 }
 
+function todayAtNoon() {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  return today;
+}
+
+function parseDateValue(value, fallbackTime = "T12:00:00") {
+  if (!value) return null;
+  const text = String(value);
+  const date = new Date(text.includes("T") ? text : `${text}${fallbackTime}`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function daysUntil(dateValue) {
-  if (!dateValue) return 999;
-  const today = new Date("2026-05-04T12:00:00");
-  const date = new Date(`${dateValue}T12:00:00`);
-  return Math.ceil((date - today) / 86400000);
+  const date = parseDateValue(dateValue);
+  if (!date) return 999;
+  return Math.ceil((date - todayAtNoon()) / 86400000);
+}
+
+function wasCompletedLate(order) {
+  if (order.status !== "completed") return false;
+  const dueEnd = parseDateValue(order.dueDate, "T23:59:59");
+  if (!dueEnd) return false;
+  const completedAt = parseDateValue(order.completedAt || order.updatedAt) || todayAtNoon();
+  return completedAt > dueEnd;
 }
 
 function workOrderUrgency(order) {
@@ -1329,6 +1351,7 @@ function render() {
               ${renderBrandOptions(state.currentBrandId)}
             </select>
             <button class="button-ghost small" data-module="work-orders">OTs</button>
+            <button class="button-ghost small" data-module="reports">Reporteria</button>
             <button class="button-ghost small" data-module="team">Equipo</button>
             <button class="button-ghost small" data-module="notifications">Notificaciones</button>
           </div>
@@ -2700,49 +2723,354 @@ function renderCreativity() {
   `;
 }
 
+function percent(value, total) {
+  if (!total) return 0;
+  return Math.round((value / total) * 100);
+}
+
+function reportLoadScore({ open = 0, overdue = 0, review = 0 }) {
+  return Math.min(100, open * 15 + overdue * 26 + review * 10);
+}
+
+function reportScopeBrands() {
+  return isAllBrandsScope() ? brands.filter((brand) => brand.isActive !== false) : [getBrand()].filter(Boolean);
+}
+
+function clientReportRows(orders, scopedBrands) {
+  return clients
+    .map((clientItem) => {
+      const clientBrands = scopedBrands.filter((brand) => brand.clientId === clientItem.id);
+      const clientBrandIds = new Set(clientBrands.map((brand) => brand.id));
+      const clientOrders = orders.filter((order) => clientBrandIds.has(order.brandId));
+      const open = clientOrders.filter(isOpenWorkOrder);
+      const completed = clientOrders.filter((order) => order.status === "completed");
+      const lateCompleted = completed.filter(wasCompletedLate);
+      const overdueOpen = open.filter((order) => daysUntil(order.dueDate) < 0);
+      const review = open.filter((order) => order.status === "in_review");
+      const onTime = completed.length ? percent(completed.length - lateCompleted.length, completed.length) : null;
+      return {
+        client: clientItem,
+        brands: clientBrands.length,
+        total: clientOrders.length,
+        open: open.length,
+        completed: completed.length,
+        lateCompleted: lateCompleted.length,
+        overdueOpen: overdueOpen.length,
+        review: review.length,
+        onTime,
+      };
+    })
+    .filter((row) => row.brands || row.total)
+    .sort((a, b) => b.overdueOpen - a.overdueOpen || b.lateCompleted - a.lateCompleted || b.open - a.open || a.client.name.localeCompare(b.client.name));
+}
+
+function brandReportRows(orders, scopedBrands) {
+  return scopedBrands
+    .map((brand) => {
+      const brandScopedOrders = orders.filter((order) => order.brandId === brand.id);
+      const open = brandScopedOrders.filter(isOpenWorkOrder);
+      const completed = brandScopedOrders.filter((order) => order.status === "completed");
+      const lateCompleted = completed.filter(wasCompletedLate);
+      const overdueOpen = open.filter((order) => daysUntil(order.dueDate) < 0);
+      const review = open.filter((order) => order.status === "in_review");
+      return {
+        brand,
+        client: getClient(brand.clientId),
+        total: brandScopedOrders.length,
+        open: open.length,
+        completed: completed.length,
+        lateCompleted: lateCompleted.length,
+        overdueOpen: overdueOpen.length,
+        review: review.length,
+        completion: percent(completed.length, brandScopedOrders.length),
+      };
+    })
+    .sort((a, b) => b.overdueOpen - a.overdueOpen || b.open - a.open || b.total - a.total || a.brand.shortName.localeCompare(b.brand.shortName));
+}
+
+function categoryReportRows(orders) {
+  return Object.entries(workOrderCategoryLabels)
+    .map(([category, label]) => {
+      const categoryOrders = orders.filter((order) => order.category === category);
+      const open = categoryOrders.filter(isOpenWorkOrder);
+      const completed = categoryOrders.filter((order) => order.status === "completed");
+      return { category, label, total: categoryOrders.length, open: open.length, completed: completed.length };
+    })
+    .filter((row) => row.total)
+    .sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
+}
+
+function reportInsights({ overdueOpen, lateCompleted, reviewOrders, teamRows, clientRows }) {
+  const insights = [];
+  const overloaded = teamRows.filter((row) => row.open >= 5 || row.overdue > 0).slice(0, 3);
+  const clientsWithRisk = clientRows.filter((row) => row.overdueOpen || row.lateCompleted).slice(0, 3);
+
+  if (overdueOpen.length) {
+    insights.push({
+      title: `${overdueOpen.length} OTs vencidas siguen abiertas`,
+      detail: "Conviene revisarlas en daily y moverlas a cierre, cambio de fecha o bloqueo documentado.",
+      cls: "red",
+    });
+  }
+  if (lateCompleted.length) {
+    insights.push({
+      title: `${lateCompleted.length} entregas cerradas fuera de fecha`,
+      detail: "Buen dato para ajustar tiempos prometidos por cliente o tipo de trabajo.",
+      cls: "amber",
+    });
+  }
+  if (reviewOrders.length) {
+    insights.push({
+      title: `${reviewOrders.length} OTs esperando revision`,
+      detail: "Si se acumulan aqui, el cuello de botella suele estar en aprobacion interna o feedback.",
+      cls: "blue",
+    });
+  }
+  if (overloaded.length) {
+    insights.push({
+      title: `Carga alta: ${overloaded.map((row) => row.user.name.split(" ")[0]).join(", ")}`,
+      detail: "Revisa redistribucion antes de asignar nuevas OTs urgentes.",
+      cls: "purple",
+    });
+  }
+  if (clientsWithRisk.length) {
+    insights.push({
+      title: `Clientes con friccion: ${clientsWithRisk.map((row) => row.client.name).join(", ")}`,
+      detail: "Estos clientes concentran entregas tarde o vencimientos abiertos.",
+      cls: "red",
+    });
+  }
+  if (!insights.length) {
+    insights.push({
+      title: "Operacion estable",
+      detail: "No hay vencimientos ni retrasos visibles en este scope. Buen momento para planificar siguientes entregas.",
+      cls: "green",
+    });
+  }
+  return insights;
+}
+
 function renderReports() {
-  const brandReports = isAllBrandsScope() ? reports : reports.filter((report) => report.brandId === state.currentBrandId);
-  const fallback = [
-    { metric: "Alcance", value: 24000, trend: 7 },
-    { metric: "Interacciones", value: 3160, trend: 4 },
-    { metric: "CTR", value: 1.9, trend: -0.2 },
-  ];
-  const rows = brandReports.length ? brandReports : fallback;
+  const scopedOrders = brandOrders();
+  const scopedBrands = reportScopeBrands();
+  const openOrders = scopedOrders.filter(isOpenWorkOrder);
+  const completedOrders = scopedOrders.filter((order) => order.status === "completed");
+  const overdueOpen = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
+  const lateCompleted = completedOrders.filter(wasCompletedLate);
+  const reviewOrders = openOrders.filter((order) => order.status === "in_review");
+  const onTimeRate = completedOrders.length ? percent(completedOrders.length - lateCompleted.length, completedOrders.length) : 0;
+  const clientRows = clientReportRows(scopedOrders, scopedBrands);
+  const brandRows = brandReportRows(scopedOrders, scopedBrands);
+  const categoryRows = categoryReportRows(scopedOrders);
+  const teamRows = weeklyDigestRows()
+    .map((row) => ({ ...row, load: reportLoadScore(row) }))
+    .sort((a, b) => b.overdue - a.overdue || b.open - a.open || b.load - a.load || a.user.name.localeCompare(b.user.name));
+  const maxCategory = Math.max(...categoryRows.map((row) => row.total), 1);
+  const insights = reportInsights({ overdueOpen, lateCompleted, reviewOrders, teamRows, clientRows });
+
   return `
-    <section class="grid grid-2">
-      <div class="panel section">
-        <div class="section-header">
-          <h2 class="section-title">Reporte mensual</h2>
-          <div class="row wrap">
-            <button class="button-ghost small" data-action="upload-csv">Subir CSV</button>
-            <button class="button small" data-action="export-pdf">Export PDF</button>
+    <section class="section">
+      <div class="panel brand-hero reports-hero">
+        <div>
+          <div class="hero-title">
+            <h2>Reporteria operativa</h2>
+            <span class="badge green">Agencia en tiempo real</span>
+          </div>
+          <p class="muted">Panorama de carga, entregas, atrasos y trabajo activo por cliente, marca y responsable.</p>
+        </div>
+        <div class="quick-links">
+          <button class="button" data-module="work-orders">Ver OTs</button>
+          <button class="button-ghost" data-module="team">Ver equipo</button>
+          <button class="button-ghost" data-module="notifications">Emails</button>
+        </div>
+      </div>
+
+      <section class="grid grid-4">
+        ${renderMetric("OTs abiertas", openOrders.length, "Trabajo activo en este scope")}
+        ${renderMetric("Entregadas", completedOrders.length, "OTs marcadas como completadas")}
+        ${renderMetric("Fuera de fecha", lateCompleted.length, "Completadas despues del deadline")}
+        ${renderMetric("Cumplimiento", completedOrders.length ? `${onTimeRate}%` : "N/A", "Entregas completadas a tiempo")}
+      </section>
+
+      <section class="grid grid-2 top-aligned-grid">
+        <div class="panel section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Clientes y cumplimiento</h2>
+              <div class="small-muted">Que tanto trabajo se esta haciendo y donde se estan atrasando las entregas.</div>
+            </div>
+            <span class="badge blue">${clientRows.length} clientes</span>
+          </div>
+          <div class="compact-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cliente</th>
+                  <th>Abiertas</th>
+                  <th>Entregadas</th>
+                  <th>Fuera de fecha</th>
+                  <th>A tiempo</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${clientRows
+                  .map(
+                    (row) => `
+                      <tr>
+                        <td>
+                          <strong>${row.client.name}</strong>
+                          <div class="muted">${row.brands} marcas / ${row.total} OTs</div>
+                        </td>
+                        <td>${row.open}</td>
+                        <td>${row.completed}</td>
+                        <td><span class="badge ${row.lateCompleted || row.overdueOpen ? "red" : "green"}">${row.lateCompleted} cerradas / ${row.overdueOpen} abiertas</span></td>
+                        <td>${row.onTime === null ? "N/A" : `${row.onTime}%`}</td>
+                      </tr>
+                    `,
+                  )
+                  .join("") || `<tr><td colspan="5"><div class="empty compact-empty">Sin OTs para reportar</div></td></tr>`}
+              </tbody>
+            </table>
           </div>
         </div>
-        <div class="badge-row">
-          <span class="badge blue">report_snapshots</span>
-          <span class="badge">Carga manual v1</span>
-          <span class="badge green">Cliente ve reportes aprobados</span>
+
+        <div class="panel section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Carga por responsable</h2>
+              <div class="small-muted">Todas las personas internas activas, no solo quienes tienen OTs.</div>
+            </div>
+            <span class="badge amber">${openOrders.length} abiertas</span>
+          </div>
+          <div class="team-workload-list report-workload-list">
+            ${teamRows
+              .map(
+                ({ user, open, overdue, review, load }) => `
+                  <div class="team-mini-row report-team-row">
+                    <div>
+                      <strong>${user.name}</strong>
+                      <span class="muted">${roleLabels[user.role] || user.role} / ${open} abiertas / ${review} rev. / ${overdue} venc.</span>
+                    </div>
+                    <div class="bar-track"><div class="bar-fill ${overdue ? "danger-fill" : ""}" style="width:${load}%"></div></div>
+                  </div>
+                `,
+              )
+              .join("") || `<div class="empty compact-empty">Sin equipo interno activo</div>`}
+          </div>
         </div>
-        <div class="grid grid-3">
-          ${rows.map((report) => renderMetric(report.metric, report.value, `${report.trend > 0 ? "+" : ""}${report.trend}% vs periodo anterior`)).join("")}
+      </section>
+
+      <section class="grid grid-2 top-aligned-grid">
+        <div class="panel section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Trabajo por marca</h2>
+              <div class="small-muted">Vista rapida para entrar a la marca que necesita seguimiento.</div>
+            </div>
+            <span class="badge">${brandRows.length} marcas</span>
+          </div>
+          <div class="brand-report-list">
+            ${brandRows
+              .map(
+                (row) => `
+                  <button class="brand-report-row" data-brand-jump="${row.brand.id}">
+                    <div>
+                      <strong>${row.brand.shortName}</strong>
+                      <span>${row.client?.name || "Cliente"} / ${row.total} OTs</span>
+                    </div>
+                    <div class="report-row-metrics">
+                      <span>${row.open} abiertas</span>
+                      <span>${row.completed} entregadas</span>
+                      <span class="${row.overdueOpen || row.lateCompleted ? "text-red" : ""}">${row.overdueOpen + row.lateCompleted} riesgos</span>
+                    </div>
+                    <div class="mini-progress"><div style="width:${row.completion}%"></div></div>
+                  </button>
+                `,
+              )
+              .join("") || `<div class="empty compact-empty">Sin marcas para reportar</div>`}
+          </div>
         </div>
-      </div>
-      <div class="panel section">
-        <h2 class="section-title">Distribucion de resultados</h2>
-        <div class="bar-chart">
-          ${rows
-            .map(
-              (report, index) => `
-                <div class="bar-row">
-                  <span>${report.metric}</span>
-                  <div class="bar-track"><div class="bar-fill" style="width:${Math.max(18, 90 - index * 18)}%"></div></div>
-                  <strong>${report.trend > 0 ? "+" : ""}${report.trend}%</strong>
-                </div>
-              `,
-            )
-            .join("")}
+
+        <div class="panel section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Tipo de trabajo</h2>
+              <div class="small-muted">Que se esta moviendo: diseno, copy, pauta, produccion y mas.</div>
+            </div>
+            <span class="badge green">${categoryRows.length} categorias</span>
+          </div>
+          <div class="bar-chart">
+            ${categoryRows
+              .map(
+                (row) => `
+                  <div class="bar-row report-bar-row">
+                    <span>${row.label}</span>
+                    <div class="bar-track"><div class="bar-fill" style="width:${Math.max(8, percent(row.total, maxCategory))}%"></div></div>
+                    <strong>${row.total}</strong>
+                    <small>${row.open} abiertas / ${row.completed} entregadas</small>
+                  </div>
+                `,
+              )
+              .join("") || `<div class="empty compact-empty">Aun no hay categorias con OTs</div>`}
+          </div>
         </div>
-      </div>
+      </section>
+
+      <section class="grid grid-2 top-aligned-grid">
+        <div class="panel section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Focos recomendados</h2>
+              <div class="small-muted">Lectura accionable para decidir que revisar primero.</div>
+            </div>
+            <span class="badge blue">${insights.length} insights</span>
+          </div>
+          <div class="stack">
+            ${insights
+              .map(
+                (insight) => `
+                  <div class="insight-card">
+                    <span class="status-dot ${insight.cls}"></span>
+                    <div>
+                      <strong>${insight.title}</strong>
+                      <p class="muted">${insight.detail}</p>
+                    </div>
+                  </div>
+                `,
+              )
+              .join("")}
+          </div>
+        </div>
+
+        <div class="panel section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">OTs que explican el atraso</h2>
+              <div class="small-muted">Abiertas vencidas y entregas completadas fuera de fecha.</div>
+            </div>
+            <button class="button-ghost small" data-module="work-orders">Abrir kanban</button>
+          </div>
+          <div class="stack">
+            ${[...overdueOpen, ...lateCompleted]
+              .slice(0, 8)
+              .map((order) => {
+                const brand = getBrand(order.brandId);
+                return `
+                  <div class="mini-card">
+                    <div class="row between">
+                      <strong>${order.id}</strong>
+                      <span class="badge ${order.status === "completed" ? "amber" : "red"}">${order.status === "completed" ? "Entregada tarde" : "Vencida abierta"}</span>
+                    </div>
+                    <span>${order.title}</span>
+                    <span class="muted">${getClient(brand.clientId)?.name || "Cliente"} / ${brand.shortName} / ${formatDate(order.dueDate)}</span>
+                    <button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Ver OT</button>
+                  </div>
+                `;
+              })
+              .join("") || `<div class="empty compact-empty">Sin atrasos visibles en este scope</div>`}
+          </div>
+        </div>
+      </section>
     </section>
   `;
 }
@@ -3721,6 +4049,8 @@ async function createWorkOrderFromForm() {
     description: values.description,
     files: values.files,
     createdBy: "giu",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     notifyOnEmail: values.notifyOnEmail,
     linkedContentId: state.selectedContentId,
   });
@@ -3767,6 +4097,7 @@ async function updateWorkOrderFromForm() {
         due_date: values.dueDate || null,
         description: values.description,
         notify_on_email: values.notifyOnEmail,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", order.dbId);
     if (orderError) {
@@ -3834,6 +4165,7 @@ async function updateWorkOrderFromForm() {
   order.description = values.description;
   order.files = [...orderFiles(order), ...values.files];
   order.notifyOnEmail = values.notifyOnEmail;
+  order.updatedAt = new Date().toISOString();
   if (order.linkedContentId && order.status === "completed") {
     const linked = contentItems.find((item) => item.id === order.linkedContentId);
     if (linked && linked.status !== "approved") linked.status = "internal_review";
@@ -3858,7 +4190,7 @@ async function advanceWorkOrder(id) {
   if (isSupabaseMode()) {
     const { error } = await supabaseClient
       .from("work_orders")
-      .update({ status: nextStatus })
+      .update({ status: nextStatus, updated_at: new Date().toISOString() })
       .eq("id", order.dbId);
     if (error) {
       showToast(`No se pudo avanzar la OT: ${error.message}`);
@@ -3876,6 +4208,7 @@ async function advanceWorkOrder(id) {
   }
 
   order.status = nextStatus;
+  order.updatedAt = new Date().toISOString();
   if (order.linkedContentId && order.status === "completed") {
     const linked = contentItems.find((item) => item.id === order.linkedContentId);
     if (linked && linked.status !== "approved") linked.status = "internal_review";
