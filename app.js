@@ -1654,7 +1654,7 @@ function renderDashboard() {
       ${renderMetric("En revision", reviewOrders.length, "Esperando validacion")}
       ${renderMetric("Responsables", responsibleCount, "Equipo asignado")}
     </section>
-    <section class="grid grid-2">
+    <section class="grid grid-2 top-aligned-grid">
       <div class="panel section">
         <div class="section-header">
           <h2 class="section-title">Mi semana</h2>
@@ -2081,7 +2081,7 @@ function renderWorkOrders() {
       ${renderMetric("En revision", orders.filter((order) => order.status === "in_review").length, "Esperando validacion")}
       ${renderMetric("Con email activo", emailOrders.length, "Incluidas en digest")}
     </section>
-    <section class="grid grid-2">
+    <section class="grid grid-2 top-aligned-grid">
       ${
         allBrands
           ? `
