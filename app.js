@@ -672,7 +672,7 @@ const workOrderStatusLabels = {
   in_progress: "En proceso",
   in_review: "Revision interna",
   completed: "Entregada",
-  client_approved: "Aprobada cliente",
+  client_approved: "Aprobada por cliente",
   scheduled: "Programada",
   cancelled: "Cancelada",
 };
@@ -1309,7 +1309,7 @@ function wasCompletedLate(order) {
 
 function workOrderUrgency(order) {
   if (order.status === "scheduled") return { label: "Programada", cls: "green" };
-  if (order.status === "client_approved") return { label: "Aprobada cliente", cls: "green" };
+  if (order.status === "client_approved") return { label: "Aprobada por cliente", cls: "green" };
   if (order.status === "completed") return { label: "Entregada", cls: "blue" };
   if (order.status === "cancelled") return { label: "Cancelada", cls: "neutral" };
   const days = daysUntil(order.dueDate);
@@ -2380,6 +2380,18 @@ function renderWorkOrders() {
           <button class="button-ghost small" data-module="notifications">Reglas email</button>
         </div>
       </div>
+      <div class="workflow-steps" aria-label="Flujo de estados de ordenes de trabajo">
+        ${columns
+          .map(
+            (status, index) => `
+              <span class="workflow-step status-${status}">
+                <strong>${index + 1}</strong>
+                ${workOrderStatusLabels[status]}
+              </span>
+            `,
+          )
+          .join("")}
+      </div>
       <div class="kanban-scroll">
         <div class="kanban" aria-label="Kanban operativo de ordenes de trabajo">
         ${columns
@@ -2387,7 +2399,7 @@ function renderWorkOrders() {
             (status) => {
               const statusOrders = orders.filter((order) => order.status === status);
               return `
-              <div class="kanban-column">
+              <div class="kanban-column status-${status}">
                 <h3>
                   <span>${workOrderStatusLabels[status]}</span>
                   <span class="badge">${statusOrders.length}</span>

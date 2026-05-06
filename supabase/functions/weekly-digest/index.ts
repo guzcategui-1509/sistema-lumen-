@@ -177,7 +177,7 @@ function statusLabel(status: string) {
     in_progress: "En proceso",
     in_review: "Revision interna",
     completed: "Entregada",
-    client_approved: "Aprobada cliente",
+    client_approved: "Aprobada por cliente",
     scheduled: "Programada",
     cancelled: "Cancelada",
   };

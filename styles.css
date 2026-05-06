@@ -695,42 +695,60 @@ tr:last-child td {
 
 .kanban-scroll {
   max-width: 100%;
-  overflow-x: auto;
+  overflow-x: visible;
   overflow-y: visible;
-  padding: 2px 2px 14px;
-  scrollbar-color: var(--line-strong) transparent;
+  padding: 0;
 }
 
-.kanban-scroll::-webkit-scrollbar {
-  height: 10px;
+.workflow-steps {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
-.kanban-scroll::-webkit-scrollbar-track {
-  background: transparent;
+.workflow-step {
+  display: grid;
+  gap: 4px;
+  min-height: 64px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fafaf8;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
-.kanban-scroll::-webkit-scrollbar-thumb {
+.workflow-step strong {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
   border-radius: 999px;
-  background: var(--line-strong);
+  background: #2d2d2d;
+  color: white;
+  font-size: 12px;
 }
 
 .kanban {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(272px, 300px);
-  grid-template-columns: none;
+  grid-template-columns: 1fr;
   align-items: start;
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
   gap: 12px;
 }
 
 .kanban-column {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   align-content: start;
+  align-items: start;
   gap: 10px;
   min-width: 0;
-  min-height: 240px;
+  min-height: auto;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -739,11 +757,19 @@ tr:last-child td {
 
 .kanban-column h3 {
   display: flex;
+  grid-column: 1 / -1;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
   font-size: 14px;
+}
+
+.kanban-column .empty {
+  grid-column: 1 / -1;
+  min-height: 76px;
 }
 
 .mini-card {
@@ -1773,6 +1799,10 @@ tr:last-child td {
   .brand-shortcut-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .workflow-steps {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 860px) {
@@ -1860,24 +1890,13 @@ tr:last-child td {
   .notification-guide-grid,
   .brand-shortcut-grid,
   .digest-mini-metrics,
+  .workflow-steps,
   .form-grid {
     grid-template-columns: 1fr;
   }
 
   .report-row-metrics {
     grid-template-columns: 1fr;
-  }
-
-  .kanban-scroll {
-    overflow-x: visible;
-  }
-
-  .kanban {
-    grid-auto-flow: row;
-    grid-auto-columns: auto;
-    grid-template-columns: 1fr;
-    width: 100%;
-    min-width: 0;
   }
 
   .team-mini-row {
