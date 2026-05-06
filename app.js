@@ -1515,8 +1515,7 @@ function renderAllBrandsDashboard() {
     .sort((a, b) => daysUntil(a.dueDate) - daysUntil(b.dueDate))
     .slice(0, 6);
   const teamRows = weeklyDigestRows()
-    .sort((a, b) => b.overdue - a.overdue || b.open - a.open)
-    .slice(0, 5);
+    .sort((a, b) => b.overdue - a.overdue || b.open - a.open || a.user.name.localeCompare(b.user.name));
 
   return `
     ${renderAllBrandsHero()}
@@ -1575,21 +1574,26 @@ function renderAllBrandsDashboard() {
         </div>
         <div class="divider"></div>
         <div class="stack">
-          <strong>Carga por responsable</strong>
-          ${teamRows
-            .map(({ user, open, overdue }) => {
-              const load = Math.min(100, open * 18 + overdue * 22);
-              return `
-                <div class="team-mini-row">
-                  <div>
-                    <strong>${user.name}</strong>
-                    <span class="muted">${open} abiertas / ${overdue} vencidas</span>
+          <div class="row between">
+            <strong>Carga por responsable</strong>
+            <span class="badge blue">${teamRows.length}</span>
+          </div>
+          <div class="team-workload-list">
+            ${teamRows
+              .map(({ user, open, overdue }) => {
+                const load = Math.min(100, open * 18 + overdue * 22);
+                return `
+                  <div class="team-mini-row">
+                    <div>
+                      <strong>${user.name}</strong>
+                      <span class="muted">${roleLabels[user.role] || user.role} / ${open} abiertas / ${overdue} vencidas</span>
+                    </div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${load}%"></div></div>
                   </div>
-                  <div class="bar-track"><div class="bar-fill" style="width:${load}%"></div></div>
-                </div>
-              `;
-            })
-            .join("")}
+                `;
+              })
+              .join("") || `<div class="empty">Sin responsables activos</div>`}
+          </div>
         </div>
       </div>
     </section>

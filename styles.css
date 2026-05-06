@@ -1204,9 +1204,23 @@ tr:last-child td {
   background: #fafaf8;
 }
 
+.team-workload-list {
+  display: grid;
+  gap: 9px;
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
 .team-mini-row > div:first-child {
   display: grid;
   gap: 3px;
+  min-width: 0;
+}
+
+.team-mini-row strong,
+.team-mini-row .muted {
+  overflow-wrap: anywhere;
 }
 
 .assignee-row,
