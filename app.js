@@ -2263,7 +2263,7 @@ function renderNotifications() {
           </div>
         </div>
       </section>
-      <section class="grid grid-2">
+      <section class="grid grid-2 notifications-detail-grid">
         <div class="panel section">
           <div class="section-header">
             <h2 class="section-title">Reglas activas</h2>

@@ -363,6 +363,14 @@ button:disabled,
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.notifications-detail-grid {
+  align-items: start;
+}
+
+.notifications-detail-grid > .panel {
+  align-self: start;
+}
+
 .panel,
 .metric,
 .table-wrap,
