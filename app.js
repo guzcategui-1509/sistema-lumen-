@@ -377,21 +377,35 @@ const notificationRules = [
     id: "deadline-24h",
     title: "Deadline en 24h",
     channel: "Correo",
-    recipients: "Responsables + direccion",
+    recipients: "Responsables + Direccion/Cuentas",
     enabled: true,
   },
   {
     id: "overdue",
     title: "OT vencida",
     channel: "Correo + aviso dentro del sistema",
-    recipients: "Responsables + creador + direccion",
+    recipients: "Responsables + creador + Direccion/Cuentas",
     enabled: true,
   },
   {
     id: "weekly-digest",
-    title: "Digest lunes 8:00am",
+    title: "Digest semanal de carga",
     channel: "Correo",
-    recipients: "Equipo interno completo",
+    recipients: "Direccion y Cuentas, segun sus marcas",
+    enabled: true,
+  },
+  {
+    id: "monthly-content-matrix",
+    title: "Matriz mensual de contenido",
+    channel: "Orden automatica + correo",
+    recipients: "Cuentas + Generador/Creativo por marca",
+    enabled: true,
+  },
+  {
+    id: "monthly-paid-placement",
+    title: "Colocacion mensual de pauta",
+    channel: "Orden automatica + correo",
+    recipients: "Cuentas + Medios/Pauta por marca",
     enabled: true,
   },
 ];
@@ -400,8 +414,10 @@ const weeklyDigestConfig = {
   day: "Lunes",
   time: "08:00",
   timezone: "America/Mexico_City",
-  subject: "Lumen Workspace - estatus semanal de proyectos",
+  subject: "Lumen Workspace - carga semanal de tu equipo",
 };
+
+const workOrderManagerRoles = ["admin", "directora", "cuentas"];
 
 const productions = [
   {
@@ -1148,6 +1164,11 @@ function activeUsers() {
 
 function isSystemAdmin() {
   return ["admin", "directora"].includes(dataState.profile?.role);
+}
+
+function canManageWorkOrders() {
+  if (!isSupabaseMode()) return true;
+  return workOrderManagerRoles.includes(dataState.profile?.role);
 }
 
 function hasGlobalBrandAccess(user) {
@@ -1972,6 +1993,22 @@ function renderWorkOrderSelectOption(value, label, activeValue) {
 
 function renderWorkOrderForm(order = null) {
   const isEditing = Boolean(order);
+  if (!canManageWorkOrders()) {
+    return `
+      <div class="panel section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Ordenes con control de Cuentas</h2>
+            <div class="small-muted">Puedes consultar el trabajo, pero la creacion y edicion de OTs queda centralizada.</div>
+          </div>
+          <span class="badge amber">Solo Direccion / Cuentas</span>
+        </div>
+        <div class="admin-note">
+          Para crear, editar, avanzar o adjuntar archivos a una OT necesitas rol Admin, Direccion o Cuentas.
+        </div>
+      </div>
+    `;
+  }
   const selectedAssignees = new Set(isEditing ? orderAssignees(order) : []);
   const availableUsers = users.filter(
     (user) =>
@@ -2171,6 +2208,7 @@ function renderOrderCard(order) {
   const files = orderFiles(order);
   const urgency = workOrderUrgency(order);
   const isFocused = order.id === state.focusedWorkOrderId;
+  const canManage = canManageWorkOrders();
   return `
     <div class="mini-card ${isFocused ? "focused-card" : ""}" data-order-card="${escapeHtml(order.id)}">
       <div class="row between">
@@ -2207,8 +2245,14 @@ function renderOrderCard(order) {
       }
       <div class="row wrap">
         ${order.notifyOnEmail ? `<span class="badge blue">Email activo</span>` : `<span class="badge">Sin email</span>`}
-        <button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>
-        <button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar</button>
+        ${
+          canManage
+            ? `
+              <button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>
+              <button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar</button>
+            `
+            : `<span class="badge amber">Solo lectura</span>`
+        }
       </div>
       ${
         order.linkedContentId
@@ -2302,11 +2346,21 @@ function renderNotifications() {
           </div>
           <div class="mini-card">
             <strong>4. Resumen semanal</strong>
-            <span class="muted">El digest junta carga, vencidas y proximas entregas para enviarlo los lunes.</span>
+            <span class="muted">Direccion y Cuentas reciben carga laboral de sus marcas todos los lunes.</span>
+          </div>
+          <div class="mini-card">
+            <strong>5. Matriz mensual</strong>
+            <span class="muted">El 25 se crean OTs para la matriz de contenido del mes objetivo, excepto Proyectos, Pitch y Constructivos.</span>
+            <button class="button-ghost small" data-action="run-monthly-content-matrix">Probar matrices</button>
+          </div>
+          <div class="mini-card">
+            <strong>6. Colocacion de pauta</strong>
+            <span class="muted">Se crean OTs de pauta para marcas activas, excepto Constructivos, Lumen, Proyectos y Pitch.</span>
+            <button class="button-ghost small" data-action="run-monthly-paid-placement">Probar pauta</button>
           </div>
         </div>
         <div class="admin-note">
-          Solo Admin y Direccion pueden disparar correos desde la app. Las llaves privadas viven en Supabase, nunca en el navegador.
+          Solo Admin, Direccion y Cuentas pueden disparar correos o automatizaciones desde la app. Las llaves privadas viven en Supabase, nunca en el navegador.
         </div>
       </section>
     </section>
@@ -3577,6 +3631,8 @@ async function handleAction(action, id) {
     "queue-weekly-digest": () => queueWeeklyDigest(),
     "send-email-queue": () => sendEmailQueue(),
     "run-weekly-digest-now": () => runWeeklyDigestNow(),
+    "run-monthly-content-matrix": () => runMonthlyWorkOrderAutomation("content_matrix"),
+    "run-monthly-paid-placement": () => runMonthlyWorkOrderAutomation("paid_placement"),
     "new-admin-user": () => newAdminUser(),
     "save-admin-user": () => saveAdminUser(),
     "deactivate-admin-user": () => setAdminUserActive(id, false),
@@ -3937,6 +3993,10 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
 }
 
 async function createWorkOrderFromForm() {
+  if (!canManageWorkOrders()) {
+    showToast("Solo Direccion o Cuentas puede crear ordenes");
+    return;
+  }
   if (isAllBrandsScope()) {
     showToast("Selecciona una marca antes de crear una OT");
     return;
@@ -4044,6 +4104,10 @@ async function createWorkOrderFromForm() {
 }
 
 function editWorkOrder(id) {
+  if (!canManageWorkOrders()) {
+    showToast("Solo Direccion o Cuentas puede editar ordenes");
+    return;
+  }
   const order = workOrders.find((candidate) => candidate.id === id);
   if (!order) return;
   state.currentModule = "work-orders";
@@ -4058,6 +4122,10 @@ function cancelEditWorkOrder() {
 }
 
 async function updateWorkOrderFromForm() {
+  if (!canManageWorkOrders()) {
+    showToast("Solo Direccion o Cuentas puede modificar ordenes");
+    return;
+  }
   const order = selectedEditingOrder();
   if (!order) {
     showToast("Selecciona una OT para editar");
@@ -4162,6 +4230,10 @@ async function updateWorkOrderFromForm() {
 }
 
 async function advanceWorkOrder(id) {
+  if (!canManageWorkOrders()) {
+    showToast("Solo Direccion o Cuentas puede modificar ordenes");
+    return;
+  }
   const order = workOrders.find((candidate) => candidate.id === id);
   if (!order) return;
   const next = {
@@ -4209,19 +4281,19 @@ function previewWeeklyDigest() {
   showToast(`Resumen semanal: ${totalOpen} OTs abiertas y ${totalOverdue} vencidas. Esto solo es vista previa.`);
 }
 
-async function invokeEmailFunction(functionName, successMessage) {
+async function invokeEmailFunction(functionName, successMessage, extraBody = {}) {
   if (!isSupabaseMode()) {
     showToast("Conecta Supabase para usar emails reales");
     return null;
   }
-  if (!isSystemAdmin()) {
-    showToast("Solo Admin o Direccion puede enviar correos");
+  if (!canManageWorkOrders()) {
+    showToast("Solo Direccion o Cuentas puede disparar automatizaciones");
     return null;
   }
 
   try {
     const { data, error } = await supabaseClient.functions.invoke(functionName, {
-      body: { triggered_by: dataState.session?.user?.id },
+      body: { triggered_by: dataState.session?.user?.id, ...extraBody },
     });
     if (error) throw error;
     showToast(typeof successMessage === "function" ? successMessage(data) : successMessage);
@@ -4230,6 +4302,25 @@ async function invokeEmailFunction(functionName, successMessage) {
     showToast(error.message || `No se pudo ejecutar ${functionName}`);
     return null;
   }
+}
+
+async function runMonthlyWorkOrderAutomation(kind) {
+  const labels = {
+    content_matrix: "matrices de contenido",
+    paid_placement: "ordenes de pauta",
+  };
+  const confirmed = window.confirm(
+    `Esto creara ${labels[kind] || "ordenes automaticas"} y dejara los correos preparados para los responsables. ¿Continuar?`,
+  );
+  if (!confirmed) return null;
+
+  const data = await invokeEmailFunction(
+    "monthly-work-orders",
+    (result) => `${result?.created ?? 0} OTs creadas y ${result?.emails_queued ?? 0} correos preparados`,
+    { kind },
+  );
+  if (data) await loadSupabaseData();
+  return data;
 }
 
 async function queueWeeklyDigest() {

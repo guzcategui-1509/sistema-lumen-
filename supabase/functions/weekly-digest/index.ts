@@ -2,6 +2,7 @@ type Profile = {
   id: string;
   full_name: string;
   email: string;
+  role: string;
 };
 
 type WorkOrder = {
@@ -24,6 +25,17 @@ type Brand = {
 type RequestProfile = {
   role: string;
   is_active: boolean;
+};
+
+type BrandMembership = {
+  user_id: string;
+  brand_id: string;
+};
+
+type BrandResponsibility = {
+  user_id: string;
+  brand_id: string;
+  responsibility_role: string;
 };
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
@@ -96,8 +108,8 @@ async function authorizeRequest(request: Request) {
 
   const profiles = (await profileResponse.json()) as RequestProfile[];
   const profile = profiles[0];
-  if (!profile?.is_active || !["admin", "directora"].includes(profile.role)) {
-    return { ok: false, status: 403, error: "Only admin or direccion can queue weekly digest" };
+  if (!profile?.is_active || !["admin", "directora", "cuentas"].includes(profile.role)) {
+    return { ok: false, status: 403, error: "Only direccion or cuentas can queue weekly digest" };
   }
 
   return { ok: true };
@@ -306,35 +318,66 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: auth.error ?? "Unauthorized" }, auth.status ?? 401);
   }
 
-  const [profilesResponse, ordersResponse, brandsResponse] = await Promise.all([
-    supabaseRequest("profiles?is_active=eq.true&role=neq.cliente&select=id,full_name,email"),
+  const [profilesResponse, ordersResponse, brandsResponse, membershipsResponse, responsibilitiesResponse] = await Promise.all([
+    supabaseRequest("profiles?is_active=eq.true&role=in.(admin,directora,cuentas)&select=id,full_name,email,role"),
     supabaseRequest("work_orders?status=neq.completed&select=id,code,title,description,priority,status,category,due_date,brand_id"),
     supabaseRequest("brands?is_active=eq.true&select=id,name"),
+    supabaseRequest("brand_memberships?select=user_id,brand_id"),
+    supabaseRequest("brand_responsibilities?select=user_id,brand_id,responsibility_role"),
   ]);
 
   if (!profilesResponse.ok) return jsonResponse({ error: await profilesResponse.text() }, 500);
   if (!ordersResponse.ok) return jsonResponse({ error: await ordersResponse.text() }, 500);
   if (!brandsResponse.ok) return jsonResponse({ error: await brandsResponse.text() }, 500);
+  if (!membershipsResponse.ok) return jsonResponse({ error: await membershipsResponse.text() }, 500);
 
   const profiles = (await profilesResponse.json()) as Profile[];
   const orders = (await ordersResponse.json()) as WorkOrder[];
   const brands = (await brandsResponse.json()) as Brand[];
+  const memberships = (await membershipsResponse.json()) as BrandMembership[];
+  const responsibilities = responsibilitiesResponse.ok
+    ? ((await responsibilitiesResponse.json()) as BrandResponsibility[])
+    : [];
   const openOrders = orders.filter((order) => order.status !== "completed" && order.status !== "cancelled");
   const overdueOrders = openOrders.filter((order) => daysUntil(order.due_date) < 0);
-  const subject = "Lumen Workspace - estatus semanal de proyectos";
-  const html = buildDigestHtml(orders, brands, getAppUrl(request));
+  const subject = "Lumen Workspace - carga semanal de tu equipo";
+  const appUrl = getAppUrl(request);
+  const allBrandIds = new Set(brands.map((brand) => brand.id));
 
-  const notifications = profiles.map((profile) => ({
-    brand_id: null,
-    work_order_id: null,
-    recipient_user_id: profile.id,
-    recipient_email: profile.email,
-    notification_type: "weekly_digest",
-    subject,
-    html_body: html,
-    status: "queued",
-    scheduled_for: new Date().toISOString(),
-  }));
+  function profileBrandIds(profile: Profile) {
+    if (["admin", "directora"].includes(profile.role)) return allBrandIds;
+    const scopedIds = new Set<string>();
+
+    responsibilities
+      .filter(
+        (responsibility) =>
+          responsibility.user_id === profile.id &&
+          ["cuentas", "direccion", "directora"].includes(responsibility.responsibility_role),
+      )
+      .forEach((responsibility) => scopedIds.add(responsibility.brand_id));
+
+    memberships
+      .filter((membership) => membership.user_id === profile.id)
+      .forEach((membership) => scopedIds.add(membership.brand_id));
+
+    return scopedIds;
+  }
+
+  const notifications = profiles.map((profile) => {
+    const brandIds = profileBrandIds(profile);
+    const scopedOrders = orders.filter((order) => brandIds.has(order.brand_id));
+    return {
+      brand_id: null,
+      work_order_id: null,
+      recipient_user_id: profile.id,
+      recipient_email: profile.email,
+      notification_type: "weekly_digest",
+      subject,
+      html_body: buildDigestHtml(scopedOrders, brands, appUrl),
+      status: "queued",
+      scheduled_for: new Date().toISOString(),
+    };
+  });
 
   const insertNotifications = await supabaseRequest("email_notifications", {
     method: "POST",

@@ -5,6 +5,7 @@
 -- 1. Lunes 08:00 Guatemala/Mexico (14:00 UTC): prepara el digest semanal.
 -- 2. Lunes 08:02 Guatemala/Mexico (14:02 UTC): envia el digest preparado.
 -- 3. Cada 10 minutos: envia otros correos preparados, como asignaciones de OTs.
+-- 4. Dia 25 de cada mes: crea OTs automaticas de matriz de contenido y pauta.
 
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 CREATE EXTENSION IF NOT EXISTS pg_net;
@@ -24,6 +25,12 @@ WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'lumen-send-weekly-digest')
 
 SELECT cron.unschedule('lumen-send-prepared-emails')
 WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'lumen-send-prepared-emails');
+
+SELECT cron.unschedule('lumen-monthly-content-matrix')
+WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'lumen-monthly-content-matrix');
+
+SELECT cron.unschedule('lumen-monthly-paid-placement')
+WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'lumen-monthly-paid-placement');
 
 SELECT cron.schedule(
   'lumen-prepare-weekly-digest',
@@ -51,6 +58,36 @@ SELECT cron.schedule(
       'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'lumen_cron_secret')
     ),
     body := '{"source":"pg_cron","job":"send-weekly-digest"}'::jsonb
+  );
+  $$
+);
+
+SELECT cron.schedule(
+  'lumen-monthly-content-matrix',
+  '0 14 25 * *',
+  $$
+  SELECT net.http_post(
+    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'lumen_project_url') || '/functions/v1/monthly-work-orders',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'lumen_cron_secret')
+    ),
+    body := '{"source":"pg_cron","job":"monthly-content-matrix","kind":"content_matrix"}'::jsonb
+  );
+  $$
+);
+
+SELECT cron.schedule(
+  'lumen-monthly-paid-placement',
+  '10 14 25 * *',
+  $$
+  SELECT net.http_post(
+    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'lumen_project_url') || '/functions/v1/monthly-work-orders',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'lumen_cron_secret')
+    ),
+    body := '{"source":"pg_cron","job":"monthly-paid-placement","kind":"paid_placement"}'::jsonb
   );
   $$
 );
