@@ -1499,6 +1499,42 @@ tr:last-child td {
   line-height: 1;
 }
 
+.work-order-action-band {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.65fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.brand-shortcut-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.brand-shortcut {
+  display: grid;
+  gap: 4px;
+  min-height: 64px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fafaf8;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.brand-shortcut:hover {
+  border-color: rgba(73, 238, 140, 0.65);
+  background: #edfff4;
+}
+
+.brand-shortcut span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .digest-row,
 .notification-rule {
   display: grid;
@@ -1729,6 +1765,14 @@ tr:last-child td {
   .brand-mini-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .work-order-action-band {
+    grid-template-columns: 1fr;
+  }
+
+  .brand-shortcut-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 860px) {
@@ -1814,6 +1858,8 @@ tr:last-child td {
   .brand-report-row,
   .report-team-row,
   .notification-guide-grid,
+  .brand-shortcut-grid,
+  .digest-mini-metrics,
   .form-grid {
     grid-template-columns: 1fr;
   }

@@ -1953,6 +1953,63 @@ function renderWeeklyDigestMini() {
   `;
 }
 
+function renderWorkOrderBrandShortcut(brand) {
+  const snapshot = getBrandSnapshot(brand);
+  return `
+    <button class="brand-shortcut" data-brand-jump="${brand.id}">
+      <strong>${escapeHtml(brand.shortName)}</strong>
+      <span>${snapshot.open} abiertas / ${snapshot.overdue} vencidas</span>
+    </button>
+  `;
+}
+
+function renderWorkOrderSetupSection(allBrands) {
+  if (!allBrands) {
+    return `
+      <section class="grid grid-2 top-aligned-grid">
+        ${renderWorkOrderForm(selectedEditingOrder())}
+        <div class="panel section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Digest semanal</h2>
+              <div class="small-muted">${weeklyDigestConfig.day} ${weeklyDigestConfig.time} / ${weeklyDigestConfig.timezone}</div>
+            </div>
+            <button class="button-ghost small" data-module="notifications">Ver detalle</button>
+          </div>
+          ${renderWeeklyDigestMini()}
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="work-order-action-band">
+      <div class="panel section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Crear OT por marca</h2>
+            <div class="small-muted">Selecciona una marca para abrir su workspace y crear la orden desde ahi.</div>
+          </div>
+          <span class="badge amber">Requiere marca</span>
+        </div>
+        <div class="brand-shortcut-grid">
+          ${brands.map(renderWorkOrderBrandShortcut).join("")}
+        </div>
+      </div>
+      <div class="panel section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Digest semanal</h2>
+            <div class="small-muted">${weeklyDigestConfig.day} ${weeklyDigestConfig.time} / ${weeklyDigestConfig.timezone}</div>
+          </div>
+          <button class="button-ghost small" data-module="notifications">Ver detalle</button>
+        </div>
+        ${renderWeeklyDigestMini()}
+      </div>
+    </section>
+  `;
+}
+
 function renderBrandPickerPrompt(title, detail) {
   const snapshots = brands.map(getBrandSnapshot);
   return `
@@ -2314,36 +2371,7 @@ function renderWorkOrders() {
       ${renderMetric("En revision", orders.filter((order) => order.status === "in_review").length, "Esperando validacion")}
       ${renderMetric("Con email activo", emailOrders.length, "Incluidas en digest")}
     </section>
-    <section class="grid grid-2 top-aligned-grid">
-      ${
-        allBrands
-          ? `
-            <div class="panel section">
-              <div class="section-header">
-                <div>
-                  <h2 class="section-title">Crear OT por marca</h2>
-                  <div class="small-muted">Para crear una orden, primero entra a la marca correcta desde este mapa.</div>
-                </div>
-                <span class="badge amber">Requiere marca</span>
-              </div>
-              <div class="brand-health-grid compact">
-                ${brands.map((brand) => renderAllBrandCard(getBrandSnapshot(brand))).join("")}
-              </div>
-            </div>
-          `
-          : renderWorkOrderForm(selectedEditingOrder())
-      }
-      <div class="panel section">
-        <div class="section-header">
-          <div>
-            <h2 class="section-title">Digest semanal</h2>
-            <div class="small-muted">${weeklyDigestConfig.day} ${weeklyDigestConfig.time} / ${weeklyDigestConfig.timezone}</div>
-          </div>
-          <button class="button-ghost small" data-module="notifications">Ver detalle</button>
-        </div>
-        ${renderWeeklyDigestMini()}
-      </div>
-    </section>
+    ${renderWorkOrderSetupSection(allBrands)}
     <section class="section">
       <div class="section-header">
         <h2 class="section-title">Kanban operativo</h2>
