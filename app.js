@@ -1926,6 +1926,33 @@ function renderWeeklyDigestPreview() {
   `;
 }
 
+function renderWeeklyDigestMini() {
+  const rows = weeklyDigestRows();
+  const open = rows.reduce((sum, row) => sum + row.open, 0);
+  const overdue = rows.reduce((sum, row) => sum + row.overdue, 0);
+  const review = rows.reduce((sum, row) => sum + row.review, 0);
+  const activeRecipients = rows.filter((row) => row.open || row.overdue || row.review || row.next).length;
+
+  return `
+    <div class="digest-mini">
+      <div class="digest-mini-copy">
+        <strong>${weeklyDigestConfig.day} ${weeklyDigestConfig.time}</strong>
+        <span>Resumen por correo para Direccion/Cuentas con la carga de trabajo del equipo.</span>
+      </div>
+      <div class="digest-mini-metrics">
+        <span><strong>${open}</strong> abiertas</span>
+        <span><strong>${overdue}</strong> vencidas</span>
+        <span><strong>${review}</strong> en revision</span>
+        <span><strong>${activeRecipients}</strong> con pendientes</span>
+      </div>
+      <div class="row wrap">
+        <button class="button-ghost small" data-module="notifications">Configurar emails</button>
+        <button class="button small" data-action="run-weekly-digest-now">Enviar ahora</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderBrandPickerPrompt(title, detail) {
   const snapshots = brands.map(getBrandSnapshot);
   return `
@@ -2312,9 +2339,9 @@ function renderWorkOrders() {
             <h2 class="section-title">Digest semanal</h2>
             <div class="small-muted">${weeklyDigestConfig.day} ${weeklyDigestConfig.time} / ${weeklyDigestConfig.timezone}</div>
           </div>
-          <button class="button small" data-action="preview-weekly-digest">Ver resumen</button>
+          <button class="button-ghost small" data-module="notifications">Ver detalle</button>
         </div>
-        ${renderWeeklyDigestPreview()}
+        ${renderWeeklyDigestMini()}
       </div>
     </section>
     <section class="section">

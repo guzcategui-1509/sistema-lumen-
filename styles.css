@@ -1461,6 +1461,44 @@ tr:last-child td {
   padding: 9px;
 }
 
+.digest-mini {
+  display: grid;
+  gap: 12px;
+}
+
+.digest-mini-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.digest-mini-copy span {
+  color: var(--muted);
+}
+
+.digest-mini-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.digest-mini-metrics span {
+  display: grid;
+  gap: 3px;
+  min-height: 72px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fafaf8;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.digest-mini-metrics strong {
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1;
+}
+
 .digest-row,
 .notification-rule {
   display: grid;
