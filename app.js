@@ -418,6 +418,7 @@ const weeklyDigestConfig = {
 };
 
 const workOrderManagerRoles = ["admin", "directora", "cuentas"];
+const workOrderCreatorRoles = ["admin", "directora", "cuentas", "generador", "creativo"];
 
 const productions = [
   {
@@ -646,6 +647,7 @@ const state = {
   editingWorkOrderId: "",
   focusedWorkOrderId: "",
   initialRouteApplied: false,
+  passwordResetMode: false,
   toast: "",
 };
 
@@ -668,8 +670,10 @@ const stageLabels = {
 const workOrderStatusLabels = {
   new: "Nueva",
   in_progress: "En proceso",
-  in_review: "En revision",
-  completed: "Completada",
+  in_review: "Revision interna",
+  completed: "Entregada",
+  client_approved: "Aprobada cliente",
+  scheduled: "Programada",
   cancelled: "Cancelada",
 };
 
@@ -680,7 +684,33 @@ const workOrderPriorityLabels = {
 };
 
 const workOrderCategoryLabels = {
+  matriz: "Matriz",
+  campana: "Campana",
+  dinamica_digital: "Dinamica digital",
+  arte_final: "Arte final",
+  propuesta: "Propuesta",
+  cotizacion: "Cotizacion",
   diseno: "Diseno",
+  edicion: "Edicion",
+  copy: "Copy",
+  pauta: "Pauta",
+  produccion: "Produccion",
+  desarrollo: "Desarrollo",
+  otro: "Otro",
+};
+
+const workOrderCategoryOptions = {
+  matriz: "Matriz",
+  campana: "Campana",
+  dinamica_digital: "Dinamica digital",
+  arte_final: "Arte final",
+  propuesta: "Propuesta",
+  cotizacion: "Cotizacion",
+  diseno: "Diseno",
+  edicion: "Edicion",
+};
+
+const legacyWorkOrderCategoryLabels = {
   copy: "Copy",
   pauta: "Pauta",
   produccion: "Produccion",
@@ -869,6 +899,9 @@ async function initializeApp() {
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
     dataState.session = session;
     dataState.error = "";
+    if (_event === "PASSWORD_RECOVERY") {
+      dataState.passwordResetMode = true;
+    }
     if (session) {
       dataState.loading = true;
       render();
@@ -930,6 +963,50 @@ function escapeHtml(value = "") {
 
 function plainText(value = "") {
   return String(value).replace(/\s+/g, " ").trim();
+}
+
+function parseListLines(value = "") {
+  return String(value)
+    .split("\n")
+    .map((line) => line.trim().replace(/^[-*]\s*/, ""))
+    .filter(Boolean);
+}
+
+function splitWorkOrderDescription(value = "") {
+  const marker = "\n\n---\nSeguimiento operativo";
+  const raw = String(value || "");
+  const markerIndex = raw.indexOf(marker);
+  if (markerIndex === -1) {
+    return { description: raw.trim(), subtasks: [], materialChanges: [] };
+  }
+
+  const description = raw.slice(0, markerIndex).trim();
+  const extras = raw.slice(markerIndex + marker.length).trim();
+  const subtasksMatch = extras.match(/Subtareas:\n([\s\S]*?)(?:\n\nCambios en materiales:|$)/);
+  const materialMatch = extras.match(/Cambios en materiales:\n([\s\S]*)/);
+
+  return {
+    description,
+    subtasks: parseListLines(subtasksMatch?.[1] || ""),
+    materialChanges: parseListLines(materialMatch?.[1] || ""),
+  };
+}
+
+function composeWorkOrderDescription(description, subtasks, materialChanges) {
+  const base = String(description || "").trim();
+  const taskLines = parseListLines(Array.isArray(subtasks) ? subtasks.join("\n") : subtasks);
+  const materialLines = parseListLines(Array.isArray(materialChanges) ? materialChanges.join("\n") : materialChanges);
+  const blocks = [];
+
+  if (taskLines.length) {
+    blocks.push(`Subtareas:\n${taskLines.map((item) => `- ${item}`).join("\n")}`);
+  }
+  if (materialLines.length) {
+    blocks.push(`Cambios en materiales:\n${materialLines.map((item) => `- ${item}`).join("\n")}`);
+  }
+
+  if (!blocks.length) return base;
+  return `${base}\n\n---\nSeguimiento operativo\n\n${blocks.join("\n\n")}`.trim();
 }
 
 function getAppBaseUrl() {
@@ -1171,6 +1248,11 @@ function canManageWorkOrders() {
   return workOrderManagerRoles.includes(dataState.profile?.role);
 }
 
+function canCreateWorkOrders() {
+  if (!isSupabaseMode()) return true;
+  return workOrderCreatorRoles.includes(dataState.profile?.role);
+}
+
 function hasGlobalBrandAccess(user) {
   return ["admin", "directora"].includes(user?.role);
 }
@@ -1218,7 +1300,7 @@ function daysUntil(dateValue) {
 }
 
 function wasCompletedLate(order) {
-  if (order.status !== "completed") return false;
+  if (!["completed", "client_approved", "scheduled"].includes(order.status)) return false;
   const dueEnd = parseDateValue(order.dueDate, "T23:59:59");
   if (!dueEnd) return false;
   const completedAt = parseDateValue(order.completedAt || order.updatedAt) || todayAtNoon();
@@ -1226,7 +1308,9 @@ function wasCompletedLate(order) {
 }
 
 function workOrderUrgency(order) {
-  if (order.status === "completed") return { label: "Completada", cls: "green" };
+  if (order.status === "scheduled") return { label: "Programada", cls: "green" };
+  if (order.status === "client_approved") return { label: "Aprobada cliente", cls: "green" };
+  if (order.status === "completed") return { label: "Entregada", cls: "blue" };
   if (order.status === "cancelled") return { label: "Cancelada", cls: "neutral" };
   const days = daysUntil(order.dueDate);
   if (days < 0) return { label: `Vencida hace ${Math.abs(days)}d`, cls: "red" };
@@ -1235,8 +1319,23 @@ function workOrderUrgency(order) {
   return { label: `${days}d restantes`, cls: "blue" };
 }
 
+function nextWorkOrderStatus(order) {
+  const next = {
+    new: "in_progress",
+    in_progress: "in_review",
+    in_review: "completed",
+    completed: "client_approved",
+    client_approved: "scheduled",
+  };
+  return next[order.status] || null;
+}
+
 function isOpenWorkOrder(order) {
-  return !["completed", "cancelled"].includes(order.status);
+  return !["completed", "client_approved", "scheduled", "cancelled"].includes(order.status);
+}
+
+function isDeliveredWorkOrder(order) {
+  return ["completed", "client_approved", "scheduled"].includes(order.status);
 }
 
 function teamWorkload(userId) {
@@ -1321,6 +1420,12 @@ function render() {
 
   if (isSupabaseMode() && !dataState.session) {
     document.getElementById("app").innerHTML = renderLoginScreen();
+    bindAuthEvents();
+    return;
+  }
+
+  if (isSupabaseMode() && dataState.passwordResetMode) {
+    document.getElementById("app").innerHTML = renderPasswordResetScreen();
     bindAuthEvents();
     return;
   }
@@ -1417,7 +1522,30 @@ function renderLoginScreen() {
           <input class="input" id="login-password" type="password" autocomplete="current-password" placeholder="Tu password" />
         </div>
         <button class="button full" data-action="login">Entrar</button>
+        <button class="button-ghost full" data-action="reset-password-email">Olvide mi password</button>
         <p class="small-muted">Si el usuario fue invitado, primero debe aceptar la invitacion y crear password.</p>
+      </section>
+    </main>
+  `;
+}
+
+function renderPasswordResetScreen() {
+  return `
+    <main class="auth-screen">
+      <section class="auth-card">
+        ${renderLumenLogo("auth-logo-img")}
+        <h1>Nuevo password</h1>
+        <p class="muted">Crea un password nuevo para volver a entrar a Lumen Workspace.</p>
+        ${dataState.error ? `<div class="auth-error">${escapeHtml(dataState.error)}</div>` : ""}
+        <div class="field">
+          <label>Nuevo password</label>
+          <input class="input" id="new-password" type="password" autocomplete="new-password" placeholder="Minimo 8 caracteres" />
+        </div>
+        <div class="field">
+          <label>Confirmar password</label>
+          <input class="input" id="confirm-password" type="password" autocomplete="new-password" placeholder="Repite el password" />
+        </div>
+        <button class="button full" data-action="update-recovery-password">Guardar password</button>
       </section>
     </main>
   `;
@@ -1470,7 +1598,7 @@ function renderBrandHero() {
 function getBrandSnapshot(brand) {
   const brandOpen = workOrders.filter((order) => order.brandId === brand.id && isOpenWorkOrder(order));
   const brandReview = brandOpen.filter((order) => order.status === "in_review");
-  const brandCompleted = workOrders.filter((order) => order.brandId === brand.id && order.status === "completed");
+  const brandCompleted = workOrders.filter((order) => order.brandId === brand.id && isDeliveredWorkOrder(order));
   const brandOverdue = brandOpen.filter((order) => daysUntil(order.dueDate) < 0);
   const totalOrders = brandOpen.length + brandCompleted.length;
   const completion = totalOrders ? Math.round((brandCompleted.length / totalOrders) * 100) : 0;
@@ -1768,27 +1896,27 @@ function renderMetric(label, value, detail) {
 function renderWeeklyDigestPreview() {
   const rows = weeklyDigestRows();
   return `
-    <div class="email-preview">
+    <div class="email-preview compact-digest">
       <div class="email-preview-header">
         <strong>${weeklyDigestConfig.subject}</strong>
         <span>${weeklyDigestConfig.day} ${weeklyDigestConfig.time}</span>
       </div>
-      <div class="stack">
+      <div class="digest-list">
         ${rows
           .map(
             ({ user, open, overdue, review, collaborators, next }) => `
               <div class="digest-row">
                 <div>
                   <strong>${user.name}</strong>
-                  <div class="muted">${user.email}</div>
+                  <div class="muted">${roleLabels[user.role] || user.role}</div>
                 </div>
                 <div class="digest-stats">
                   <span class="badge ${overdue > 0 ? "red" : "green"}">${overdue} vencidas</span>
                   <span class="badge blue">${open} abiertas</span>
-                  <span class="badge amber">${review} en revision</span>
-                  <span class="badge purple">${collaborators} colaborativas</span>
+                  <span class="badge amber">${review} rev.</span>
+                  <span class="badge purple">${collaborators} colab.</span>
                 </div>
-                <div class="muted">${next ? `Proxima: ${next.id} / ${formatDate(next.dueDate)}` : "Sin pendientes"}</div>
+                <div class="digest-next">${next ? `${next.id} / ${formatDate(next.dueDate)}` : "Sin pendientes"}</div>
               </div>
             `,
           )
@@ -1993,23 +2121,25 @@ function renderWorkOrderSelectOption(value, label, activeValue) {
 
 function renderWorkOrderForm(order = null) {
   const isEditing = Boolean(order);
-  if (!canManageWorkOrders()) {
+  const canUseForm = isEditing ? canManageWorkOrders() : canCreateWorkOrders();
+  if (!canUseForm) {
     return `
       <div class="panel section">
         <div class="section-header">
           <div>
             <h2 class="section-title">Ordenes con control de Cuentas</h2>
-            <div class="small-muted">Puedes consultar el trabajo, pero la creacion y edicion de OTs queda centralizada.</div>
+            <div class="small-muted">Puedes consultar el trabajo, pero esta accion queda centralizada.</div>
           </div>
-          <span class="badge amber">Solo Direccion / Cuentas</span>
+          <span class="badge amber">${isEditing ? "Solo Direccion / Cuentas" : "Creacion restringida"}</span>
         </div>
         <div class="admin-note">
-          Para crear, editar, avanzar o adjuntar archivos a una OT necesitas rol Admin, Direccion o Cuentas.
+          ${isEditing ? "Para editar, avanzar o adjuntar archivos a una OT necesitas rol Admin, Direccion o Cuentas." : "Para crear una OT necesitas rol Admin, Direccion, Cuentas, Generador o Creativo."}
         </div>
       </div>
     `;
   }
   const selectedAssignees = new Set(isEditing ? orderAssignees(order) : []);
+  const parsedDescription = splitWorkOrderDescription(order?.description || "");
   const availableUsers = users.filter(
     (user) =>
       user.role !== "cliente" &&
@@ -2019,8 +2149,10 @@ function renderWorkOrderForm(order = null) {
   const files = isEditing ? orderFiles(order) : [];
   const titleValue = isEditing ? order.title : `Nueva solicitud para ${getBrand().shortName}`;
   const descriptionValue = isEditing
-    ? order.description || ""
+    ? parsedDescription.description || ""
     : "Contexto, entregable esperado y criterios de aprobacion.";
+  const subtasksValue = parsedDescription.subtasks.join("\n");
+  const materialChangesValue = parsedDescription.materialChanges.join("\n");
   const dueDateValue = isEditing ? order.dueDate || "" : "2026-05-08";
   const priorityValue = isEditing ? order.priority : "medium";
   const statusValue = isEditing ? order.status : "new";
@@ -2045,18 +2177,25 @@ function renderWorkOrderForm(order = null) {
         </div>
         <div class="field">
           <label>Responsables</label>
-          <select class="input multi-select" id="ot-assignees" multiple>
-            ${availableUsers
-              .map(
-                (user) => `
-                  <option value="${user.id}" ${selectedAssignees.has(user.id) ? "selected" : ""}>
-                    ${escapeHtml(user.name)}
-                  </option>
-                `,
-              )
-              .join("")}
-          </select>
-          <div class="field-help">Puedes seleccionar varias personas con Cmd/Ctrl o Shift.</div>
+          <div class="assignee-picker">
+            <input class="input assignee-search" id="ot-assignee-search" placeholder="Buscar responsable..." />
+            <div class="assignee-options">
+              ${availableUsers
+                .map(
+                  (user) => `
+                    <label class="assignee-option" data-assignee-option="${escapeHtml(`${user.name} ${user.email} ${roleLabels[user.role] || user.role}`.toLowerCase())}">
+                      <input type="checkbox" data-ot-assignee value="${user.id}" ${selectedAssignees.has(user.id) ? "checked" : ""} />
+                      <span>
+                        <strong>${escapeHtml(user.name)}</strong>
+                        <small>${escapeHtml(roleLabels[user.role] || user.role)} / ${escapeHtml(user.email)}</small>
+                      </span>
+                    </label>
+                  `,
+                )
+                .join("") || `<div class="empty compact-empty">No hay responsables disponibles para esta marca</div>`}
+            </div>
+          </div>
+          <div class="field-help">Marca una o varias personas. El buscador filtra por nombre, correo o rol.</div>
         </div>
         <div class="field">
           <label>Deadline</label>
@@ -2073,26 +2212,33 @@ function renderWorkOrderForm(order = null) {
         <div class="field">
           <label>Estado</label>
           <select class="input" id="ot-status">
-            ${renderWorkOrderSelectOption("new", "Nueva", statusValue)}
-            ${renderWorkOrderSelectOption("in_progress", "En proceso", statusValue)}
-            ${renderWorkOrderSelectOption("in_review", "En revision", statusValue)}
-            ${renderWorkOrderSelectOption("completed", "Completada", statusValue)}
-            ${renderWorkOrderSelectOption("cancelled", "Cancelada", statusValue)}
+            ${Object.entries(workOrderStatusLabels)
+              .map(([value, label]) => renderWorkOrderSelectOption(value, label, statusValue))
+              .join("")}
           </select>
         </div>
         <div class="field">
           <label>Categoria</label>
           <select class="input" id="ot-category">
-            ${renderWorkOrderSelectOption("diseno", "Diseno", categoryValue)}
-            ${renderWorkOrderSelectOption("copy", "Copy", categoryValue)}
-            ${renderWorkOrderSelectOption("pauta", "Pauta", categoryValue)}
-            ${renderWorkOrderSelectOption("produccion", "Produccion", categoryValue)}
-            ${renderWorkOrderSelectOption("desarrollo", "Desarrollo", categoryValue)}
+            ${Object.entries(workOrderCategoryOptions)
+              .map(([value, label]) => renderWorkOrderSelectOption(value, label, categoryValue))
+              .join("")}
+            ${!workOrderCategoryOptions[categoryValue] && workOrderCategoryLabels[categoryValue] ? renderWorkOrderSelectOption(categoryValue, `${workOrderCategoryLabels[categoryValue]} (anterior)`, categoryValue) : ""}
           </select>
         </div>
         <div class="field full">
           <label>Descripcion</label>
           <textarea class="textarea" id="ot-description">${escapeHtml(descriptionValue)}</textarea>
+        </div>
+        <div class="field">
+          <label>Subtareas</label>
+          <textarea class="textarea compact-textarea" id="ot-subtasks" placeholder="Una subtarea por linea">${escapeHtml(subtasksValue)}</textarea>
+          <div class="field-help">Ej: Copy aprobado, Arte final, Exportar piezas, Programar.</div>
+        </div>
+        <div class="field">
+          <label>Cambios en materiales</label>
+          <textarea class="textarea compact-textarea" id="ot-material-changes" placeholder="Una solicitud o cambio por linea">${escapeHtml(materialChangesValue)}</textarea>
+          <div class="field-help">Usalo para ajustes de arte, copy, formatos o piezas faltantes.</div>
         </div>
         ${
           files.length
@@ -2127,7 +2273,7 @@ function renderWorkOrderForm(order = null) {
 }
 
 function renderWorkOrders() {
-  const columns = ["new", "in_progress", "in_review", "completed", "cancelled"];
+  const columns = ["new", "in_progress", "in_review", "completed", "client_approved", "scheduled", "cancelled"];
   const orders = brandOrders();
   const openOrders = orders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
@@ -2209,16 +2355,51 @@ function renderOrderCard(order) {
   const urgency = workOrderUrgency(order);
   const isFocused = order.id === state.focusedWorkOrderId;
   const canManage = canManageWorkOrders();
+  const nextStatus = nextWorkOrderStatus(order);
+  const parsedDescription = splitWorkOrderDescription(order.description || "");
   return `
     <div class="mini-card ${isFocused ? "focused-card" : ""}" data-order-card="${escapeHtml(order.id)}">
       <div class="row between">
         <span class="badge">${order.id}</span>
-        <span class="badge ${order.priority === "high" ? "red" : order.priority === "medium" ? "amber" : "green"}">${order.priority}</span>
+        <span class="badge ${order.priority === "high" ? "red" : order.priority === "medium" ? "amber" : "green"}">${workOrderPriorityLabels[order.priority] || order.priority}</span>
       </div>
       <strong>${order.title}</strong>
       <span class="muted">${assignees.map((userId) => userName(userId)).join(", ") || "Sin asignar"} / ${formatDate(order.dueDate)}</span>
-      <span class="badge ${urgency.cls}">${urgency.label}</span>
-      <p class="muted">${order.description || "Sin descripcion"}</p>
+      <div class="row wrap">
+        <span class="badge ${urgency.cls}">${urgency.label}</span>
+        <span class="badge">${workOrderCategoryLabels[order.category] || order.category}</span>
+      </div>
+      <p class="muted">${parsedDescription.description || "Sin descripcion"}</p>
+      ${
+        parsedDescription.subtasks.length || parsedDescription.materialChanges.length
+          ? `
+            <div class="work-order-extras">
+              ${
+                parsedDescription.subtasks.length
+                  ? `<span class="badge green">${parsedDescription.subtasks.length} subtarea${parsedDescription.subtasks.length === 1 ? "" : "s"}</span>`
+                  : ""
+              }
+              ${
+                parsedDescription.materialChanges.length
+                  ? `<span class="badge amber">${parsedDescription.materialChanges.length} cambio${parsedDescription.materialChanges.length === 1 ? "" : "s"} de material</span>`
+                  : ""
+              }
+            </div>
+            ${
+              parsedDescription.subtasks.length
+                ? `
+                  <ul class="subtask-list">
+                    ${parsedDescription.subtasks
+                      .slice(0, 3)
+                      .map((task) => `<li>${escapeHtml(task)}</li>`)
+                      .join("")}
+                  </ul>
+                `
+                : ""
+            }
+          `
+          : ""
+      }
       <div class="assignee-row">
         ${assignees
           .map(
@@ -2249,7 +2430,12 @@ function renderOrderCard(order) {
           canManage
             ? `
               <button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>
-              <button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar</button>
+              ${
+                nextStatus
+                  ? `<button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar a ${workOrderStatusLabels[nextStatus]}</button>`
+                  : ""
+              }
+              <button class="button-danger small" data-action="send-urgent-alert" data-id="${order.id}">Alerta urgente</button>
             `
             : `<span class="badge amber">Solo lectura</span>`
         }
@@ -2782,7 +2968,7 @@ function clientReportRows(orders, scopedBrands) {
       const clientBrandIds = new Set(clientBrands.map((brand) => brand.id));
       const clientOrders = orders.filter((order) => clientBrandIds.has(order.brandId));
       const open = clientOrders.filter(isOpenWorkOrder);
-      const completed = clientOrders.filter((order) => order.status === "completed");
+      const completed = clientOrders.filter(isDeliveredWorkOrder);
       const lateCompleted = completed.filter(wasCompletedLate);
       const overdueOpen = open.filter((order) => daysUntil(order.dueDate) < 0);
       const review = open.filter((order) => order.status === "in_review");
@@ -2808,7 +2994,7 @@ function brandReportRows(orders, scopedBrands) {
     .map((brand) => {
       const brandScopedOrders = orders.filter((order) => order.brandId === brand.id);
       const open = brandScopedOrders.filter(isOpenWorkOrder);
-      const completed = brandScopedOrders.filter((order) => order.status === "completed");
+      const completed = brandScopedOrders.filter(isDeliveredWorkOrder);
       const lateCompleted = completed.filter(wasCompletedLate);
       const overdueOpen = open.filter((order) => daysUntil(order.dueDate) < 0);
       const review = open.filter((order) => order.status === "in_review");
@@ -2832,7 +3018,7 @@ function categoryReportRows(orders) {
     .map(([category, label]) => {
       const categoryOrders = orders.filter((order) => order.category === category);
       const open = categoryOrders.filter(isOpenWorkOrder);
-      const completed = categoryOrders.filter((order) => order.status === "completed");
+      const completed = categoryOrders.filter(isDeliveredWorkOrder);
       return { category, label, total: categoryOrders.length, open: open.length, completed: completed.length };
     })
     .filter((row) => row.total)
@@ -2893,7 +3079,7 @@ function renderReports() {
   const scopedOrders = brandOrders();
   const scopedBrands = reportScopeBrands();
   const openOrders = scopedOrders.filter(isOpenWorkOrder);
-  const completedOrders = scopedOrders.filter((order) => order.status === "completed");
+  const completedOrders = scopedOrders.filter(isDeliveredWorkOrder);
   const overdueOpen = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
   const lateCompleted = completedOrders.filter(wasCompletedLate);
   const reviewOrders = openOrders.filter((order) => order.status === "in_review");
@@ -3098,7 +3284,7 @@ function renderReports() {
                   <div class="mini-card">
                     <div class="row between">
                       <strong>${order.id}</strong>
-                      <span class="badge ${order.status === "completed" ? "amber" : "red"}">${order.status === "completed" ? "Entregada tarde" : "Vencida abierta"}</span>
+                      <span class="badge ${isDeliveredWorkOrder(order) ? "amber" : "red"}">${isDeliveredWorkOrder(order) ? "Entregada tarde" : "Vencida abierta"}</span>
                     </div>
                     <span>${order.title}</span>
                     <span class="muted">${getClient(brand.clientId)?.name || "Cliente"} / ${brand.shortName} / ${formatDate(order.dueDate)}</span>
@@ -3469,6 +3655,13 @@ function renderSettings() {
               <strong>Permisos</strong>
               <span class="muted">${canManage ? "Puede administrar usuarios y marcas" : "Puede consultar datos operativos"}</span>
             </div>
+            <div class="mini-card password-card">
+              <strong>Cambiar password</strong>
+              <span class="muted">Actualiza tu acceso sin tocar usuarios del equipo.</span>
+              <input class="input" id="settings-new-password" type="password" autocomplete="new-password" placeholder="Nuevo password" />
+              <input class="input" id="settings-confirm-password" type="password" autocomplete="new-password" placeholder="Confirmar password" />
+              <button class="button-ghost small" data-action="change-own-password">Guardar password</button>
+            </div>
           </div>
         </div>
         <div class="panel section">
@@ -3584,6 +3777,15 @@ function bindEvents() {
   document.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleAction(button.dataset.action, button.dataset.id));
   });
+
+  document.querySelectorAll(".assignee-search").forEach((input) => {
+    input.addEventListener("input", () => {
+      const query = input.value.trim().toLowerCase();
+      document.querySelectorAll("[data-assignee-option]").forEach((option) => {
+        option.hidden = query && !option.dataset.assigneeOption.includes(query);
+      });
+    });
+  });
 }
 
 function bindAuthEvents() {
@@ -3595,6 +3797,9 @@ function bindAuthEvents() {
 async function handleAction(action, id) {
   const actionMap = {
     login: () => loginWithPassword(),
+    "reset-password-email": () => sendPasswordResetEmail(),
+    "update-recovery-password": () => updatePasswordFromRecovery(),
+    "change-own-password": () => changeOwnPassword(),
     logout: () => logout(),
     "approve-content": () => updateContentStatus(id, "approved", "Pieza aprobada"),
     "request-changes": () =>
@@ -3627,6 +3832,7 @@ async function handleAction(action, id) {
     "cancel-edit-work-order": () => cancelEditWorkOrder(),
     "update-work-order": () => updateWorkOrderFromForm(),
     "advance-order": () => advanceWorkOrder(id),
+    "send-urgent-alert": () => sendUrgentWorkOrderAlert(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
     "queue-weekly-digest": () => queueWeeklyDigest(),
     "send-email-queue": () => sendEmailQueue(),
@@ -3663,6 +3869,81 @@ async function loginWithPassword() {
     dataState.error = error.message;
     render();
   }
+}
+
+async function sendPasswordResetEmail() {
+  if (!isSupabaseMode()) return;
+  const email = document.getElementById("login-email")?.value.trim();
+  if (!email || !email.includes("@")) {
+    dataState.error = "Escribe tu email y luego toca Olvide mi password";
+    render();
+    return;
+  }
+
+  const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+    redirectTo: getAppBaseUrl(),
+  });
+  if (error) {
+    dataState.error = error.message;
+    render();
+    return;
+  }
+
+  dataState.error = "";
+  showToast("Te enviamos un correo para cambiar tu password");
+}
+
+async function updatePasswordFromRecovery() {
+  if (!isSupabaseMode()) return;
+  const password = document.getElementById("new-password")?.value || "";
+  const confirm = document.getElementById("confirm-password")?.value || "";
+  if (password.length < 8) {
+    dataState.error = "El password debe tener minimo 8 caracteres";
+    render();
+    return;
+  }
+  if (password !== confirm) {
+    dataState.error = "Los passwords no coinciden";
+    render();
+    return;
+  }
+
+  const { error } = await supabaseClient.auth.updateUser({ password });
+  if (error) {
+    dataState.error = error.message;
+    render();
+    return;
+  }
+
+  dataState.passwordResetMode = false;
+  dataState.error = "";
+  showToast("Password actualizado");
+}
+
+async function changeOwnPassword() {
+  if (!isSupabaseMode()) {
+    showToast("Conecta Supabase para cambiar password");
+    return;
+  }
+  const password = document.getElementById("settings-new-password")?.value || "";
+  const confirm = document.getElementById("settings-confirm-password")?.value || "";
+  if (password.length < 8) {
+    showToast("El password debe tener minimo 8 caracteres");
+    return;
+  }
+  if (password !== confirm) {
+    showToast("Los passwords no coinciden");
+    return;
+  }
+
+  const { error } = await supabaseClient.auth.updateUser({ password });
+  if (error) {
+    showToast(error.message || "No se pudo cambiar password");
+    return;
+  }
+  document.getElementById("settings-new-password").value = "";
+  document.getElementById("settings-confirm-password").value = "";
+  showToast("Password actualizado");
 }
 
 async function logout() {
@@ -3859,15 +4140,21 @@ function addContentComment(id) {
 
 function getWorkOrderFormValues() {
   const title = document.getElementById("ot-title")?.value.trim() || "";
+  const assigneeCheckboxes = Array.from(document.querySelectorAll("[data-ot-assignee]:checked"));
   const assigneeSelect = document.getElementById("ot-assignees");
-  const assignees = assigneeSelect
-    ? Array.from(assigneeSelect.selectedOptions).map((option) => option.value)
-    : [];
+  const assignees = assigneeCheckboxes.length
+    ? assigneeCheckboxes.map((input) => input.value)
+    : assigneeSelect
+      ? Array.from(assigneeSelect.selectedOptions).map((option) => option.value)
+      : [];
   const dueDate = document.getElementById("ot-due-date")?.value || "";
   const priority = document.getElementById("ot-priority")?.value || "medium";
   const status = document.getElementById("ot-status")?.value || "new";
   const category = document.getElementById("ot-category")?.value || "diseno";
-  const description = document.getElementById("ot-description")?.value.trim() || "";
+  const descriptionBase = document.getElementById("ot-description")?.value.trim() || "";
+  const subtasks = parseListLines(document.getElementById("ot-subtasks")?.value || "");
+  const materialChanges = parseListLines(document.getElementById("ot-material-changes")?.value || "");
+  const description = composeWorkOrderDescription(descriptionBase, subtasks, materialChanges);
   const notifyOnEmail = document.getElementById("ot-email")?.checked ?? true;
   const filesInput = document.getElementById("ot-files");
   const fileUploads = filesInput ? Array.from(filesInput.files) : [];
@@ -3876,7 +4163,20 @@ function getWorkOrderFormValues() {
     size: file.size,
     type: file.type || "application/octet-stream",
   }));
-  return { title, assignees, dueDate, priority, status, category, description, notifyOnEmail, fileUploads, files };
+  return {
+    title,
+    assignees,
+    dueDate,
+    priority,
+    status,
+    category,
+    description,
+    subtasks,
+    materialChanges,
+    notifyOnEmail,
+    fileUploads,
+    files,
+  };
 }
 
 function validateWorkOrderValues(values) {
@@ -3924,7 +4224,8 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
   const workOrderUrl = buildWorkOrderUrl(code, brandId);
   const assigneeNames = values.assignees.map((userId) => userName(userId)).join(", ");
   const creatorName = dataState.profile?.full_name || "Lumen Workspace";
-  const description = plainText(values.description);
+  const parsedDescription = splitWorkOrderDescription(values.description);
+  const description = plainText(parsedDescription.description);
   const fileLabel =
     uploadedCount === 0 ? "Sin archivos adjuntos" : uploadedCount === 1 ? "1 archivo adjunto" : `${uploadedCount} archivos adjuntos`;
 
@@ -3973,6 +4274,25 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
             <div style="font-size:16px;line-height:1.55;color:#3c403d;">${escapeHtml(description || "Sin descripcion agregada.")}</div>
           </div>
 
+          ${
+            parsedDescription.subtasks.length || parsedDescription.materialChanges.length
+              ? `
+                <div style="margin-bottom:22px;border:1px solid #ecece8;border-radius:12px;padding:14px 16px;background:#fafaf8;">
+                  ${
+                    parsedDescription.subtasks.length
+                      ? `<div style="font-size:14px;line-height:1.55;margin-bottom:8px;"><strong>Subtareas:</strong> ${escapeHtml(parsedDescription.subtasks.join(" / "))}</div>`
+                      : ""
+                  }
+                  ${
+                    parsedDescription.materialChanges.length
+                      ? `<div style="font-size:14px;line-height:1.55;"><strong>Cambios en materiales:</strong> ${escapeHtml(parsedDescription.materialChanges.join(" / "))}</div>`
+                      : ""
+                  }
+                </div>
+              `
+              : ""
+          }
+
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px;">
             <span style="display:inline-block;background:#e9fff1;color:#176339;border-radius:999px;padding:8px 12px;font-weight:700;">${escapeHtml(fileLabel)}</span>
             <span style="display:inline-block;background:#f0f1ee;color:#555b56;border-radius:999px;padding:8px 12px;">Creada por ${escapeHtml(creatorName)}</span>
@@ -3992,9 +4312,71 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
   `;
 }
 
+function urgentAlertRecipients(order) {
+  return activeUsers().filter(
+    (user) =>
+      ["admin", "directora", "cuentas"].includes(user.role) &&
+      user.email &&
+      canUserAccessBrand(user, order.brandId),
+  );
+}
+
+function buildUrgentWorkOrderEmail(order) {
+  const brand = getBrand(order.brandId);
+  const client = getClient(brand.clientId);
+  const urgency = workOrderUrgency(order);
+  const workOrderUrl = buildWorkOrderUrl(order.id, order.brandId);
+  const parsedDescription = splitWorkOrderDescription(order.description || "");
+
+  return `
+    <div style="margin:0;background:#f6f6f3;padding:28px 16px;font-family:Arial,Helvetica,sans-serif;color:#2d2d2d;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #deded8;border-radius:14px;overflow:hidden;">
+        <div style="padding:26px 28px 20px;border-left:7px solid #c84e48;">
+          <div style="font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9f1c1c;margin-bottom:10px;">
+            Alerta urgente de OT
+          </div>
+          <h1 style="margin:0 0 8px;font-size:28px;line-height:1.15;color:#2d2d2d;">${escapeHtml(order.id)}</h1>
+          <p style="margin:0;color:#5f6760;font-size:17px;line-height:1.45;">${escapeHtml(order.title)}</p>
+        </div>
+        <div style="padding:0 28px 26px;">
+          <table role="presentation" style="width:100%;border-collapse:collapse;margin:10px 0 22px;">
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Cliente / marca</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(client?.name || "Cliente")} / ${escapeHtml(brand.name)}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Deadline</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(formatDate(order.dueDate))}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Estado</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(workOrderStatusLabels[order.status] || order.status)}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Urgencia</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;color:#9f1c1c;">${escapeHtml(urgency.label)}</td>
+            </tr>
+          </table>
+          <div style="margin-bottom:22px;">
+            <div style="font-size:13px;font-weight:700;text-transform:uppercase;color:#6b726c;margin-bottom:6px;">Responsables</div>
+            <div style="font-size:16px;line-height:1.45;">${escapeHtml(orderAssignees(order).map(userName).join(", ") || "Sin responsables")}</div>
+          </div>
+          <div style="margin-bottom:22px;">
+            <div style="font-size:13px;font-weight:700;text-transform:uppercase;color:#6b726c;margin-bottom:6px;">Contexto</div>
+            <div style="font-size:16px;line-height:1.55;color:#3c403d;">${escapeHtml(plainText(parsedDescription.description || "Sin descripcion agregada."))}</div>
+          </div>
+          <a href="${escapeHtml(workOrderUrl)}" style="display:inline-block;background:#2d2d2d;color:#ffffff;text-decoration:none;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:800;">
+            Ver orden urgente
+          </a>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 async function createWorkOrderFromForm() {
-  if (!canManageWorkOrders()) {
-    showToast("Solo Direccion o Cuentas puede crear ordenes");
+  if (!canCreateWorkOrders()) {
+    showToast("Solo Direccion, Cuentas, Generador o Creativo puede crear ordenes");
     return;
   }
   if (isAllBrandsScope()) {
@@ -4073,6 +4455,7 @@ async function createWorkOrderFromForm() {
           })),
         );
         if (emailError) showToast(`OT creada, pero fallo email: ${emailError.message}`);
+        else await invokeEmailFunction("email-worker", (data) => `OT creada y correos procesados: ${data?.processed ?? 0}`, {}, true);
       }
     }
 
@@ -4101,6 +4484,53 @@ async function createWorkOrderFromForm() {
   });
   saveWorkOrders();
   showToast(`OT creada y ${values.notifyOnEmail ? "email preparado" : "sin email"}`);
+}
+
+async function sendUrgentWorkOrderAlert(id) {
+  if (!canManageWorkOrders()) {
+    showToast("Solo Direccion o Cuentas puede enviar alertas urgentes");
+    return;
+  }
+  const order = workOrders.find((candidate) => candidate.id === id);
+  if (!order) return;
+  const recipients = urgentAlertRecipients(order);
+  if (!recipients.length) {
+    showToast("No hay Direccion/Cuentas asignados a esta marca");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Esto enviara una alerta urgente de ${order.id} a ${recipients.length} persona(s) de Direccion/Cuentas. ¿Enviar ahora?`,
+  );
+  if (!confirmed) return;
+
+  if (isSupabaseMode()) {
+    const { error } = await supabaseClient.from("email_notifications").insert(
+      recipients.map((user) => ({
+        brand_id: order.brandId,
+        work_order_id: order.dbId || null,
+        recipient_user_id: user.id,
+        recipient_email: user.email,
+        notification_type: "overdue",
+        subject: `Alerta urgente: ${order.id} - ${order.title}`,
+        html_body: buildUrgentWorkOrderEmail(order),
+        status: "queued",
+        scheduled_for: new Date().toISOString(),
+      })),
+    );
+    if (error) {
+      showToast(`No se pudo preparar la alerta: ${error.message}`);
+      return;
+    }
+
+    await invokeEmailFunction(
+      "email-worker",
+      (data) => `Alerta urgente enviada o procesada: ${data?.processed ?? 0}`,
+    );
+    return;
+  }
+
+  showToast(`Alerta urgente lista para ${recipients.length} persona(s)`);
 }
 
 function editWorkOrder(id) {
@@ -4236,13 +4666,11 @@ async function advanceWorkOrder(id) {
   }
   const order = workOrders.find((candidate) => candidate.id === id);
   if (!order) return;
-  const next = {
-    new: "in_progress",
-    in_progress: "in_review",
-    in_review: "completed",
-    completed: "completed",
-  };
-  const nextStatus = next[order.status] || "in_progress";
+  const nextStatus = nextWorkOrderStatus(order);
+  if (!nextStatus) {
+    showToast("Esta OT ya no tiene un siguiente estado automatico");
+    return;
+  }
 
   if (isSupabaseMode()) {
     const { error } = await supabaseClient
@@ -4281,13 +4709,13 @@ function previewWeeklyDigest() {
   showToast(`Resumen semanal: ${totalOpen} OTs abiertas y ${totalOverdue} vencidas. Esto solo es vista previa.`);
 }
 
-async function invokeEmailFunction(functionName, successMessage, extraBody = {}) {
+async function invokeEmailFunction(functionName, successMessage, extraBody = {}, allowCreators = false) {
   if (!isSupabaseMode()) {
     showToast("Conecta Supabase para usar emails reales");
     return null;
   }
-  if (!canManageWorkOrders()) {
-    showToast("Solo Direccion o Cuentas puede disparar automatizaciones");
+  if (!(canManageWorkOrders() || (allowCreators && canCreateWorkOrders()))) {
+    showToast("Solo Direccion, Cuentas o creadores autorizados pueden disparar automatizaciones");
     return null;
   }
 

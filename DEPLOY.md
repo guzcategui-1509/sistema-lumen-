@@ -71,6 +71,8 @@ Cuando `config.js` tiene valores reales, la app muestra login y lee/escribe:
 
 - Ejecutar `supabase/launch_mvp.sql` en Supabase.
 - Si ya ejecutaste el schema antes de esta version, ejecuta tambien `supabase/patch_memberships_policy.sql`.
+- Ejecutar `supabase/patch_work_order_permissions_automations.sql` para responsables por marca y automatizaciones.
+- Ejecutar `supabase/patch_ot_workflow_creators.sql` para estados nuevos de OT y permisos de creacion para Generador/Creativo.
 - Cargar `clients`, `brands`, `profiles` y `brand_memberships`.
 - Probar que el usuario admin entra.
 - Conectar OTs reales a Supabase.

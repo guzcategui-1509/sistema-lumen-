@@ -40,6 +40,7 @@ En `config.js`, `appUrl` es opcional. Si se llena con la URL de Vercel, los boto
 
 - `weekly-digest`: prepara el resumen semanal para todo el equipo interno activo.
 - `email-worker`: envia los correos preparados con Brevo.
+- `monthly-work-orders`: crea OTs automaticas mensuales y deja sus correos listos.
 
 Desde la app:
 
@@ -47,7 +48,7 @@ Desde la app:
 - `Notificaciones > Enviar pendientes`: envia correos reales pendientes.
 - `Notificaciones > Preparar y enviar ahora`: prepara el digest y lo envia en un solo flujo.
 
-Solo usuarios `admin` o `directora` pueden disparar estas funciones desde la app.
+Usuarios `admin`, `directora` y `cuentas` pueden disparar automatizaciones generales. `generador` y `creativo` pueden crear OTs; al crear una OT con email activo, la app prepara y procesa los correos de asignacion.
 
 ## Deploy con Supabase CLI
 
@@ -62,10 +63,11 @@ supabase secrets set CRON_SECRET="un-secreto-largo-y-privado"
 supabase secrets set APP_URL="https://tu-app.vercel.app"
 supabase functions deploy weekly-digest --no-verify-jwt
 supabase functions deploy email-worker --no-verify-jwt
+supabase functions deploy monthly-work-orders --no-verify-jwt
 ```
 
 Usamos `--no-verify-jwt` porque las funciones validan internamente dos modos seguros:
-usuario `admin/directora` desde la app, o `x-cron-secret` para automatizaciones.
+usuario autorizado desde la app, o `x-cron-secret` para automatizaciones.
 
 ## Automatizacion lunes 8:00
 

@@ -175,8 +175,10 @@ function statusLabel(status: string) {
   const labels: Record<string, string> = {
     new: "Nueva",
     in_progress: "En proceso",
-    in_review: "En revision",
-    completed: "Completada",
+    in_review: "Revision interna",
+    completed: "Entregada",
+    client_approved: "Aprobada cliente",
+    scheduled: "Programada",
     cancelled: "Cancelada",
   };
   return labels[status] ?? status;

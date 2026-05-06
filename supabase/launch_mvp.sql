@@ -32,6 +32,8 @@ BEGIN
     'in_progress',
     'in_review',
     'completed',
+    'client_approved',
+    'scheduled',
     'cancelled'
   );
 EXCEPTION
