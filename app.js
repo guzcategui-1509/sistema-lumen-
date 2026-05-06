@@ -2392,25 +2392,25 @@ function renderWorkOrders() {
           )
           .join("")}
       </div>
-      <div class="kanban-scroll">
-        <div class="kanban" aria-label="Kanban operativo de ordenes de trabajo">
+      <div class="workflow-board" aria-label="Flujo operativo de ordenes de trabajo">
         ${columns
           .map(
             (status) => {
               const statusOrders = orders.filter((order) => order.status === status);
               return `
-              <div class="kanban-column status-${status}">
+              <div class="workflow-lane status-${status}">
                 <h3>
                   <span>${workOrderStatusLabels[status]}</span>
                   <span class="badge">${statusOrders.length}</span>
                 </h3>
-                ${statusOrders.map((order) => renderOrderCard(order)).join("") || `<div class="empty">Sin OTs</div>`}
+                <div class="workflow-lane-cards">
+                  ${statusOrders.map((order) => renderOrderCard(order)).join("") || `<div class="empty compact-empty">Sin OTs</div>`}
+                </div>
               </div>
             `;
             },
           )
           .join("")}
-        </div>
       </div>
     </section>
   `;

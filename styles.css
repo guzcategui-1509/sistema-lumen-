@@ -772,6 +772,43 @@ tr:last-child td {
   min-height: 76px;
 }
 
+.workflow-board {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.workflow-lane {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f6f6f3;
+}
+
+.workflow-lane h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.workflow-lane-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.workflow-lane-cards .empty {
+  grid-column: 1 / -1;
+  min-height: 76px;
+}
+
 .mini-card {
   display: grid;
   gap: 8px;
