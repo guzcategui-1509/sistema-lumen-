@@ -1795,17 +1795,21 @@ tr:last-child td {
   gap: 14px;
 }
 
+.work-order-action-band.single > .panel {
+  width: 100%;
+}
+
 .brand-shortcut-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
 }
 
 .brand-shortcut {
   display: grid;
   gap: 4px;
-  min-height: 64px;
-  padding: 10px 11px;
+  min-height: 92px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #fafaf8;
@@ -2197,7 +2201,7 @@ tr:last-child td {
   }
 
   .brand-shortcut-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   }
 
   .workflow-steps {
