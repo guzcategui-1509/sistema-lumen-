@@ -2672,7 +2672,6 @@ function renderWorkOrderDetailPanel(order) {
 }
 
 function renderWorkOrders() {
-  const columns = ["new", "in_progress", "in_review", "completed", "client_approved", "scheduled", "cancelled"];
   const orders = brandOrders();
   const openOrders = orders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
@@ -2689,47 +2688,106 @@ function renderWorkOrders() {
     ${renderWorkOrderSetupSection(allBrands)}
     ${renderWorkOrderDetailPanel(selectedViewingOrder())}
     ${renderWorkOrderMonthTimeline(orders)}
-    <section class="section">
+    ${renderWorkOrderOperationsPanel(orders, allBrands)}
+  `;
+}
+
+function renderWorkOrderStatusSelect(order) {
+  return `
+    <select class="input status-select" data-status-select="${escapeHtml(order.id)}">
+      ${Object.entries(workOrderStatusLabels)
+        .map(([value, label]) => renderWorkOrderSelectOption(value, label, order.status))
+        .join("")}
+    </select>
+  `;
+}
+
+function renderWorkOrderOperationsPanel(orders, allBrands) {
+  const sortedOrders = orders
+    .slice()
+    .sort((a, b) => {
+      const openDiff = Number(isOpenWorkOrder(b)) - Number(isOpenWorkOrder(a));
+      if (openDiff) return openDiff;
+      return daysUntil(a.dueDate) - daysUntil(b.dueDate);
+    });
+  const statusRows = Object.entries(workOrderStatusLabels).map(([status, label]) => ({
+    status,
+    label,
+    count: orders.filter((order) => order.status === status).length,
+  }));
+
+  return `
+    <section class="panel section operations-panel">
       <div class="section-header">
-        <h2 class="section-title">Kanban operativo</h2>
+        <div>
+          <h2 class="section-title">Panel operativo de OTs</h2>
+          <div class="small-muted">Cambia estados con selector, abre detalles y revisa deadlines sin usar kanban.</div>
+        </div>
         <div class="row wrap">
           <button class="button-ghost small" data-module="team">Ver carga equipo</button>
           <button class="button-ghost small" data-module="notifications">Reglas email</button>
         </div>
       </div>
-      <div class="workflow-steps" aria-label="Flujo de estados de ordenes de trabajo">
-        ${columns
+      <div class="status-summary-strip">
+        ${statusRows
           .map(
-            (status, index) => `
-              <span class="workflow-step status-${status}">
-                <strong>${index + 1}</strong>
-                ${workOrderStatusLabels[status]}
-              </span>
+            (row) => `
+              <div class="status-summary-card status-${row.status}">
+                <strong>${row.count}</strong>
+                <span>${row.label}</span>
+              </div>
             `,
           )
           .join("")}
       </div>
-      <div class="workflow-board" aria-label="Flujo operativo de ordenes de trabajo">
-        ${columns
-          .map(
-            (status) => {
-              const statusOrders = orders.filter((order) => order.status === status);
-              return `
-              <div class="workflow-lane status-${status}">
-                <h3>
-                  <span>${workOrderStatusLabels[status]}</span>
-                  <span class="badge">${statusOrders.length}</span>
-                </h3>
-                <div class="workflow-lane-cards">
-                  ${statusOrders.map((order) => renderOrderCard(order)).join("") || `<div class="empty compact-empty">Sin OTs</div>`}
-                </div>
-              </div>
-            `;
-            },
-          )
-          .join("")}
+      <div class="operations-list">
+        ${
+          sortedOrders.length
+            ? sortedOrders.map((order) => renderOperationOrderRow(order, allBrands)).join("")
+            : `<div class="empty compact-empty">Sin OTs en este scope</div>`
+        }
       </div>
     </section>
+  `;
+}
+
+function renderOperationOrderRow(order, allBrands) {
+  const assignees = orderAssignees(order);
+  const files = orderFiles(order);
+  const urgency = workOrderUrgency(order);
+  const brand = getBrand(order.brandId);
+  const canManage = canManageWorkOrders();
+  return `
+    <article class="operation-order-row ${order.id === state.focusedWorkOrderId ? "focused-row" : ""}">
+      <button class="operation-order-main" data-action="view-work-order" data-id="${order.id}">
+        <span class="status-dot ${urgency.cls}"></span>
+        <span>
+          <strong>${escapeHtml(order.id)} / ${escapeHtml(order.title)}</strong>
+          <small>${escapeHtml(allBrands ? `${getClient(brand.clientId)?.name || "Cliente"} / ${brand.shortName}` : workOrderCategoryLabels[order.category] || order.category)}</small>
+        </span>
+      </button>
+      <div class="operation-meta">
+        <span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>
+        <span class="muted">${escapeHtml(formatDate(order.dueDate))}</span>
+      </div>
+      <div class="operation-assignees">
+        ${assignees.slice(0, 3).map((userId) => `<span class="avatar-pill">${escapeHtml(userName(userId))}</span>`).join("") || `<span class="muted">Sin asignar</span>`}
+        ${assignees.length > 3 ? `<span class="badge">+${assignees.length - 3}</span>` : ""}
+      </div>
+      <div class="operation-files">
+        <span class="badge">${files.length} archivo${files.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="operation-status-control">
+        ${
+          canManage
+            ? `
+              ${renderWorkOrderStatusSelect(order)}
+              <button class="button small" data-action="update-order-status" data-id="${order.id}">Guardar</button>
+            `
+            : `<span class="badge blue">${escapeHtml(workOrderStatusLabels[order.status] || order.status)}</span>`
+        }
+      </div>
+    </article>
   `;
 }
 
@@ -4320,6 +4378,7 @@ async function handleAction(action, id) {
     "edit-work-order": () => editWorkOrder(id),
     "cancel-edit-work-order": () => cancelEditWorkOrder(),
     "update-work-order": () => updateWorkOrderFromForm(),
+    "update-order-status": () => updateOrderStatusFromSelect(id),
     "advance-order": () => advanceWorkOrder(id),
     "upload-order-materials": () => uploadOrderMaterials(id),
     "open-work-order-file": () => openWorkOrderFile(id),
@@ -5376,16 +5435,20 @@ async function openWorkOrderFile(fileKey) {
   showToast(`Archivo registrado: ${file.name}. Los archivos demo no tienen preview descargable.`);
 }
 
-async function advanceWorkOrder(id) {
+function statusMigrationMessage(message = "") {
+  return message.includes("work_order_status") || message.includes("client_approved") || message.includes("scheduled")
+    ? "Falta activar los estados nuevos en Supabase: ejecuta supabase/patch_ot_workflow_creators.sql"
+    : "";
+}
+
+async function setWorkOrderStatus(order, nextStatus) {
   if (!canManageWorkOrders()) {
-    showToast("Solo Direccion o Cuentas puede modificar ordenes");
+    showToast("Solo Direccion o Cuentas puede modificar estados");
     return;
   }
-  const order = workOrders.find((candidate) => candidate.id === id);
   if (!order) return;
-  const nextStatus = nextWorkOrderStatus(order);
-  if (!nextStatus) {
-    showToast("Esta OT ya no tiene un siguiente estado automatico");
+  if (!nextStatus || nextStatus === order.status) {
+    showToast("Selecciona un estado diferente");
     return;
   }
 
@@ -5395,12 +5458,8 @@ async function advanceWorkOrder(id) {
       .update({ status: nextStatus, updated_at: new Date().toISOString() })
       .eq("id", order.dbId);
     if (error) {
-      const message = error.message || "";
-      if (message.includes("work_order_status") || message.includes("client_approved") || message.includes("scheduled")) {
-        showToast("Falta activar los estados nuevos en Supabase: ejecuta supabase/patch_ot_workflow_creators.sql");
-      } else {
-        showToast(`No se pudo avanzar la OT: ${message}`);
-      }
+      const migrationMessage = statusMigrationMessage(error.message || "");
+      showToast(migrationMessage || `No se pudo cambiar el estado: ${error.message}`);
       return;
     }
     const updatedOrderForEmail = { ...order, status: nextStatus, updatedAt: new Date().toISOString() };
@@ -5415,7 +5474,9 @@ async function advanceWorkOrder(id) {
       [`Estado: ${workOrderStatusLabels[order.status] || order.status} -> ${workOrderStatusLabels[nextStatus] || nextStatus}`],
     );
     await loadSupabaseData();
-    showToast(`${order.id} avanzó a ${workOrderStatusLabels[nextStatus]}`);
+    state.viewingWorkOrderId = updatedOrderForEmail.id;
+    state.focusedWorkOrderId = updatedOrderForEmail.id;
+    showToast(`${order.id} cambió a ${workOrderStatusLabels[nextStatus]}`);
     return;
   }
 
@@ -5427,7 +5488,32 @@ async function advanceWorkOrder(id) {
     saveContentItems();
   }
   saveWorkOrders();
-  showToast(`${order.id} avanzó a ${workOrderStatusLabels[order.status]}`);
+  state.viewingWorkOrderId = order.id;
+  state.focusedWorkOrderId = order.id;
+  showToast(`${order.id} cambió a ${workOrderStatusLabels[order.status]}`);
+}
+
+async function updateOrderStatusFromSelect(id) {
+  const order = workOrders.find((candidate) => candidate.id === id);
+  if (!order) return;
+  const select = document.querySelector(`[data-status-select="${id}"]`);
+  await setWorkOrderStatus(order, select?.value);
+}
+
+async function advanceWorkOrder(id) {
+  if (!canManageWorkOrders()) {
+    showToast("Solo Direccion o Cuentas puede modificar ordenes");
+    return;
+  }
+  const order = workOrders.find((candidate) => candidate.id === id);
+  if (!order) return;
+  const nextStatus = nextWorkOrderStatus(order);
+  if (!nextStatus) {
+    showToast("Esta OT ya no tiene un siguiente estado automatico");
+    return;
+  }
+
+  await setWorkOrderStatus(order, nextStatus);
 }
 
 function previewWeeklyDigest() {

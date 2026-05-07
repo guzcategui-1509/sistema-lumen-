@@ -809,6 +809,122 @@ tr:last-child td {
   min-height: 76px;
 }
 
+.operations-panel {
+  overflow: hidden;
+}
+
+.status-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+}
+
+.status-summary-card {
+  display: grid;
+  gap: 3px;
+  min-height: 72px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fafaf8;
+  box-shadow: inset 4px 0 0 #d8d8d2;
+}
+
+.status-summary-card.status-new,
+.status-summary-card.status-in_progress,
+.status-summary-card.status-in_review {
+  box-shadow: inset 4px 0 0 var(--cyan);
+}
+
+.status-summary-card.status-completed,
+.status-summary-card.status-client_approved,
+.status-summary-card.status-scheduled {
+  box-shadow: inset 4px 0 0 var(--green);
+}
+
+.status-summary-card.status-cancelled {
+  box-shadow: inset 4px 0 0 var(--muted);
+}
+
+.status-summary-card strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.status-summary-card span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.operations-list {
+  display: grid;
+  gap: 9px;
+}
+
+.operation-order-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.25fr) minmax(150px, 0.5fr) minmax(180px, 0.7fr) minmax(90px, 0.25fr) minmax(230px, 0.75fr);
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+}
+
+.operation-order-row.focused-row {
+  border-color: rgba(73, 238, 140, 0.7);
+  box-shadow: inset 5px 0 0 var(--green), var(--shadow);
+}
+
+.operation-order-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.operation-order-main strong,
+.operation-order-main small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-order-main small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.operation-meta,
+.operation-assignees,
+.operation-files,
+.operation-status-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.operation-status-control {
+  justify-content: flex-end;
+}
+
+.status-select {
+  max-width: 172px;
+  height: 36px;
+}
+
 .mini-card {
   display: grid;
   gap: 8px;
@@ -2206,6 +2322,15 @@ tr:last-child td {
 
   .workflow-steps {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .operation-order-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .operation-status-control {
+    justify-content: flex-start;
   }
 }
 
