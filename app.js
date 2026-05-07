@@ -646,6 +646,7 @@ const state = {
   brandConfigSection: "identity",
   adminEditingUserId: "",
   editingWorkOrderId: "",
+  viewingWorkOrderId: "",
   focusedWorkOrderId: "",
   dashboardMonth: "",
   workOrderMonth: "",
@@ -1053,6 +1054,7 @@ function applyInitialRouteParams() {
     const order = workOrders.find((candidate) => candidate.id === orderParam || candidate.dbId === orderParam);
     state.currentModule = "work-orders";
     state.focusedWorkOrderId = order?.id || orderParam;
+    state.viewingWorkOrderId = order?.id || orderParam;
     if (order?.brandId) state.currentBrandId = order.brandId;
   }
 
@@ -1911,7 +1913,7 @@ function renderDashboardDeadlineCalendar(sourceOrders, title = "Calendario mensu
                       const urgency = workOrderUrgency(order);
                       const brand = getBrand(order.brandId);
                       return `
-                        <button class="deadline-chip ${urgency.cls}" data-action="edit-work-order" data-id="${order.id}">
+                        <button class="deadline-chip ${urgency.cls}" data-action="view-work-order" data-id="${order.id}">
                           <strong>${escapeHtml(order.id)}</strong>
                           <span>${escapeHtml(order.title)}</span>
                           <small>${escapeHtml(isAllBrandsScope() ? brand.shortName : orderAssignees(order).map(userName).join(", ") || "Sin asignar")}</small>
@@ -2155,7 +2157,7 @@ function renderWorkOrderMonthTimeline(orders) {
                         ${grouped[day]
                           .map(
                             (order) => `
-                              <button class="timeline-item" data-action="edit-work-order" data-id="${order.id}">
+                              <button class="timeline-item" data-action="view-work-order" data-id="${order.id}">
                                 <span>${escapeHtml(order.id)}</span>
                                 <strong>${escapeHtml(order.title)}</strong>
                                 <small>${escapeHtml(orderAssignees(order).map(userName).join(", ") || "Sin asignar")}</small>
@@ -2364,6 +2366,10 @@ function selectedEditingOrder() {
   return workOrders.find((order) => order.id === state.editingWorkOrderId) || null;
 }
 
+function selectedViewingOrder() {
+  return workOrders.find((order) => order.id === state.viewingWorkOrderId) || null;
+}
+
 function renderWorkOrderSelectOption(value, label, activeValue) {
   return `<option value="${value}" ${value === activeValue ? "selected" : ""}>${label}</option>`;
 }
@@ -2554,6 +2560,117 @@ function renderWorkOrderForm(order = null) {
   `;
 }
 
+function renderWorkOrderDetailPanel(order) {
+  if (!order) return "";
+  const brand = getBrand(order.brandId);
+  const client = getClient(brand.clientId);
+  const assignees = orderAssignees(order);
+  const files = orderFiles(order);
+  const parsedDescription = splitWorkOrderDescription(order.description || "");
+  const urgency = workOrderUrgency(order);
+  const canManage = canManageWorkOrders();
+  const canUploadMaterials = canUploadWorkOrderMaterials(order);
+  const nextStatus = nextWorkOrderStatus(order);
+
+  return `
+    <section class="panel section work-order-detail-panel" data-order-detail="${escapeHtml(order.id)}">
+      <div class="section-header">
+        <div>
+          <div class="row wrap">
+            <span class="badge">${escapeHtml(order.id)}</span>
+            <span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>
+            <span class="badge ${order.priority === "high" ? "red" : order.priority === "medium" ? "amber" : "green"}">${escapeHtml(workOrderPriorityLabels[order.priority] || order.priority)}</span>
+          </div>
+          <h2 class="section-title">${escapeHtml(order.title)}</h2>
+          <div class="small-muted">${escapeHtml(client?.name || "Cliente")} / ${escapeHtml(brand.shortName)} / deadline ${escapeHtml(formatDate(order.dueDate))}</div>
+        </div>
+        <div class="row wrap">
+          ${canManage ? `<button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>` : ""}
+          ${
+            canManage && nextStatus
+              ? `<button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar a ${workOrderStatusLabels[nextStatus]}</button>`
+              : ""
+          }
+          <button class="button-ghost small" data-action="close-work-order-detail">Cerrar</button>
+        </div>
+      </div>
+      <div class="work-order-detail-grid">
+        <div class="detail-block">
+          <span>Estado</span>
+          <strong>${escapeHtml(workOrderStatusLabels[order.status] || order.status)}</strong>
+        </div>
+        <div class="detail-block">
+          <span>Categoria</span>
+          <strong>${escapeHtml(workOrderCategoryLabels[order.category] || order.category)}</strong>
+        </div>
+        <div class="detail-block">
+          <span>Responsables</span>
+          <div class="assignee-row">
+            ${
+              assignees
+                .map((userId) => `<span class="avatar-pill" title="${escapeHtml(userEmail(userId))}">${escapeHtml(userName(userId))}</span>`)
+                .join("") || `<strong>Sin asignar</strong>`
+            }
+          </div>
+        </div>
+        <div class="detail-block">
+          <span>Email</span>
+          <strong>${order.notifyOnEmail ? "Notificaciones activas" : "Sin notificaciones"}</strong>
+        </div>
+      </div>
+      <div class="grid grid-2 top-aligned-grid">
+        <div class="detail-readable-block">
+          <h3>Brief</h3>
+          <p>${escapeHtml(parsedDescription.description || "Sin descripcion")}</p>
+        </div>
+        <div class="detail-readable-block">
+          <h3>Archivos y materiales</h3>
+          <div class="file-list">
+            ${files.map((file, index) => renderWorkOrderFileChip(order, file, index)).join("") || `<span class="muted">Sin archivos adjuntos</span>`}
+          </div>
+          ${
+            canUploadMaterials
+              ? `
+                <div class="material-upload-box inline-upload">
+                  <label>Subir materiales para aprobacion/cambios</label>
+                  <div class="material-upload-row">
+                    <input class="input file-input" data-material-files="${order.id}" type="file" multiple />
+                    <button class="button-ghost small" data-action="upload-order-materials" data-id="${order.id}">Subir</button>
+                  </div>
+                </div>
+              `
+              : ""
+          }
+        </div>
+      </div>
+      ${
+        parsedDescription.subtasks.length || parsedDescription.materialChanges.length
+          ? `
+            <div class="grid grid-2 top-aligned-grid">
+              <div class="detail-readable-block">
+                <h3>Subtareas</h3>
+                ${
+                  parsedDescription.subtasks.length
+                    ? `<ul class="subtask-list">${parsedDescription.subtasks.map((task) => `<li>${escapeHtml(task)}</li>`).join("")}</ul>`
+                    : `<span class="muted">Sin subtareas</span>`
+                }
+              </div>
+              <div class="detail-readable-block">
+                <h3>Cambios en materiales</h3>
+                ${
+                  parsedDescription.materialChanges.length
+                    ? `<ul class="subtask-list">${parsedDescription.materialChanges.map((change) => `<li>${escapeHtml(change)}</li>`).join("")}</ul>`
+                    : `<span class="muted">Sin cambios registrados</span>`
+                }
+              </div>
+            </div>
+          `
+          : ""
+      }
+    </section>
+  `;
+}
+
 function renderWorkOrders() {
   const columns = ["new", "in_progress", "in_review", "completed", "client_approved", "scheduled", "cancelled"];
   const orders = brandOrders();
@@ -2570,6 +2687,7 @@ function renderWorkOrders() {
       ${renderMetric("Con email activo", emailOrders.length, "Notifican a responsables")}
     </section>
     ${renderWorkOrderSetupSection(allBrands)}
+    ${renderWorkOrderDetailPanel(selectedViewingOrder())}
     ${renderWorkOrderMonthTimeline(orders)}
     <section class="section">
       <div class="section-header">
@@ -2701,6 +2819,7 @@ function renderOrderCard(order) {
           : ""
       }
       <div class="row wrap">
+        <button class="button small" data-action="view-work-order" data-id="${order.id}">Ver detalle</button>
         ${order.notifyOnEmail ? `<span class="badge blue">Email activo</span>` : `<span class="badge">Sin email</span>`}
         ${
           canManage
@@ -2713,7 +2832,7 @@ function renderOrderCard(order) {
               }
               <button class="button-danger small" data-action="send-urgent-alert" data-id="${order.id}">Alerta urgente</button>
             `
-            : `<span class="badge amber">Solo lectura</span>`
+            : `<span class="badge amber">Lectura</span>`
         }
       </div>
       ${
@@ -3599,7 +3718,7 @@ function renderReports() {
                     </div>
                     <span>${order.title}</span>
                     <span class="muted">${getClient(brand.clientId)?.name || "Cliente"} / ${brand.shortName} / ${formatDate(order.dueDate)}</span>
-                    <button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Ver OT</button>
+                    <button class="button-ghost small" data-action="view-work-order" data-id="${order.id}">Ver OT</button>
                   </div>
                 `;
               })
@@ -4003,6 +4122,7 @@ function bindEvents() {
       state.currentModule = button.dataset.module;
       if (state.currentModule !== "work-orders") {
         state.editingWorkOrderId = "";
+        state.viewingWorkOrderId = "";
         state.focusedWorkOrderId = "";
       }
       render();
@@ -4013,6 +4133,7 @@ function bindEvents() {
     brandSelect.addEventListener("change", (event) => {
       state.currentBrandId = event.target.value;
       state.editingWorkOrderId = "";
+      state.viewingWorkOrderId = "";
       state.focusedWorkOrderId = "";
       const firstContent = brandItems(event.target.value)[0];
       state.selectedContentId = firstContent?.id || null;
@@ -4041,6 +4162,7 @@ function bindEvents() {
     button.addEventListener("click", () => {
       state.currentBrandId = button.dataset.brandJump;
       state.editingWorkOrderId = "";
+      state.viewingWorkOrderId = "";
       const firstContent = brandItems(state.currentBrandId)[0];
       state.selectedContentId = firstContent?.id || null;
       render();
@@ -4193,6 +4315,8 @@ async function handleAction(action, id) {
     },
     "export-brand-config": () => showToast("Resumen de marca preparado para compartir internamente"),
     "create-work-order": () => createWorkOrderFromForm(),
+    "view-work-order": () => viewWorkOrder(id),
+    "close-work-order-detail": () => closeWorkOrderDetail(),
     "edit-work-order": () => editWorkOrder(id),
     "cancel-edit-work-order": () => cancelEditWorkOrder(),
     "update-work-order": () => updateWorkOrderFromForm(),
@@ -5008,6 +5132,27 @@ async function sendUrgentWorkOrderAlert(id) {
   showToast(`Alerta urgente lista para ${recipients.length} persona(s)`);
 }
 
+function viewWorkOrder(id) {
+  const order = workOrders.find((candidate) => candidate.id === id);
+  if (!order) {
+    showToast("No encontre esa OT");
+    return;
+  }
+  state.currentModule = "work-orders";
+  state.currentBrandId = order.brandId;
+  state.viewingWorkOrderId = id;
+  state.focusedWorkOrderId = id;
+  showToast(`Abriendo ${id}`);
+  render();
+}
+
+function closeWorkOrderDetail() {
+  state.viewingWorkOrderId = "";
+  state.focusedWorkOrderId = "";
+  showToast("Detalle cerrado");
+  render();
+}
+
 function editWorkOrder(id) {
   if (!canManageWorkOrders()) {
     showToast("Solo Direccion o Cuentas puede editar ordenes");
@@ -5018,6 +5163,8 @@ function editWorkOrder(id) {
   state.currentModule = "work-orders";
   state.currentBrandId = order.brandId;
   state.editingWorkOrderId = id;
+  state.viewingWorkOrderId = id;
+  state.focusedWorkOrderId = id;
   showToast(`Editando ${id}`);
 }
 
