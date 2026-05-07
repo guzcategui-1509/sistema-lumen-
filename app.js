@@ -419,6 +419,7 @@ const weeklyDigestConfig = {
 
 const workOrderManagerRoles = ["admin", "directora", "cuentas"];
 const workOrderCreatorRoles = ["admin", "directora", "cuentas", "generador", "creativo"];
+const workOrderMaterialRoles = ["admin", "directora", "cuentas", "generador", "creativo", "disenador", "editor"];
 
 const productions = [
   {
@@ -646,6 +647,10 @@ const state = {
   adminEditingUserId: "",
   editingWorkOrderId: "",
   focusedWorkOrderId: "",
+  workOrderMonth: "",
+  reportMonth: "",
+  reportStartDate: "",
+  reportEndDate: "",
   initialRouteApplied: false,
   passwordResetMode: false,
   toast: "",
@@ -1253,6 +1258,20 @@ function canCreateWorkOrders() {
   return workOrderCreatorRoles.includes(dataState.profile?.role);
 }
 
+function canUploadWorkOrderMaterials(order = null) {
+  if (!isSupabaseMode()) return true;
+  const role = dataState.profile?.role;
+  if (!workOrderMaterialRoles.includes(role)) return false;
+  if (["admin", "directora"].includes(role)) return true;
+  const currentUser = users.find((user) => user.id === dataState.session?.user?.id);
+  return order ? canUserAccessBrand(currentUser, order.brandId) : true;
+}
+
+function canRunOperationalEmail() {
+  if (!isSupabaseMode()) return true;
+  return canManageWorkOrders() || canCreateWorkOrders() || workOrderMaterialRoles.includes(dataState.profile?.role);
+}
+
 function hasGlobalBrandAccess(user) {
   return ["admin", "directora"].includes(user?.role);
 }
@@ -1299,6 +1318,24 @@ function daysUntil(dateValue) {
   return Math.ceil((date - todayAtNoon()) / 86400000);
 }
 
+function monthKeyFromDate(date = todayAtNoon()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function dateMatchesMonth(dateValue, monthKey) {
+  return Boolean(dateValue && monthKey && String(dateValue).slice(0, 7) === monthKey);
+}
+
+function inDateRange(dateValue, startDate, endDate) {
+  const date = parseDateValue(dateValue);
+  if (!date) return false;
+  const start = startDate ? parseDateValue(startDate, "T00:00:00") : null;
+  const end = endDate ? parseDateValue(endDate, "T23:59:59") : null;
+  if (start && date < start) return false;
+  if (end && date > end) return false;
+  return true;
+}
+
 function wasCompletedLate(order) {
   if (!["completed", "client_approved", "scheduled"].includes(order.status)) return false;
   const dueEnd = parseDateValue(order.dueDate, "T23:59:59");
@@ -1338,17 +1375,17 @@ function isDeliveredWorkOrder(order) {
   return ["completed", "client_approved", "scheduled"].includes(order.status);
 }
 
-function teamWorkload(userId) {
-  const assigned = workOrders.filter((order) => orderAssignees(order).includes(userId));
+function teamWorkload(userId, sourceOrders = workOrders) {
+  const assigned = sourceOrders.filter((order) => orderAssignees(order).includes(userId));
   const open = assigned.filter(isOpenWorkOrder);
   const overdue = open.filter((order) => daysUntil(order.dueDate) < 0);
   const review = open.filter((order) => order.status === "in_review");
   return { assigned, open, overdue, review };
 }
 
-function weeklyDigestRows() {
+function weeklyDigestRows(sourceOrders = workOrders) {
   return internalUsers().map((user) => {
-    const workload = teamWorkload(user.id);
+    const workload = teamWorkload(user.id, sourceOrders);
     return {
       user,
       open: workload.open.length,
@@ -1966,24 +2003,14 @@ function renderWorkOrderBrandShortcut(brand) {
 function renderWorkOrderSetupSection(allBrands) {
   if (!allBrands) {
     return `
-      <section class="grid grid-2 top-aligned-grid">
+      <section class="work-order-form-band">
         ${renderWorkOrderForm(selectedEditingOrder())}
-        <div class="panel section">
-          <div class="section-header">
-            <div>
-              <h2 class="section-title">Digest semanal</h2>
-              <div class="small-muted">${weeklyDigestConfig.day} ${weeklyDigestConfig.time} / ${weeklyDigestConfig.timezone}</div>
-            </div>
-            <button class="button-ghost small" data-module="notifications">Ver detalle</button>
-          </div>
-          ${renderWeeklyDigestMini()}
-        </div>
       </section>
     `;
   }
 
   return `
-    <section class="work-order-action-band">
+    <section class="work-order-action-band single">
       <div class="panel section">
         <div class="section-header">
           <div>
@@ -1996,15 +2023,65 @@ function renderWorkOrderSetupSection(allBrands) {
           ${brands.map(renderWorkOrderBrandShortcut).join("")}
         </div>
       </div>
-      <div class="panel section">
-        <div class="section-header">
-          <div>
-            <h2 class="section-title">Digest semanal</h2>
-            <div class="small-muted">${weeklyDigestConfig.day} ${weeklyDigestConfig.time} / ${weeklyDigestConfig.timezone}</div>
-          </div>
-          <button class="button-ghost small" data-module="notifications">Ver detalle</button>
+    </section>
+  `;
+}
+
+function renderWorkOrderMonthTimeline(orders) {
+  const monthKey = state.workOrderMonth || monthKeyFromDate();
+  const monthOrders = orders
+    .filter((order) => dateMatchesMonth(order.dueDate, monthKey))
+    .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
+  const grouped = monthOrders.reduce((acc, order) => {
+    const day = String(order.dueDate || "").slice(0, 10);
+    if (!acc[day]) acc[day] = [];
+    acc[day].push(order);
+    return acc;
+  }, {});
+  const days = Object.keys(grouped).sort();
+
+  return `
+    <section class="panel section work-order-timetable">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Timetable del mes</h2>
+          <div class="small-muted">Ordenes con deadline dentro del mes seleccionado.</div>
         </div>
-        ${renderWeeklyDigestMini()}
+        <div class="row wrap">
+          <input class="input month-input" type="month" data-work-order-month value="${escapeHtml(monthKey)}" />
+          <span class="badge blue">${monthOrders.length} OTs</span>
+        </div>
+      </div>
+      <div class="timeline-strip">
+        ${
+          days.length
+            ? days
+                .map(
+                  (day) => `
+                    <div class="timeline-day">
+                      <div class="timeline-date">
+                        <strong>${escapeHtml(formatDate(day))}</strong>
+                        <span>${grouped[day].length} pendiente${grouped[day].length === 1 ? "" : "s"}</span>
+                      </div>
+                      <div class="timeline-items">
+                        ${grouped[day]
+                          .map(
+                            (order) => `
+                              <button class="timeline-item" data-action="edit-work-order" data-id="${order.id}">
+                                <span>${escapeHtml(order.id)}</span>
+                                <strong>${escapeHtml(order.title)}</strong>
+                                <small>${escapeHtml(orderAssignees(order).map(userName).join(", ") || "Sin asignar")}</small>
+                              </button>
+                            `,
+                          )
+                          .join("")}
+                      </div>
+                    </div>
+                  `,
+                )
+                .join("")
+            : `<div class="empty compact-empty">Sin deadlines en este mes</div>`
+        }
       </div>
     </section>
   `;
@@ -2230,6 +2307,7 @@ function renderWorkOrderForm(order = null) {
       (user.isActive !== false || selectedAssignees.has(user.id)) &&
       canUserAccessBrand(user, state.currentBrandId),
   );
+  const selectedUsers = availableUsers.filter((user) => selectedAssignees.has(user.id));
   const files = isEditing ? orderFiles(order) : [];
   const titleValue = isEditing ? order.title : `Nueva solicitud para ${getBrand().shortName}`;
   const descriptionValue = isEditing
@@ -2263,6 +2341,22 @@ function renderWorkOrderForm(order = null) {
           <label>Responsables</label>
           <div class="assignee-picker">
             <input class="input assignee-search" id="ot-assignee-search" placeholder="Buscar responsable..." />
+            <div class="assignee-selected-list" aria-live="polite">
+              ${
+                selectedUsers.length
+                  ? selectedUsers
+                      .map(
+                        (user) => `
+                          <span class="assignee-chip">
+                            <strong>${escapeHtml(user.name)}</strong>
+                            <small>${escapeHtml(roleLabels[user.role] || user.role)}</small>
+                          </span>
+                        `,
+                      )
+                      .join("")
+                  : `<span class="muted">Sin responsables seleccionados</span>`
+              }
+            </div>
             <div class="assignee-options">
               ${availableUsers
                 .map(
@@ -2271,7 +2365,8 @@ function renderWorkOrderForm(order = null) {
                       <input type="checkbox" data-ot-assignee value="${user.id}" ${selectedAssignees.has(user.id) ? "checked" : ""} />
                       <span>
                         <strong>${escapeHtml(user.name)}</strong>
-                        <small>${escapeHtml(roleLabels[user.role] || user.role)} / ${escapeHtml(user.email)}</small>
+                        <small>${escapeHtml(roleLabels[user.role] || user.role)}</small>
+                        <em>${escapeHtml(user.email)}</em>
                       </span>
                     </label>
                   `,
@@ -2369,9 +2464,10 @@ function renderWorkOrders() {
       ${renderMetric("OTs abiertas", openOrders.length, allBrands ? "Todas las marcas" : "No completadas")}
       ${renderMetric("Vencidas", overdueOrders.length, "Requieren seguimiento")}
       ${renderMetric("En revision", orders.filter((order) => order.status === "in_review").length, "Esperando validacion")}
-      ${renderMetric("Con email activo", emailOrders.length, "Incluidas en digest")}
+      ${renderMetric("Con email activo", emailOrders.length, "Notifican a responsables")}
     </section>
     ${renderWorkOrderSetupSection(allBrands)}
+    ${renderWorkOrderMonthTimeline(orders)}
     <section class="section">
       <div class="section-header">
         <h2 class="section-title">Kanban operativo</h2>
@@ -2422,6 +2518,7 @@ function renderOrderCard(order) {
   const urgency = workOrderUrgency(order);
   const isFocused = order.id === state.focusedWorkOrderId;
   const canManage = canManageWorkOrders();
+  const canUploadMaterials = canUploadWorkOrderMaterials(order);
   const nextStatus = nextWorkOrderStatus(order);
   const parsedDescription = splitWorkOrderDescription(order.description || "");
   return `
@@ -2490,6 +2587,19 @@ function renderOrderCard(order) {
             </div>
           `
           : `<span class="muted">Sin archivos adjuntos</span>`
+      }
+      ${
+        canUploadMaterials
+          ? `
+            <div class="material-upload-box">
+              <label>Materiales para aprobacion o cambios</label>
+              <div class="material-upload-row">
+                <input class="input file-input" data-material-files="${order.id}" type="file" multiple />
+                <button class="button-ghost small" data-action="upload-order-materials" data-id="${order.id}">Subir</button>
+              </div>
+            </div>
+          `
+          : ""
       }
       <div class="row wrap">
         ${order.notifyOnEmail ? `<span class="badge blue">Email activo</span>` : `<span class="badge">Sin email</span>`}
@@ -3028,6 +3138,16 @@ function reportScopeBrands() {
   return isAllBrandsScope() ? brands.filter((brand) => brand.isActive !== false) : [getBrand()].filter(Boolean);
 }
 
+function reportFilteredOrders(orders) {
+  if (state.reportMonth) {
+    return orders.filter((order) => dateMatchesMonth(order.dueDate, state.reportMonth));
+  }
+  if (state.reportStartDate || state.reportEndDate) {
+    return orders.filter((order) => inDateRange(order.dueDate, state.reportStartDate, state.reportEndDate));
+  }
+  return orders;
+}
+
 function clientReportRows(orders, scopedBrands) {
   return clients
     .map((clientItem) => {
@@ -3143,7 +3263,8 @@ function reportInsights({ overdueOpen, lateCompleted, reviewOrders, teamRows, cl
 }
 
 function renderReports() {
-  const scopedOrders = brandOrders();
+  const rawScopedOrders = brandOrders();
+  const scopedOrders = reportFilteredOrders(rawScopedOrders);
   const scopedBrands = reportScopeBrands();
   const openOrders = scopedOrders.filter(isOpenWorkOrder);
   const completedOrders = scopedOrders.filter(isDeliveredWorkOrder);
@@ -3176,6 +3297,30 @@ function renderReports() {
           <button class="button-ghost" data-module="notifications">Emails</button>
         </div>
       </div>
+
+      <section class="panel section report-filter-panel">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Filtros de periodo</h2>
+            <div class="small-muted">Analiza la carga y entregas por mes o por rango de fechas.</div>
+          </div>
+          <span class="badge blue">${scopedOrders.length} de ${rawScopedOrders.length} OTs</span>
+        </div>
+        <div class="form-grid compact-filter-grid">
+          <div class="field">
+            <label>Mes</label>
+            <input class="input" type="month" data-report-filter="reportMonth" value="${escapeHtml(state.reportMonth)}" />
+          </div>
+          <div class="field">
+            <label>Desde</label>
+            <input class="input" type="date" data-report-filter="reportStartDate" value="${escapeHtml(state.reportStartDate)}" />
+          </div>
+          <div class="field">
+            <label>Hasta</label>
+            <input class="input" type="date" data-report-filter="reportEndDate" value="${escapeHtml(state.reportEndDate)}" />
+          </div>
+        </div>
+      </section>
 
       <section class="grid grid-4">
         ${renderMetric("OTs abiertas", openOrders.length, "Trabajo activo en este scope")}
@@ -3853,6 +3998,53 @@ function bindEvents() {
       });
     });
   });
+
+  document.querySelectorAll("[data-ot-assignee]").forEach((input) => {
+    input.addEventListener("change", refreshAssigneeSelectedList);
+  });
+
+  document.querySelectorAll("[data-work-order-month]").forEach((input) => {
+    input.addEventListener("change", () => {
+      state.workOrderMonth = input.value;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-report-filter]").forEach((input) => {
+    input.addEventListener("change", () => {
+      state[input.dataset.reportFilter] = input.value;
+      if (input.dataset.reportFilter === "reportMonth" && input.value) {
+        state.reportStartDate = "";
+        state.reportEndDate = "";
+      }
+      if (["reportStartDate", "reportEndDate"].includes(input.dataset.reportFilter) && input.value) {
+        state.reportMonth = "";
+      }
+      render();
+    });
+  });
+}
+
+function refreshAssigneeSelectedList() {
+  const container = document.querySelector(".assignee-selected-list");
+  if (!container) return;
+  const selectedIds = Array.from(document.querySelectorAll("[data-ot-assignee]:checked")).map((input) => input.value);
+  if (!selectedIds.length) {
+    container.innerHTML = `<span class="muted">Sin responsables seleccionados</span>`;
+    return;
+  }
+  container.innerHTML = selectedIds
+    .map((userId) => {
+      const user = users.find((candidate) => candidate.id === userId);
+      if (!user) return "";
+      return `
+        <span class="assignee-chip">
+          <strong>${escapeHtml(user.name)}</strong>
+          <small>${escapeHtml(roleLabels[user.role] || user.role)}</small>
+        </span>
+      `;
+    })
+    .join("");
 }
 
 function bindAuthEvents() {
@@ -3899,6 +4091,7 @@ async function handleAction(action, id) {
     "cancel-edit-work-order": () => cancelEditWorkOrder(),
     "update-work-order": () => updateWorkOrderFromForm(),
     "advance-order": () => advanceWorkOrder(id),
+    "upload-order-materials": () => uploadOrderMaterials(id),
     "send-urgent-alert": () => sendUrgentWorkOrderAlert(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
     "queue-weekly-digest": () => queueWeeklyDigest(),
@@ -4379,6 +4572,109 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
   `;
 }
 
+function workOrderRecipientUsers(order, assigneeIds = orderAssignees(order)) {
+  return users.filter((user) => assigneeIds.includes(user.id) && user.email && user.isActive !== false);
+}
+
+function describeWorkOrderChanges(order, values = {}, uploadedCount = 0) {
+  const changes = [];
+  if (values.title && values.title !== order.title) changes.push(`Titulo: ${order.title} -> ${values.title}`);
+  if (values.status && values.status !== order.status) {
+    changes.push(`Estado: ${workOrderStatusLabels[order.status] || order.status} -> ${workOrderStatusLabels[values.status] || values.status}`);
+  }
+  if (values.priority && values.priority !== order.priority) {
+    changes.push(`Prioridad: ${workOrderPriorityLabels[order.priority] || order.priority} -> ${workOrderPriorityLabels[values.priority] || values.priority}`);
+  }
+  if (values.dueDate && values.dueDate !== order.dueDate) changes.push(`Deadline: ${formatDate(order.dueDate)} -> ${formatDate(values.dueDate)}`);
+  if (values.description && values.description !== (order.description || "")) changes.push("Descripcion, subtareas o cambios de materiales actualizados");
+  if (uploadedCount) changes.push(`${uploadedCount} material${uploadedCount === 1 ? "" : "es"} agregado${uploadedCount === 1 ? "" : "s"}`);
+  return changes;
+}
+
+function buildWorkOrderUpdateEmail(order, changes, uploadedCount = 0) {
+  const brand = getBrand(order.brandId);
+  const client = getClient(brand.clientId);
+  const workOrderUrl = buildWorkOrderUrl(order.id, order.brandId);
+  const parsedDescription = splitWorkOrderDescription(order.description || "");
+  return `
+    <div style="margin:0;background:#f6f6f3;padding:28px 16px;font-family:Arial,Helvetica,sans-serif;color:#2d2d2d;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #deded8;border-radius:14px;overflow:hidden;">
+        <div style="padding:26px 28px 20px;border-left:7px solid #49ee8c;">
+          <div style="font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#176339;margin-bottom:10px;">
+            Actualizacion de orden
+          </div>
+          <h1 style="margin:0 0 8px;font-size:28px;line-height:1.15;color:#2d2d2d;">${escapeHtml(order.id)}</h1>
+          <p style="margin:0;color:#5f6760;font-size:17px;line-height:1.45;">${escapeHtml(order.title)}</p>
+        </div>
+        <div style="padding:0 28px 26px;">
+          <table role="presentation" style="width:100%;border-collapse:collapse;margin:10px 0 22px;">
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Cliente / marca</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(client?.name || "Cliente")} / ${escapeHtml(brand.name)}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Estado actual</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(workOrderStatusLabels[order.status] || order.status)}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Deadline</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(formatDate(order.dueDate))}</td>
+            </tr>
+          </table>
+
+          <div style="margin-bottom:20px;border:1px solid #ecece8;border-radius:12px;padding:14px 16px;background:#fafaf8;">
+            <div style="font-size:13px;font-weight:700;text-transform:uppercase;color:#6b726c;margin-bottom:8px;">Que cambio</div>
+            <ul style="margin:0;padding-left:18px;font-size:15px;line-height:1.55;color:#3c403d;">
+              ${changes.map((change) => `<li>${escapeHtml(change)}</li>`).join("")}
+            </ul>
+          </div>
+
+          ${
+            parsedDescription.materialChanges.length
+              ? `<div style="margin-bottom:20px;font-size:15px;line-height:1.55;"><strong>Cambios de materiales:</strong> ${escapeHtml(parsedDescription.materialChanges.join(" / "))}</div>`
+              : ""
+          }
+
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px;">
+            <span style="display:inline-block;background:#e9fff1;color:#176339;border-radius:999px;padding:8px 12px;font-weight:700;">${uploadedCount ? `${uploadedCount} material(es) nuevo(s)` : "Sin nuevos archivos"}</span>
+            <span style="display:inline-block;background:#f0f1ee;color:#555b56;border-radius:999px;padding:8px 12px;">Responsables: ${escapeHtml(orderAssignees(order).map(userName).join(", ") || "Sin asignar")}</span>
+          </div>
+
+          <a href="${escapeHtml(workOrderUrl)}" style="display:inline-block;background:#2d2d2d;color:#ffffff;text-decoration:none;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:800;">
+            Ver orden actualizada
+          </a>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function queueWorkOrderUpdateEmails(order, changes, uploadedCount = 0, assigneeIds = orderAssignees(order)) {
+  if (!isSupabaseMode() || !order.dbId || !changes.length || order.notifyOnEmail === false) return 0;
+  const recipients = workOrderRecipientUsers(order, assigneeIds);
+  if (!recipients.length) return 0;
+  const htmlBody = buildWorkOrderUpdateEmail(order, changes, uploadedCount);
+  const { error } = await supabaseClient.from("email_notifications").insert(
+    recipients.map((user) => ({
+      brand_id: order.brandId,
+      work_order_id: order.dbId,
+      recipient_user_id: user.id,
+      recipient_email: user.email,
+      notification_type: "status_change",
+      subject: `Actualizacion de OT: ${order.id} - ${order.title}`,
+      html_body: htmlBody,
+      status: "queued",
+      scheduled_for: new Date().toISOString(),
+    })),
+  );
+  if (error) {
+    showToast(`OT actualizada, pero fallo email: ${error.message}`);
+    return 0;
+  }
+  await invokeEmailFunction("email-worker", (data) => `Correos de actualizacion procesados: ${data?.processed ?? 0}`, {}, true);
+  return recipients.length;
+}
+
 function urgentAlertRecipients(order) {
   return activeUsers().filter(
     (user) =>
@@ -4473,7 +4769,12 @@ async function createWorkOrderFromForm() {
       .single();
 
     if (orderError) {
-      showToast(`No se pudo crear la OT: ${orderError.message}`);
+      const message = orderError.message || "";
+      if (message.includes("work_order_status") || message.includes("client_approved") || message.includes("scheduled")) {
+        showToast("Falta activar los estados nuevos en Supabase: ejecuta supabase/patch_ot_workflow_creators.sql");
+      } else {
+        showToast(`No se pudo crear la OT: ${message}`);
+      }
       return;
     }
 
@@ -4651,7 +4952,12 @@ async function updateWorkOrderFromForm() {
       })
       .eq("id", order.dbId);
     if (orderError) {
-      showToast(`No se pudo actualizar la OT: ${orderError.message}`);
+      const message = orderError.message || "";
+      if (message.includes("work_order_status") || message.includes("client_approved") || message.includes("scheduled")) {
+        showToast("Falta activar los estados nuevos en Supabase: ejecuta supabase/patch_ot_workflow_creators.sql");
+      } else {
+        showToast(`No se pudo actualizar la OT: ${message}`);
+      }
       return;
     }
 
@@ -4686,6 +4992,18 @@ async function updateWorkOrderFromForm() {
     }
 
     const uploadedCount = await uploadWorkOrderFiles(order.dbId, order.brandId, values.fileUploads);
+    const changes = describeWorkOrderChanges(order, values, uploadedCount);
+    const updatedOrderForEmail = {
+      ...order,
+      title: values.title,
+      status: values.status,
+      priority: values.priority,
+      category: values.category,
+      dueDate: values.dueDate || order.dueDate,
+      description: values.description,
+      assignees: values.assignees,
+      notifyOnEmail: values.notifyOnEmail,
+    };
     await supabaseClient.from("work_order_activity").insert({
       work_order_id: order.dbId,
       actor_id: dataState.session?.user?.id,
@@ -4698,6 +5016,7 @@ async function updateWorkOrderFromForm() {
         files_added: uploadedCount,
       },
     });
+    await queueWorkOrderUpdateEmails(updatedOrderForEmail, changes, uploadedCount, values.assignees);
 
     await loadSupabaseData();
     state.editingWorkOrderId = "";
@@ -4726,6 +5045,48 @@ async function updateWorkOrderFromForm() {
   showToast(`${order.id} actualizada`);
 }
 
+async function uploadOrderMaterials(id) {
+  const order = workOrders.find((candidate) => candidate.id === id);
+  if (!order) return;
+  if (!canUploadWorkOrderMaterials(order)) {
+    showToast("No tienes permiso para subir materiales a esta OT");
+    return;
+  }
+  const filesInput = document.querySelector(`[data-material-files="${id}"]`);
+  const fileUploads = filesInput ? Array.from(filesInput.files || []) : [];
+  if (!fileUploads.length) {
+    showToast("Selecciona uno o varios archivos para subir");
+    return;
+  }
+
+  if (isSupabaseMode()) {
+    if (!order.dbId) {
+      showToast("Esta OT no tiene ID de Supabase");
+      return;
+    }
+    const uploadedCount = await uploadWorkOrderFiles(order.dbId, order.brandId, fileUploads);
+    if (!uploadedCount) return;
+    await supabaseClient.from("work_order_activity").insert({
+      work_order_id: order.dbId,
+      actor_id: dataState.session?.user?.id,
+      action: "materials_uploaded",
+      details: { files_added: uploadedCount },
+    });
+    await queueWorkOrderUpdateEmails(order, describeWorkOrderChanges(order, {}, uploadedCount), uploadedCount);
+    await loadSupabaseData();
+    showToast(`${uploadedCount} material${uploadedCount === 1 ? "" : "es"} agregado${uploadedCount === 1 ? "" : "s"} a ${order.id}`);
+    return;
+  }
+
+  order.files = [
+    ...orderFiles(order),
+    ...fileUploads.map((file) => ({ name: file.name, size: file.size, type: file.type || "application/octet-stream" })),
+  ];
+  order.updatedAt = new Date().toISOString();
+  saveWorkOrders();
+  showToast(`Materiales agregados a ${order.id}`);
+}
+
 async function advanceWorkOrder(id) {
   if (!canManageWorkOrders()) {
     showToast("Solo Direccion o Cuentas puede modificar ordenes");
@@ -4745,15 +5106,25 @@ async function advanceWorkOrder(id) {
       .update({ status: nextStatus, updated_at: new Date().toISOString() })
       .eq("id", order.dbId);
     if (error) {
-      showToast(`No se pudo avanzar la OT: ${error.message}`);
+      const message = error.message || "";
+      if (message.includes("work_order_status") || message.includes("client_approved") || message.includes("scheduled")) {
+        showToast("Falta activar los estados nuevos en Supabase: ejecuta supabase/patch_ot_workflow_creators.sql");
+      } else {
+        showToast(`No se pudo avanzar la OT: ${message}`);
+      }
       return;
     }
+    const updatedOrderForEmail = { ...order, status: nextStatus, updatedAt: new Date().toISOString() };
     await supabaseClient.from("work_order_activity").insert({
       work_order_id: order.dbId,
       actor_id: dataState.session?.user?.id,
       action: "status_changed",
       details: { from: order.status, to: nextStatus },
     });
+    await queueWorkOrderUpdateEmails(
+      updatedOrderForEmail,
+      [`Estado: ${workOrderStatusLabels[order.status] || order.status} -> ${workOrderStatusLabels[nextStatus] || nextStatus}`],
+    );
     await loadSupabaseData();
     showToast(`${order.id} avanzó a ${workOrderStatusLabels[nextStatus]}`);
     return;
@@ -4781,8 +5152,8 @@ async function invokeEmailFunction(functionName, successMessage, extraBody = {},
     showToast("Conecta Supabase para usar emails reales");
     return null;
   }
-  if (!(canManageWorkOrders() || (allowCreators && canCreateWorkOrders()))) {
-    showToast("Solo Direccion, Cuentas o creadores autorizados pueden disparar automatizaciones");
+  if (!(canManageWorkOrders() || (allowCreators && canRunOperationalEmail()))) {
+    showToast("Solo roles operativos autorizados pueden disparar automatizaciones");
     return null;
   }
 

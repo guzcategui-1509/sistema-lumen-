@@ -1409,12 +1409,42 @@ tr:last-child td {
   gap: 8px;
 }
 
+.assignee-selected-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 36px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+}
+
+.assignee-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #edfff4;
+  color: #176339;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.assignee-chip small {
+  color: #536158;
+  font-weight: 700;
+}
+
 .assignee-options {
   display: grid;
-  gap: 6px;
-  max-height: 210px;
+  gap: 4px;
+  max-height: 252px;
   overflow: auto;
-  padding: 6px;
+  padding: 5px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #fafaf8;
@@ -1422,13 +1452,27 @@ tr:last-child td {
 
 .assignee-option {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
   gap: 9px;
-  align-items: center;
-  padding: 9px;
+  align-items: start;
+  min-height: auto;
+  padding: 8px;
   border: 1px solid transparent;
   border-radius: var(--radius);
   cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.field .assignee-option {
+  display: grid;
+  margin-bottom: 0;
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .assignee-option:has(input:checked) {
@@ -1443,12 +1487,23 @@ tr:last-child td {
 }
 
 .assignee-option strong,
-.assignee-option small {
+.assignee-option small,
+.assignee-option em {
   overflow-wrap: anywhere;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .assignee-option small {
   color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.assignee-option em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
 }
 
 .avatar-pill,
@@ -1569,6 +1624,12 @@ tr:last-child td {
   align-items: start;
 }
 
+.work-order-action-band.single,
+.work-order-form-band {
+  display: grid;
+  gap: 14px;
+}
+
 .brand-shortcut-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1596,6 +1657,96 @@ tr:last-child td {
 .brand-shortcut span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.material-upload-box {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fafaf8;
+}
+
+.material-upload-box label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.material-upload-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.work-order-timetable {
+  overflow: hidden;
+}
+
+.month-input {
+  width: 170px;
+}
+
+.timeline-strip {
+  display: grid;
+  gap: 10px;
+}
+
+.timeline-day {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.28fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fafaf8;
+}
+
+.timeline-date {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+}
+
+.timeline-date span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.timeline-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.timeline-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.timeline-item:hover {
+  border-color: var(--green);
+  box-shadow: inset 4px 0 0 var(--green);
+}
+
+.timeline-item span,
+.timeline-item small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.compact-filter-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .digest-row,
@@ -1926,8 +2077,10 @@ tr:last-child td {
   .report-team-row,
   .notification-guide-grid,
   .brand-shortcut-grid,
+  .timeline-day,
   .digest-mini-metrics,
   .workflow-steps,
+  .compact-filter-grid,
   .form-grid {
     grid-template-columns: 1fr;
   }

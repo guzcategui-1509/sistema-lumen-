@@ -81,7 +81,10 @@ async function authorizeRequest(request: Request) {
 
   const profiles = (await profileResponse.json()) as Profile[];
   const profile = profiles[0];
-  if (!profile?.is_active || !["admin", "directora", "cuentas", "generador", "creativo"].includes(profile.role)) {
+  if (
+    !profile?.is_active ||
+    !["admin", "directora", "cuentas", "generador", "creativo", "disenador", "editor"].includes(profile.role)
+  ) {
     return { ok: false, status: 403, error: "Only authorized internal roles can send email queue" };
   }
 
