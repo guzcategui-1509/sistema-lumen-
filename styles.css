@@ -1307,6 +1307,18 @@ tr:last-child td {
   gap: 12px;
 }
 
+.work-order-form-band .form-grid {
+  grid-template-columns: minmax(260px, 1.25fr) minmax(180px, 0.5fr) minmax(180px, 0.5fr) minmax(180px, 0.5fr);
+}
+
+.work-order-form-band .field.full {
+  grid-column: 1 / -1;
+}
+
+.work-order-form-band .assignee-options {
+  max-height: 210px;
+}
+
 .compact-textarea {
   min-height: 118px;
 }
@@ -1915,6 +1927,27 @@ tr:last-child td {
   width: 100%;
 }
 
+.compact-brand-selection .panel {
+  padding: 16px;
+}
+
+.compact-brand-selection .section-header {
+  align-items: flex-start;
+}
+
+.compact-brand-selection .brand-shortcut-grid {
+  grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
+}
+
+.compact-brand-selection .brand-shortcut {
+  min-height: 76px;
+  padding: 11px;
+}
+
+.work-order-form-band > .panel {
+  width: 100%;
+}
+
 .brand-shortcut-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -2331,6 +2364,10 @@ tr:last-child td {
 
   .operation-status-control {
     justify-content: flex-start;
+  }
+
+  .work-order-form-band .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

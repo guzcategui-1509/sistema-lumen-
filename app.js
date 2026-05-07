@@ -2100,7 +2100,7 @@ function renderWorkOrderSetupSection(allBrands) {
   }
 
   return `
-    <section class="work-order-action-band single">
+    <section class="work-order-action-band single compact-brand-selection">
       <div class="panel section">
         <div class="section-header">
           <div>
@@ -2677,6 +2677,10 @@ function renderWorkOrders() {
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
   const emailOrders = openOrders.filter((order) => order.notifyOnEmail);
   const allBrands = isAllBrandsScope();
+  const detailPanel = renderWorkOrderDetailPanel(selectedViewingOrder());
+  const setupSection = renderWorkOrderSetupSection(allBrands);
+  const timetable = renderWorkOrderMonthTimeline(orders);
+  const operationsPanel = renderWorkOrderOperationsPanel(orders, allBrands);
   return `
     ${allBrands ? renderAllBrandsHero() : renderBrandHero()}
     <section class="grid grid-4">
@@ -2685,10 +2689,8 @@ function renderWorkOrders() {
       ${renderMetric("En revision", orders.filter((order) => order.status === "in_review").length, "Esperando validacion")}
       ${renderMetric("Con email activo", emailOrders.length, "Notifican a responsables")}
     </section>
-    ${renderWorkOrderSetupSection(allBrands)}
-    ${renderWorkOrderDetailPanel(selectedViewingOrder())}
-    ${renderWorkOrderMonthTimeline(orders)}
-    ${renderWorkOrderOperationsPanel(orders, allBrands)}
+    ${detailPanel}
+    ${allBrands ? `${operationsPanel}${timetable}${setupSection}` : `${setupSection}${operationsPanel}${timetable}`}
   `;
 }
 
