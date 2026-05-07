@@ -647,6 +647,7 @@ const state = {
   adminEditingUserId: "",
   editingWorkOrderId: "",
   focusedWorkOrderId: "",
+  dashboardMonth: "",
   workOrderMonth: "",
   reportMonth: "",
   reportStartDate: "",
@@ -1322,6 +1323,31 @@ function monthKeyFromDate(date = todayAtNoon()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function isoDateFromDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function monthCalendarDays(monthKey) {
+  const [yearText, monthText] = String(monthKey || monthKeyFromDate()).split("-");
+  const year = Number(yearText);
+  const monthIndex = Number(monthText) - 1;
+  const first = new Date(year, monthIndex, 1, 12, 0, 0, 0);
+  const mondayOffset = (first.getDay() + 6) % 7;
+  const start = new Date(first);
+  start.setDate(first.getDate() - mondayOffset);
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return {
+      date,
+      iso: isoDateFromDate(date),
+      day: date.getDate(),
+      isCurrentMonth: date.getMonth() === monthIndex,
+      isToday: isoDateFromDate(date) === isoDateFromDate(todayAtNoon()),
+    };
+  });
+}
+
 function dateMatchesMonth(dateValue, monthKey) {
   return Boolean(dateValue && monthKey && String(dateValue).slice(0, 7) === monthKey);
 }
@@ -1728,6 +1754,7 @@ function renderAllBrandsDashboard() {
 
   return `
     ${renderAllBrandsHero()}
+    ${renderDashboardDeadlineCalendar(workOrders, "Calendario mensual de deadlines", "Todas las marcas")}
     <section class="overview-layout">
       <div class="panel section visual-panel">
         <div class="section-header">
@@ -1843,6 +1870,66 @@ function renderAllBrandsDashboard() {
   `;
 }
 
+function renderDashboardDeadlineCalendar(sourceOrders, title = "Calendario mensual de deadlines", scopeLabel = "") {
+  const monthKey = state.dashboardMonth || monthKeyFromDate();
+  const days = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"];
+  const cells = monthCalendarDays(monthKey);
+  const monthOrders = sourceOrders
+    .filter((order) => dateMatchesMonth(order.dueDate, monthKey))
+    .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
+  const openMonthOrders = monthOrders.filter(isOpenWorkOrder);
+  const overdueMonthOrders = openMonthOrders.filter((order) => daysUntil(order.dueDate) < 0);
+
+  return `
+    <section class="panel section dashboard-calendar-panel">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">${title}</h2>
+          <div class="small-muted">${scopeLabel || "Ordenes"} con deadline en el mes seleccionado.</div>
+        </div>
+        <div class="row wrap">
+          <input class="input month-input" type="month" data-dashboard-month value="${escapeHtml(monthKey)}" />
+          <span class="badge blue">${monthOrders.length} OTs</span>
+          <span class="badge ${overdueMonthOrders.length ? "red" : "green"}">${overdueMonthOrders.length} vencidas</span>
+        </div>
+      </div>
+      <div class="deadline-calendar-grid">
+        ${days.map((day) => `<div class="deadline-calendar-head">${day}</div>`).join("")}
+        ${cells
+          .map((cell) => {
+            const dayOrders = monthOrders.filter((order) => String(order.dueDate || "").slice(0, 10) === cell.iso);
+            return `
+              <div class="deadline-calendar-day ${cell.isCurrentMonth ? "" : "muted-month"} ${cell.isToday ? "today" : ""}">
+                <div class="deadline-day-number">
+                  <span>${cell.day}</span>
+                  ${dayOrders.length ? `<strong>${dayOrders.length}</strong>` : ""}
+                </div>
+                <div class="deadline-day-items">
+                  ${dayOrders
+                    .slice(0, 4)
+                    .map((order) => {
+                      const urgency = workOrderUrgency(order);
+                      const brand = getBrand(order.brandId);
+                      return `
+                        <button class="deadline-chip ${urgency.cls}" data-action="edit-work-order" data-id="${order.id}">
+                          <strong>${escapeHtml(order.id)}</strong>
+                          <span>${escapeHtml(order.title)}</span>
+                          <small>${escapeHtml(isAllBrandsScope() ? brand.shortName : orderAssignees(order).map(userName).join(", ") || "Sin asignar")}</small>
+                        </button>
+                      `;
+                    })
+                    .join("")}
+                  ${dayOrders.length > 4 ? `<span class="deadline-more">+${dayOrders.length - 4} mas</span>` : ""}
+                </div>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderDashboard() {
   if (isAllBrandsScope()) return renderAllBrandsDashboard();
   const orders = brandOrders();
@@ -1863,6 +1950,7 @@ function renderDashboard() {
       ${renderMetric("En revision", reviewOrders.length, "Esperando validacion")}
       ${renderMetric("Responsables", responsibleCount, "Equipo asignado")}
     </section>
+    ${renderDashboardDeadlineCalendar(orders, "Calendario mensual de deadlines", getBrand().shortName)}
     <section class="grid grid-2 top-aligned-grid">
       <div class="panel section">
         <div class="section-header">
@@ -4006,6 +4094,13 @@ function bindEvents() {
   document.querySelectorAll("[data-work-order-month]").forEach((input) => {
     input.addEventListener("change", () => {
       state.workOrderMonth = input.value;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-dashboard-month]").forEach((input) => {
+    input.addEventListener("change", () => {
+      state.dashboardMonth = input.value;
       render();
     });
   });
