@@ -2368,6 +2368,21 @@ function renderWorkOrderSelectOption(value, label, activeValue) {
   return `<option value="${value}" ${value === activeValue ? "selected" : ""}>${label}</option>`;
 }
 
+function workOrderFileKey(order, file, index) {
+  return file.id || file.storagePath || file.url || `${order.id}:${index}`;
+}
+
+function renderWorkOrderFileChip(order, file, index) {
+  const key = workOrderFileKey(order, file, index);
+  const type = file.type ? file.type.split("/").pop()?.toUpperCase() : "Archivo";
+  return `
+    <button class="file-chip" data-action="open-work-order-file" data-id="${escapeHtml(key)}" title="Abrir ${escapeHtml(file.name)}">
+      <strong>${escapeHtml(file.name)}</strong>
+      <small>${escapeHtml(type || "Archivo")}</small>
+    </button>
+  `;
+}
+
 function renderWorkOrderForm(order = null) {
   const isEditing = Boolean(order);
   const canUseForm = isEditing ? canManageWorkOrders() : canCreateWorkOrders();
@@ -2513,7 +2528,7 @@ function renderWorkOrderForm(order = null) {
               <div class="field full">
                 <label>Archivos actuales</label>
                 <div class="file-list">
-                  ${files.map((file) => `<span class="file-chip">${escapeHtml(file.name)}</span>`).join("")}
+                  ${files.map((file, index) => renderWorkOrderFileChip(order, file, index)).join("")}
                 </div>
               </div>
             `
@@ -2666,11 +2681,7 @@ function renderOrderCard(order) {
           ? `
             <div class="file-list">
               ${files
-                .map(
-                  (file) => `
-                    <span class="file-chip">${file.name}</span>
-                  `,
-                )
+                .map((file, index) => renderWorkOrderFileChip(order, file, index))
                 .join("")}
             </div>
           `
@@ -4187,6 +4198,7 @@ async function handleAction(action, id) {
     "update-work-order": () => updateWorkOrderFromForm(),
     "advance-order": () => advanceWorkOrder(id),
     "upload-order-materials": () => uploadOrderMaterials(id),
+    "open-work-order-file": () => openWorkOrderFile(id),
     "send-urgent-alert": () => sendUrgentWorkOrderAlert(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
     "queue-weekly-digest": () => queueWeeklyDigest(),
@@ -5180,6 +5192,41 @@ async function uploadOrderMaterials(id) {
   order.updatedAt = new Date().toISOString();
   saveWorkOrders();
   showToast(`Materiales agregados a ${order.id}`);
+}
+
+function findWorkOrderFile(fileKey) {
+  for (const order of workOrders) {
+    const files = orderFiles(order);
+    const index = files.findIndex((file, fileIndex) => workOrderFileKey(order, file, fileIndex) === fileKey);
+    if (index >= 0) return { order, file: files[index], index };
+  }
+  return null;
+}
+
+async function openWorkOrderFile(fileKey) {
+  const match = findWorkOrderFile(fileKey);
+  if (!match) {
+    showToast("No encontre ese archivo en la OT");
+    return;
+  }
+  const { file } = match;
+
+  if (file.url) {
+    window.open(file.url, "_blank", "noopener");
+    return;
+  }
+
+  if (isSupabaseMode() && file.storagePath) {
+    const { data, error } = await supabaseClient.storage.from("work-order-files").createSignedUrl(file.storagePath, 3600);
+    if (error || !data?.signedUrl) {
+      showToast(`No se pudo abrir el archivo: ${error?.message || "sin URL disponible"}`);
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener");
+    return;
+  }
+
+  showToast(`Archivo registrado: ${file.name}. Los archivos demo no tienen preview descargable.`);
 }
 
 async function advanceWorkOrder(id) {

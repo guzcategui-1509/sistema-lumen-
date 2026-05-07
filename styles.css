@@ -1651,8 +1651,10 @@ tr:last-child td {
 .file-chip {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   min-height: 25px;
   padding: 3px 8px;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: #edf3fb;
   color: var(--navy);
@@ -1663,6 +1665,28 @@ tr:last-child td {
 .file-chip {
   background: #f4f6f8;
   color: #415064;
+  border-color: var(--line);
+  cursor: pointer;
+  text-align: left;
+}
+
+.file-chip:hover {
+  border-color: var(--green);
+  background: #edfff4;
+  color: #176339;
+}
+
+.file-chip strong {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-chip small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
 }
 
 .health-list {
