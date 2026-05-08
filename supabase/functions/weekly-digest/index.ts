@@ -22,20 +22,14 @@ type Brand = {
   name: string;
 };
 
+type WorkOrderAssignee = {
+  work_order_id: string;
+  user_id: string;
+};
+
 type RequestProfile = {
   role: string;
   is_active: boolean;
-};
-
-type BrandMembership = {
-  user_id: string;
-  brand_id: string;
-};
-
-type BrandResponsibility = {
-  user_id: string;
-  brand_id: string;
-  responsibility_role: string;
 };
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
@@ -153,6 +147,14 @@ function buildDashboardUrl(appUrl: string) {
   return url.toString();
 }
 
+function buildWorkOrdersUrl(appUrl: string) {
+  if (!appUrl) return "";
+  const url = new URL(appUrl);
+  url.searchParams.set("module", "work-orders");
+  url.searchParams.set("brand", "all-brands");
+  return url.toString();
+}
+
 function formatDate(dateValue: string | null) {
   if (!dateValue) return "Sin fecha";
   return new Date(`${dateValue}T12:00:00`).toLocaleDateString("es-GT", {
@@ -169,6 +171,17 @@ function deadlineLabel(dateValue: string | null) {
   if (days === 0) return "Vence hoy";
   if (days === 1) return "Vence manana";
   return `${days}d restantes`;
+}
+
+function isOpenWorkOrder(order: WorkOrder) {
+  return !["completed", "client_approved", "scheduled", "cancelled"].includes(order.status);
+}
+
+function isDueThisMonth(dateValue: string | null) {
+  if (!dateValue) return false;
+  const today = new Date();
+  const date = new Date(`${dateValue}T12:00:00`);
+  return date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth();
 }
 
 function statusLabel(status: string) {
@@ -245,20 +258,23 @@ function buildOrderCard(order: WorkOrder, brandName: string, appUrl: string) {
   `;
 }
 
-function buildDigestHtml(orders: WorkOrder[], brands: Brand[], appUrl: string) {
-  const openOrders = orders.filter((order) => order.status !== "completed" && order.status !== "cancelled");
+function buildDigestHtml(profile: Profile, orders: WorkOrder[], brands: Brand[], appUrl: string) {
+  const openOrders = orders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.due_date) < 0);
   const reviewOrders = openOrders.filter((order) => order.status === "in_review");
   const dueThisWeek = openOrders.filter((order) => {
     const days = daysUntil(order.due_date);
     return days >= 0 && days <= 7;
   });
+  const dueThisMonth = openOrders.filter((order) => isDueThisMonth(order.due_date));
   const upcoming = openOrders
     .slice()
     .sort((a, b) => daysUntil(a.due_date) - daysUntil(b.due_date))
     .slice(0, 12);
   const dashboardUrl = buildDashboardUrl(appUrl);
+  const workOrdersUrl = buildWorkOrdersUrl(appUrl);
   const brandNames = new Map(brands.map((brand) => [brand.id, brand.name]));
+  const firstName = profile.full_name.split(" ")[0] || profile.full_name;
 
   const orderCards = upcoming
     .map((order) => buildOrderCard(order, brandNames.get(order.brand_id) ?? "Marca", appUrl))
@@ -269,11 +285,11 @@ function buildDigestHtml(orders: WorkOrder[], brands: Brand[], appUrl: string) {
       <div style="max-width:720px;margin:0 auto;">
         <div style="background:#2d2d2d;border-radius:16px 16px 0 0;padding:28px;border-left:8px solid #49ee8c;">
           <div style="font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#49ee8c;margin-bottom:10px;">Lumen Workspace</div>
-          <h1 style="margin:0;color:#ffffff;font-size:30px;line-height:1.15;">Estatus semanal de proyectos</h1>
-          <p style="margin:10px 0 0;color:#d7dbd7;font-size:16px;line-height:1.45;">Resumen operativo de OTs abiertas, vencimientos y prioridades del equipo.</p>
+          <h1 style="margin:0;color:#ffffff;font-size:30px;line-height:1.15;">Tus OTs de la semana</h1>
+          <p style="margin:10px 0 0;color:#d7dbd7;font-size:16px;line-height:1.45;">Hola ${escapeHtml(firstName)}, este es tu panorama personal de ordenes, vencimientos y prioridades.</p>
           ${
-            dashboardUrl
-              ? `<a href="${escapeHtml(dashboardUrl)}" style="display:inline-block;margin-top:18px;background:#49ee8c;color:#183522;text-decoration:none;border-radius:10px;padding:12px 16px;font-size:15px;font-weight:900;">Abrir dashboard</a>`
+            workOrdersUrl || dashboardUrl
+              ? `<a href="${escapeHtml(workOrdersUrl || dashboardUrl)}" style="display:inline-block;margin-top:18px;background:#49ee8c;color:#183522;text-decoration:none;border-radius:10px;padding:12px 16px;font-size:15px;font-weight:900;">Abrir mis ordenes</a>`
               : ""
           }
         </div>
@@ -284,21 +300,21 @@ function buildDigestHtml(orders: WorkOrder[], brands: Brand[], appUrl: string) {
               ${metricCard("Abiertas", openOrders.length, "OTs activas", "#2d2d2d")}
               ${metricCard("Vencidas", overdueOrders.length, "Requieren accion", overdueOrders.length ? "#9f1c1c" : "#176339")}
               ${metricCard("Esta semana", dueThisWeek.length, "Vencen en 7 dias", "#166274")}
-              ${metricCard("En revision", reviewOrders.length, "Pendientes de cierre", "#7654a8")}
+              ${metricCard("Este mes", dueThisMonth.length, `${reviewOrders.length} en revision`, "#7654a8")}
             </tr>
           </table>
 
           <div style="font-size:13px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#747b75;margin:18px 0 10px;">
-            Siguientes ordenes
+            Tus siguientes ordenes
           </div>
 
           ${
             orderCards ||
-            `<div style="border:1px solid #deded8;border-radius:12px;padding:18px;background:#ffffff;color:#4f5650;">No hay OTs abiertas esta semana.</div>`
+            `<div style="border:1px solid #deded8;border-radius:12px;padding:18px;background:#ffffff;color:#4f5650;">No tienes OTs abiertas para esta semana o mes.</div>`
           }
 
           <p style="margin:18px 0 0;color:#7a817b;font-size:13px;line-height:1.45;">
-            Este correo se genera desde Lumen Workspace. Para editar, comentar o avanzar una OT, abre el boton de la orden correspondiente.
+            Este correo se genera todos los lunes desde Lumen Workspace. Para editar, comentar o avanzar una OT, abre el boton de la orden correspondiente.
           </p>
         </div>
       </div>
@@ -320,54 +336,53 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: auth.error ?? "Unauthorized" }, auth.status ?? 401);
   }
 
-  const [profilesResponse, ordersResponse, brandsResponse, membershipsResponse, responsibilitiesResponse] = await Promise.all([
-    supabaseRequest("profiles?is_active=eq.true&role=in.(admin,directora,cuentas)&select=id,full_name,email,role"),
-    supabaseRequest("work_orders?status=neq.completed&select=id,code,title,description,priority,status,category,due_date,brand_id"),
+  const internalRoles = [
+    "admin",
+    "directora",
+    "cuentas",
+    "medios",
+    "creativo",
+    "disenador",
+    "editor",
+    "generador",
+    "community",
+    "pauta",
+    "operaciones",
+    "ejecutivo",
+  ].join(",");
+
+  const [profilesResponse, ordersResponse, brandsResponse, assigneesResponse] = await Promise.all([
+    supabaseRequest(`profiles?is_active=eq.true&role=in.(${internalRoles})&select=id,full_name,email,role`),
+    supabaseRequest("work_orders?select=id,code,title,description,priority,status,category,due_date,brand_id"),
     supabaseRequest("brands?is_active=eq.true&select=id,name"),
-    supabaseRequest("brand_memberships?select=user_id,brand_id"),
-    supabaseRequest("brand_responsibilities?select=user_id,brand_id,responsibility_role"),
+    supabaseRequest("work_order_assignees?select=work_order_id,user_id"),
   ]);
 
   if (!profilesResponse.ok) return jsonResponse({ error: await profilesResponse.text() }, 500);
   if (!ordersResponse.ok) return jsonResponse({ error: await ordersResponse.text() }, 500);
   if (!brandsResponse.ok) return jsonResponse({ error: await brandsResponse.text() }, 500);
-  if (!membershipsResponse.ok) return jsonResponse({ error: await membershipsResponse.text() }, 500);
+  if (!assigneesResponse.ok) return jsonResponse({ error: await assigneesResponse.text() }, 500);
 
-  const profiles = (await profilesResponse.json()) as Profile[];
+  const profiles = ((await profilesResponse.json()) as Profile[]).filter((profile) => profile.email);
   const orders = (await ordersResponse.json()) as WorkOrder[];
   const brands = (await brandsResponse.json()) as Brand[];
-  const memberships = (await membershipsResponse.json()) as BrandMembership[];
-  const responsibilities = responsibilitiesResponse.ok
-    ? ((await responsibilitiesResponse.json()) as BrandResponsibility[])
-    : [];
-  const openOrders = orders.filter((order) => order.status !== "completed" && order.status !== "cancelled");
+  const assignees = (await assigneesResponse.json()) as WorkOrderAssignee[];
+  const openOrders = orders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.due_date) < 0);
-  const subject = "Lumen Workspace - carga semanal de tu equipo";
+  const subject = "Lumen Workspace - tus OTs de la semana";
   const appUrl = getAppUrl(request);
-  const allBrandIds = new Set(brands.map((brand) => brand.id));
 
-  function profileBrandIds(profile: Profile) {
-    if (["admin", "directora"].includes(profile.role)) return allBrandIds;
-    const scopedIds = new Set<string>();
-
-    responsibilities
-      .filter(
-        (responsibility) =>
-          responsibility.user_id === profile.id &&
-          ["cuentas", "direccion", "directora"].includes(responsibility.responsibility_role),
-      )
-      .forEach((responsibility) => scopedIds.add(responsibility.brand_id));
-
-    memberships
-      .filter((membership) => membership.user_id === profile.id)
-      .forEach((membership) => scopedIds.add(membership.brand_id));
-
-    return scopedIds;
+  function profileAssignedOrders(profile: Profile) {
+    const orderIds = new Set(
+      assignees
+        .filter((assignee) => assignee.user_id === profile.id)
+        .map((assignee) => assignee.work_order_id),
+    );
+    return orders.filter((order) => orderIds.has(order.id));
   }
 
   const notifications = profiles.map((profile) => {
-    const brandIds = profileBrandIds(profile);
-    const scopedOrders = orders.filter((order) => brandIds.has(order.brand_id));
+    const scopedOrders = profileAssignedOrders(profile);
     return {
       brand_id: null,
       work_order_id: null,
@@ -375,11 +390,19 @@ Deno.serve(async (request) => {
       recipient_email: profile.email,
       notification_type: "weekly_digest",
       subject,
-      html_body: buildDigestHtml(scopedOrders, brands, appUrl),
+      html_body: buildDigestHtml(profile, scopedOrders, brands, appUrl),
       status: "queued",
       scheduled_for: new Date().toISOString(),
     };
   });
+
+  if (!notifications.length) {
+    return jsonResponse({
+      queued: 0,
+      open_orders: openOrders.length,
+      overdue_orders: overdueOrders.length,
+    });
+  }
 
   const insertNotifications = await supabaseRequest("email_notifications", {
     method: "POST",

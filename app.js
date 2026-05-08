@@ -381,6 +381,13 @@ const notificationRules = [
     enabled: true,
   },
   {
+    id: "work-order-edits",
+    title: "Cambios y subtareas en OT",
+    channel: "Correo inmediato",
+    recipients: "Responsables de la orden",
+    enabled: true,
+  },
+  {
     id: "overdue",
     title: "OT vencida",
     channel: "Correo + aviso dentro del sistema",
@@ -389,9 +396,9 @@ const notificationRules = [
   },
   {
     id: "weekly-digest",
-    title: "Digest semanal de carga",
+    title: "Digest semanal personal",
     channel: "Correo",
-    recipients: "Direccion y Cuentas, segun sus marcas",
+    recipients: "Cada persona interna con sus OTs asignadas",
     enabled: true,
   },
   {
@@ -414,7 +421,7 @@ const weeklyDigestConfig = {
   day: "Lunes",
   time: "08:00",
   timezone: "America/Mexico_City",
-  subject: "Lumen Workspace - carga semanal de tu equipo",
+  subject: "Lumen Workspace - tus OTs de la semana",
 };
 
 const workOrderManagerRoles = ["admin", "directora", "cuentas"];
@@ -2987,15 +2994,19 @@ function renderNotifications() {
           </div>
           <div class="mini-card">
             <strong>4. Resumen semanal</strong>
-            <span class="muted">Direccion y Cuentas reciben carga laboral de sus marcas todos los lunes.</span>
+            <span class="muted">Cada persona interna recibe sus OTs asignadas todos los lunes, con foco semanal y mensual.</span>
           </div>
           <div class="mini-card">
-            <strong>5. Matriz mensual</strong>
+            <strong>5. Cambios y subtareas</strong>
+            <span class="muted">Al editar responsables, brief, subtareas, estado o materiales, los responsables reciben aviso por correo.</span>
+          </div>
+          <div class="mini-card">
+            <strong>6. Matriz mensual</strong>
             <span class="muted">El 25 se crean OTs para la matriz de contenido del mes objetivo, excepto Proyectos, Pitch y Constructivos.</span>
             <button class="button-ghost small" data-action="run-monthly-content-matrix">Probar matrices</button>
           </div>
           <div class="mini-card">
-            <strong>6. Colocacion de pauta</strong>
+            <strong>7. Colocacion de pauta</strong>
             <span class="muted">Se crean OTs de pauta para marcas activas, excepto Constructivos, Lumen, Proyectos y Pitch.</span>
             <button class="button-ghost small" data-action="run-monthly-paid-placement">Probar pauta</button>
           </div>
@@ -4868,6 +4879,19 @@ function workOrderRecipientUsers(order, assigneeIds = orderAssignees(order)) {
   return users.filter((user) => assigneeIds.includes(user.id) && user.email && user.isActive !== false);
 }
 
+function describeListChanges(label, previousItems = [], nextItems = [], gender = "f") {
+  const previousSet = new Set(previousItems.map(plainText));
+  const nextSet = new Set(nextItems.map(plainText));
+  const added = nextItems.filter((item) => !previousSet.has(plainText(item)));
+  const removed = previousItems.filter((item) => !nextSet.has(plainText(item)));
+  const addedWord = gender === "m" ? "agregado" : "agregada";
+  const removedWord = gender === "m" ? "eliminado" : "eliminada";
+  return [
+    ...added.map((item) => `${label} ${addedWord}: ${item}`),
+    ...removed.map((item) => `${label} ${removedWord}: ${item}`),
+  ];
+}
+
 function describeWorkOrderChanges(order, values = {}, uploadedCount = 0) {
   const changes = [];
   if (values.title && values.title !== order.title) changes.push(`Titulo: ${order.title} -> ${values.title}`);
@@ -4878,7 +4902,28 @@ function describeWorkOrderChanges(order, values = {}, uploadedCount = 0) {
     changes.push(`Prioridad: ${workOrderPriorityLabels[order.priority] || order.priority} -> ${workOrderPriorityLabels[values.priority] || values.priority}`);
   }
   if (values.dueDate && values.dueDate !== order.dueDate) changes.push(`Deadline: ${formatDate(order.dueDate)} -> ${formatDate(values.dueDate)}`);
-  if (values.description && values.description !== (order.description || "")) changes.push("Descripcion, subtareas o cambios de materiales actualizados");
+  if (Array.isArray(values.assignees)) {
+    const previousAssignees = orderAssignees(order);
+    const addedAssignees = values.assignees.filter((userId) => !previousAssignees.includes(userId));
+    const removedAssignees = previousAssignees.filter((userId) => !values.assignees.includes(userId));
+    if (addedAssignees.length) changes.push(`Responsables agregados: ${addedAssignees.map(userName).join(", ")}`);
+    if (removedAssignees.length) changes.push(`Responsables removidos: ${removedAssignees.map(userName).join(", ")}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, "description") && values.description !== (order.description || "")) {
+    const previousDescription = splitWorkOrderDescription(order.description || "");
+    const nextDescription = splitWorkOrderDescription(values.description);
+    const descriptionChanges = [
+      ...describeListChanges("Subtarea", previousDescription.subtasks, nextDescription.subtasks),
+      ...describeListChanges("Cambio de material", previousDescription.materialChanges, nextDescription.materialChanges, "m"),
+    ];
+    if (plainText(previousDescription.description) !== plainText(nextDescription.description)) {
+      changes.push("Brief o descripcion principal actualizada");
+    }
+    changes.push(...descriptionChanges);
+    if (!descriptionChanges.length && plainText(previousDescription.description) === plainText(nextDescription.description)) {
+      changes.push("Descripcion, subtareas o cambios de materiales actualizados");
+    }
+  }
   if (uploadedCount) changes.push(`${uploadedCount} material${uploadedCount === 1 ? "" : "es"} agregado${uploadedCount === 1 ? "" : "s"}`);
   return changes;
 }
@@ -4923,7 +4968,13 @@ function buildWorkOrderUpdateEmail(order, changes, uploadedCount = 0) {
 
           ${
             parsedDescription.materialChanges.length
-              ? `<div style="margin-bottom:20px;font-size:15px;line-height:1.55;"><strong>Cambios de materiales:</strong> ${escapeHtml(parsedDescription.materialChanges.join(" / "))}</div>`
+              ? `<div style="margin-bottom:12px;font-size:15px;line-height:1.55;"><strong>Cambios de materiales:</strong> ${escapeHtml(parsedDescription.materialChanges.join(" / "))}</div>`
+              : ""
+          }
+
+          ${
+            parsedDescription.subtasks.length
+              ? `<div style="margin-bottom:20px;font-size:15px;line-height:1.55;"><strong>Subtareas actuales:</strong> ${escapeHtml(parsedDescription.subtasks.join(" / "))}</div>`
               : ""
           }
 
@@ -5227,11 +5278,13 @@ function editWorkOrder(id) {
   state.viewingWorkOrderId = id;
   state.focusedWorkOrderId = id;
   showToast(`Editando ${id}`);
+  render();
 }
 
 function cancelEditWorkOrder() {
   state.editingWorkOrderId = "";
   showToast("Edicion cancelada");
+  render();
 }
 
 async function updateWorkOrderFromForm() {
