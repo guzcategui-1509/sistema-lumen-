@@ -657,6 +657,7 @@ const state = {
   focusedWorkOrderId: "",
   dashboardMonth: "",
   workOrderMonth: "",
+  showArchivedWorkOrders: false,
   reportMonth: "",
   reportStartDate: "",
   reportEndDate: "",
@@ -826,6 +827,7 @@ function mapDbWorkOrder(row) {
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    archivedAt: row.archived_at || null,
     notifyOnEmail: row.notify_on_email,
     linkedContentId: null,
   };
@@ -1232,9 +1234,12 @@ function visibleContentItems(brandId = state.currentBrandId) {
   });
 }
 
-function brandOrders(brandId = state.currentBrandId) {
-  if (isAllBrandsScope(brandId)) return workOrders;
-  return workOrders.filter((order) => order.brandId === brandId);
+function brandOrders(brandId = state.currentBrandId, options = {}) {
+  const scopedOrders = isAllBrandsScope(brandId)
+    ? workOrders
+    : workOrders.filter((order) => order.brandId === brandId);
+  const includeArchived = options.includeArchived ?? false;
+  return includeArchived ? scopedOrders : scopedOrders.filter((order) => !isArchivedWorkOrder(order));
 }
 
 function orderAssignees(order) {
@@ -1380,6 +1385,7 @@ function wasCompletedLate(order) {
 }
 
 function workOrderUrgency(order) {
+  if (isArchivedWorkOrder(order)) return { label: "Archivada", cls: "neutral" };
   if (order.status === "scheduled") return { label: "Programada", cls: "green" };
   if (order.status === "client_approved") return { label: "Aprobada por cliente", cls: "green" };
   if (order.status === "completed") return { label: "Entregada", cls: "blue" };
@@ -1402,12 +1408,16 @@ function nextWorkOrderStatus(order) {
   return next[order.status] || null;
 }
 
+function isArchivedWorkOrder(order) {
+  return Boolean(order.archivedAt);
+}
+
 function isOpenWorkOrder(order) {
-  return !["completed", "client_approved", "scheduled", "cancelled"].includes(order.status);
+  return !isArchivedWorkOrder(order) && !["completed", "client_approved", "scheduled", "cancelled"].includes(order.status);
 }
 
 function isDeliveredWorkOrder(order) {
-  return ["completed", "client_approved", "scheduled"].includes(order.status);
+  return !isArchivedWorkOrder(order) && ["completed", "client_approved", "scheduled"].includes(order.status);
 }
 
 function teamWorkload(userId, sourceOrders = workOrders) {
@@ -2577,7 +2587,8 @@ function renderWorkOrderDetailPanel(order) {
   const urgency = workOrderUrgency(order);
   const canManage = canManageWorkOrders();
   const canUploadMaterials = canUploadWorkOrderMaterials(order);
-  const nextStatus = nextWorkOrderStatus(order);
+  const archived = isArchivedWorkOrder(order);
+  const nextStatus = archived ? null : nextWorkOrderStatus(order);
 
   return `
     <section class="panel section work-order-detail-panel" data-order-detail="${escapeHtml(order.id)}">
@@ -2598,13 +2609,20 @@ function renderWorkOrderDetailPanel(order) {
               ? `<button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar a ${workOrderStatusLabels[nextStatus]}</button>`
               : ""
           }
+          ${
+            canManage
+              ? archived
+                ? `<button class="button-ghost small" data-action="unarchive-work-order" data-id="${order.id}">Restaurar</button>`
+                : `<button class="button-danger small" data-action="archive-work-order" data-id="${order.id}">Archivar</button>`
+              : ""
+          }
           <button class="button-ghost small" data-action="close-work-order-detail">Cerrar</button>
         </div>
       </div>
       <div class="work-order-detail-grid">
         <div class="detail-block">
           <span>Estado</span>
-          <strong>${escapeHtml(workOrderStatusLabels[order.status] || order.status)}</strong>
+          <strong>${archived ? "Archivada" : escapeHtml(workOrderStatusLabels[order.status] || order.status)}</strong>
         </div>
         <div class="detail-block">
           <span>Categoria</span>
@@ -2679,7 +2697,9 @@ function renderWorkOrderDetailPanel(order) {
 }
 
 function renderWorkOrders() {
-  const orders = brandOrders();
+  const allScopeOrders = brandOrders(state.currentBrandId, { includeArchived: true });
+  const archivedOrders = allScopeOrders.filter(isArchivedWorkOrder);
+  const orders = state.showArchivedWorkOrders ? archivedOrders : allScopeOrders.filter((order) => !isArchivedWorkOrder(order));
   const openOrders = orders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
   const emailOrders = openOrders.filter((order) => order.notifyOnEmail);
@@ -2687,14 +2707,14 @@ function renderWorkOrders() {
   const detailPanel = renderWorkOrderDetailPanel(selectedViewingOrder());
   const setupSection = renderWorkOrderSetupSection(allBrands);
   const timetable = renderWorkOrderMonthTimeline(orders);
-  const operationsPanel = renderWorkOrderOperationsPanel(orders, allBrands);
+  const operationsPanel = renderWorkOrderOperationsPanel(orders, allBrands, archivedOrders.length);
   return `
     ${allBrands ? renderAllBrandsHero() : renderBrandHero()}
     <section class="grid grid-4">
       ${renderMetric("OTs abiertas", openOrders.length, allBrands ? "Todas las marcas" : "No completadas")}
       ${renderMetric("Vencidas", overdueOrders.length, "Requieren seguimiento")}
       ${renderMetric("En revision", orders.filter((order) => order.status === "in_review").length, "Esperando validacion")}
-      ${renderMetric("Con email activo", emailOrders.length, "Notifican a responsables")}
+      ${renderMetric(state.showArchivedWorkOrders ? "Archivadas" : "Con email activo", state.showArchivedWorkOrders ? archivedOrders.length : emailOrders.length, state.showArchivedWorkOrders ? "Fuera del panel activo" : "Notifican a responsables")}
     </section>
     ${detailPanel}
     ${allBrands ? `${operationsPanel}${timetable}${setupSection}` : `${setupSection}${operationsPanel}${timetable}`}
@@ -2711,7 +2731,7 @@ function renderWorkOrderStatusSelect(order) {
   `;
 }
 
-function renderWorkOrderOperationsPanel(orders, allBrands) {
+function renderWorkOrderOperationsPanel(orders, allBrands, archivedCount = 0) {
   const sortedOrders = orders
     .slice()
     .sort((a, b) => {
@@ -2729,10 +2749,13 @@ function renderWorkOrderOperationsPanel(orders, allBrands) {
     <section class="panel section operations-panel">
       <div class="section-header">
         <div>
-          <h2 class="section-title">Panel operativo de OTs</h2>
-          <div class="small-muted">Cambia estados con selector, abre detalles y revisa deadlines sin usar kanban.</div>
+          <h2 class="section-title">${state.showArchivedWorkOrders ? "OTs archivadas" : "Panel operativo de OTs"}</h2>
+          <div class="small-muted">${state.showArchivedWorkOrders ? "Ordenes fuera del flujo activo. Puedes restaurarlas cuando vuelvan a moverse." : "Cambia estados con selector, abre detalles y archiva lo que ya no debe aparecer en el panel."}</div>
         </div>
         <div class="row wrap">
+          <button class="button-ghost small" data-action="toggle-archived-work-orders">
+            ${state.showArchivedWorkOrders ? "Ocultar archivadas" : `Ver archivadas (${archivedCount})`}
+          </button>
           <button class="button-ghost small" data-module="team">Ver carga equipo</button>
           <button class="button-ghost small" data-module="notifications">Reglas email</button>
         </div>
@@ -2748,6 +2771,10 @@ function renderWorkOrderOperationsPanel(orders, allBrands) {
             `,
           )
           .join("")}
+        <div class="status-summary-card status-archived">
+          <strong>${archivedCount}</strong>
+          <span>Archivadas</span>
+        </div>
       </div>
       <div class="operations-list">
         ${
@@ -2766,8 +2793,9 @@ function renderOperationOrderRow(order, allBrands) {
   const urgency = workOrderUrgency(order);
   const brand = getBrand(order.brandId);
   const canManage = canManageWorkOrders();
+  const archived = isArchivedWorkOrder(order);
   return `
-    <article class="operation-order-row ${order.id === state.focusedWorkOrderId ? "focused-row" : ""}">
+    <article class="operation-order-row ${order.id === state.focusedWorkOrderId ? "focused-row" : ""} ${archived ? "archived-row" : ""}">
       <button class="operation-order-main" data-action="view-work-order" data-id="${order.id}">
         <span class="status-dot ${urgency.cls}"></span>
         <span>
@@ -2790,10 +2818,17 @@ function renderOperationOrderRow(order, allBrands) {
         ${
           canManage
             ? `
-              ${renderWorkOrderStatusSelect(order)}
-              <button class="button small" data-action="update-order-status" data-id="${order.id}">Guardar</button>
+              ${
+                archived
+                  ? `<button class="button small" data-action="unarchive-work-order" data-id="${order.id}">Restaurar</button>`
+                  : `
+                    ${renderWorkOrderStatusSelect(order)}
+                    <button class="button small" data-action="update-order-status" data-id="${order.id}">Guardar</button>
+                    <button class="button-ghost small" data-action="archive-work-order" data-id="${order.id}">Archivar</button>
+                  `
+              }
             `
-            : `<span class="badge blue">${escapeHtml(workOrderStatusLabels[order.status] || order.status)}</span>`
+            : `<span class="badge blue">${archived ? "Archivada" : escapeHtml(workOrderStatusLabels[order.status] || order.status)}</span>`
         }
       </div>
     </article>
@@ -2807,7 +2842,8 @@ function renderOrderCard(order) {
   const isFocused = order.id === state.focusedWorkOrderId;
   const canManage = canManageWorkOrders();
   const canUploadMaterials = canUploadWorkOrderMaterials(order);
-  const nextStatus = nextWorkOrderStatus(order);
+  const archived = isArchivedWorkOrder(order);
+  const nextStatus = archived ? null : nextWorkOrderStatus(order);
   const parsedDescription = splitWorkOrderDescription(order.description || "");
   return `
     <div class="mini-card ${isFocused ? "focused-card" : ""}" data-order-card="${escapeHtml(order.id)}">
@@ -2896,6 +2932,11 @@ function renderOrderCard(order) {
                 nextStatus
                   ? `<button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar a ${workOrderStatusLabels[nextStatus]}</button>`
                   : ""
+              }
+              ${
+                archived
+                  ? `<button class="button-ghost small" data-action="unarchive-work-order" data-id="${order.id}">Restaurar</button>`
+                  : `<button class="button-ghost small" data-action="archive-work-order" data-id="${order.id}">Archivar</button>`
               }
               <button class="button-danger small" data-action="send-urgent-alert" data-id="${order.id}">Alerta urgente</button>
             `
@@ -4393,6 +4434,9 @@ async function handleAction(action, id) {
     "update-work-order": () => updateWorkOrderFromForm(),
     "update-order-status": () => updateOrderStatusFromSelect(id),
     "advance-order": () => advanceWorkOrder(id),
+    "archive-work-order": () => archiveWorkOrder(id),
+    "unarchive-work-order": () => unarchiveWorkOrder(id),
+    "toggle-archived-work-orders": () => toggleArchivedWorkOrders(),
     "upload-order-materials": () => uploadOrderMaterials(id),
     "open-work-order-file": () => openWorkOrderFile(id),
     "send-urgent-alert": () => sendUrgentWorkOrderAlert(id),
@@ -5569,6 +5613,74 @@ async function advanceWorkOrder(id) {
   }
 
   await setWorkOrderStatus(order, nextStatus);
+}
+
+function archiveMigrationMessage(message = "") {
+  return message.includes("archived_at") || message.includes("column")
+    ? "Falta activar archivo de OTs en Supabase: ejecuta supabase/patch_work_order_archive.sql"
+    : "";
+}
+
+function toggleArchivedWorkOrders() {
+  state.showArchivedWorkOrders = !state.showArchivedWorkOrders;
+  state.editingWorkOrderId = "";
+  state.viewingWorkOrderId = "";
+  state.focusedWorkOrderId = "";
+  showToast(state.showArchivedWorkOrders ? "Mostrando OTs archivadas" : "Mostrando panel activo");
+}
+
+async function setWorkOrderArchived(id, shouldArchive) {
+  if (!canManageWorkOrders()) {
+    showToast("Solo Direccion o Cuentas puede archivar ordenes");
+    return;
+  }
+  const order = workOrders.find((candidate) => candidate.id === id);
+  if (!order) return;
+  if (isArchivedWorkOrder(order) === shouldArchive) {
+    showToast(shouldArchive ? "Esta OT ya esta archivada" : "Esta OT ya esta activa");
+    return;
+  }
+  const archivedAt = shouldArchive ? new Date().toISOString() : null;
+
+  if (isSupabaseMode()) {
+    const { error } = await supabaseClient
+      .from("work_orders")
+      .update({ archived_at: archivedAt, updated_at: new Date().toISOString() })
+      .eq("id", order.dbId);
+    if (error) {
+      showToast(archiveMigrationMessage(error.message || "") || `No se pudo ${shouldArchive ? "archivar" : "restaurar"} la OT: ${error.message}`);
+      return;
+    }
+    await supabaseClient.from("work_order_activity").insert({
+      work_order_id: order.dbId,
+      actor_id: dataState.session?.user?.id,
+      action: shouldArchive ? "archived" : "unarchived",
+      details: { archived_at: archivedAt },
+    });
+    const updatedOrderForEmail = { ...order, archivedAt };
+    await queueWorkOrderUpdateEmails(
+      updatedOrderForEmail,
+      [shouldArchive ? "OT archivada y retirada del panel operativo" : "OT restaurada al panel operativo"],
+    );
+    await loadSupabaseData();
+  } else {
+    order.archivedAt = archivedAt;
+    order.updatedAt = new Date().toISOString();
+    saveWorkOrders();
+  }
+
+  state.editingWorkOrderId = "";
+  state.viewingWorkOrderId = "";
+  state.focusedWorkOrderId = shouldArchive ? "" : order.id;
+  showToast(shouldArchive ? `${order.id} archivada` : `${order.id} restaurada`);
+}
+
+async function archiveWorkOrder(id) {
+  await setWorkOrderArchived(id, true);
+}
+
+async function unarchiveWorkOrder(id) {
+  await setWorkOrderArchived(id, false);
 }
 
 function previewWeeklyDigest() {

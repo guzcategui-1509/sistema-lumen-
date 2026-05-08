@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS work_orders (
   due_date DATE,
   created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
   notify_on_email BOOLEAN DEFAULT true,
+  archived_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -206,6 +207,7 @@ CREATE INDEX IF NOT EXISTS idx_brand_memberships_user_id ON brand_memberships(us
 CREATE INDEX IF NOT EXISTS idx_brand_memberships_brand_id ON brand_memberships(brand_id);
 CREATE INDEX IF NOT EXISTS idx_work_orders_brand_status ON work_orders(brand_id, status);
 CREATE INDEX IF NOT EXISTS idx_work_orders_due_date ON work_orders(due_date);
+CREATE INDEX IF NOT EXISTS idx_work_orders_archived_at ON work_orders(archived_at);
 CREATE INDEX IF NOT EXISTS idx_work_order_assignees_user ON work_order_assignees(user_id);
 CREATE INDEX IF NOT EXISTS idx_work_order_assignees_order ON work_order_assignees(work_order_id);
 CREATE INDEX IF NOT EXISTS idx_work_order_files_order ON work_order_files(work_order_id);

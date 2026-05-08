@@ -15,6 +15,7 @@ type WorkOrder = {
   category: string;
   due_date: string | null;
   brand_id: string;
+  archived_at?: string | null;
 };
 
 type Brand = {
@@ -174,7 +175,7 @@ function deadlineLabel(dateValue: string | null) {
 }
 
 function isOpenWorkOrder(order: WorkOrder) {
-  return !["completed", "client_approved", "scheduled", "cancelled"].includes(order.status);
+  return !order.archived_at && !["completed", "client_approved", "scheduled", "cancelled"].includes(order.status);
 }
 
 function isDueThisMonth(dateValue: string | null) {
@@ -353,7 +354,7 @@ Deno.serve(async (request) => {
 
   const [profilesResponse, ordersResponse, brandsResponse, assigneesResponse] = await Promise.all([
     supabaseRequest(`profiles?is_active=eq.true&role=in.(${internalRoles})&select=id,full_name,email,role`),
-    supabaseRequest("work_orders?select=id,code,title,description,priority,status,category,due_date,brand_id"),
+    supabaseRequest("work_orders?select=*"),
     supabaseRequest("brands?is_active=eq.true&select=id,name"),
     supabaseRequest("work_order_assignees?select=work_order_id,user_id"),
   ]);
