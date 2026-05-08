@@ -1920,6 +1920,7 @@ tr:last-child td {
 .work-order-action-band.single,
 .work-order-form-band {
   display: grid;
+  grid-template-columns: 1fr;
   gap: 14px;
 }
 
