@@ -810,6 +810,7 @@ function mapDbWorkOrder(row) {
     size: file.file_size,
     type: file.file_type,
     storagePath: file.storage_path,
+    uploadedBy: file.uploaded_by,
   }));
   return {
     id: row.code,
@@ -848,7 +849,7 @@ async function loadSupabaseData() {
         `
           *,
           assignees:work_order_assignees(user_id),
-          files:work_order_files(id,file_name,file_type,file_size,storage_path)
+          files:work_order_files(id,file_name,file_type,file_size,storage_path,uploaded_by)
         `,
       )
       .order("due_date", { ascending: true }),
@@ -1280,6 +1281,14 @@ function canUploadWorkOrderMaterials(order = null) {
   if (["admin", "directora"].includes(role)) return true;
   const currentUser = users.find((user) => user.id === dataState.session?.user?.id);
   return order ? canUserAccessBrand(currentUser, order.brandId) : true;
+}
+
+function canDeleteWorkOrderFile(order, file) {
+  if (!isSupabaseMode()) return true;
+  if (!order || !file) return false;
+  if (canManageWorkOrders()) return true;
+  const currentUserId = dataState.session?.user?.id;
+  return Boolean(currentUserId && file.uploadedBy === currentUserId && canUploadWorkOrderMaterials(order));
 }
 
 function canRunOperationalEmail() {
@@ -2395,9 +2404,23 @@ function workOrderFileKey(order, file, index) {
   return file.id || file.storagePath || file.url || `${order.id}:${index}`;
 }
 
-function renderWorkOrderFileChip(order, file, index) {
+function renderWorkOrderFileChip(order, file, index, options = {}) {
   const key = workOrderFileKey(order, file, index);
   const type = file.type ? file.type.split("/").pop()?.toUpperCase() : "Archivo";
+  const canDelete = options.canDelete ?? false;
+  if (canDelete) {
+    return `
+      <span class="file-chip-group">
+        <button class="file-chip" data-action="open-work-order-file" data-id="${escapeHtml(key)}" title="Abrir ${escapeHtml(file.name)}">
+          <strong>${escapeHtml(file.name)}</strong>
+          <small>${escapeHtml(type || "Archivo")}</small>
+        </button>
+        <button class="file-delete-button" data-action="delete-work-order-file" data-id="${escapeHtml(key)}" title="Eliminar ${escapeHtml(file.name)}">
+          Eliminar
+        </button>
+      </span>
+    `;
+  }
   return `
     <button class="file-chip" data-action="open-work-order-file" data-id="${escapeHtml(key)}" title="Abrir ${escapeHtml(file.name)}">
       <strong>${escapeHtml(file.name)}</strong>
@@ -2551,8 +2574,9 @@ function renderWorkOrderForm(order = null) {
               <div class="field full">
                 <label>Archivos actuales</label>
                 <div class="file-list">
-                  ${files.map((file, index) => renderWorkOrderFileChip(order, file, index)).join("")}
+                  ${files.map((file, index) => renderWorkOrderFileChip(order, file, index, { canDelete: canDeleteWorkOrderFile(order, file) })).join("")}
                 </div>
+                <div class="field-help">Puedes abrir un archivo para revisarlo o eliminarlo si lo subiste por error.</div>
               </div>
             `
             : ""
@@ -2651,7 +2675,7 @@ function renderWorkOrderDetailPanel(order) {
         <div class="detail-readable-block">
           <h3>Archivos y materiales</h3>
           <div class="file-list">
-            ${files.map((file, index) => renderWorkOrderFileChip(order, file, index)).join("") || `<span class="muted">Sin archivos adjuntos</span>`}
+            ${files.map((file, index) => renderWorkOrderFileChip(order, file, index, { canDelete: canDeleteWorkOrderFile(order, file) })).join("") || `<span class="muted">Sin archivos adjuntos</span>`}
           </div>
           ${
             canUploadMaterials
@@ -4439,6 +4463,7 @@ async function handleAction(action, id) {
     "toggle-archived-work-orders": () => toggleArchivedWorkOrders(),
     "upload-order-materials": () => uploadOrderMaterials(id),
     "open-work-order-file": () => openWorkOrderFile(id),
+    "delete-work-order-file": () => deleteWorkOrderFile(id),
     "send-urgent-alert": () => sendUrgentWorkOrderAlert(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
     "queue-weekly-digest": () => queueWeeklyDigest(),
@@ -5532,6 +5557,63 @@ async function openWorkOrderFile(fileKey) {
   }
 
   showToast(`Archivo registrado: ${file.name}. Los archivos demo no tienen preview descargable.`);
+}
+
+async function deleteWorkOrderFile(fileKey) {
+  const match = findWorkOrderFile(fileKey);
+  if (!match) {
+    showToast("No encontre ese archivo en la OT");
+    return;
+  }
+  const { order, file, index } = match;
+  if (!canDeleteWorkOrderFile(order, file)) {
+    showToast("Solo Cuentas/Direccion o quien subio el archivo puede eliminarlo");
+    return;
+  }
+
+  const confirmed = window.confirm(`¿Eliminar "${file.name}" de ${order.id}? Esta accion no se puede deshacer.`);
+  if (!confirmed) return;
+
+  if (isSupabaseMode()) {
+    if (!file.id) {
+      showToast("Este archivo no tiene registro de Supabase");
+      return;
+    }
+
+    if (file.storagePath) {
+      const { error: storageError } = await supabaseClient.storage.from("work-order-files").remove([file.storagePath]);
+      if (storageError) {
+        showToast(`No se pudo borrar el archivo del storage: ${storageError.message}`);
+        return;
+      }
+    }
+
+    const { error: fileError } = await supabaseClient.from("work_order_files").delete().eq("id", file.id);
+    if (fileError) {
+      showToast(`No se pudo eliminar el registro del archivo: ${fileError.message}`);
+      return;
+    }
+
+    await supabaseClient.from("work_order_activity").insert({
+      work_order_id: order.dbId,
+      actor_id: dataState.session?.user?.id,
+      action: "file_deleted",
+      details: { file_name: file.name },
+    });
+    await queueWorkOrderUpdateEmails(order, [`Archivo eliminado: ${file.name}`], 0);
+    await loadSupabaseData();
+    showToast(`Archivo eliminado de ${order.id}`);
+    render();
+    return;
+  }
+
+  const files = orderFiles(order);
+  files.splice(index, 1);
+  order.files = files;
+  order.updatedAt = new Date().toISOString();
+  saveWorkOrders();
+  showToast(`Archivo eliminado de ${order.id}`);
+  render();
 }
 
 function statusMigrationMessage(message = "") {

@@ -606,6 +606,16 @@ ON storage.objects FOR DELETE
 TO authenticated
 USING (
   bucket_id = 'work-order-files'
-  AND public.current_app_role() IN ('admin', 'directora')
   AND public.can_access_brand(((storage.foldername(name))[1])::uuid)
+  AND (
+    public.current_app_role() IN ('admin', 'directora', 'cuentas')
+    OR EXISTS (
+      SELECT 1
+      FROM public.work_order_files wof
+      JOIN public.work_orders wo ON wo.id = wof.work_order_id
+      WHERE wof.storage_path = name
+      AND wo.brand_id = ((storage.foldername(name))[1])::uuid
+      AND wof.uploaded_by = auth.uid()
+    )
+  )
 );
