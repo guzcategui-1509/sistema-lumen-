@@ -17,6 +17,7 @@
   --purple: #7356a6;
   --shadow: 0 10px 30px rgba(45, 45, 45, 0.08);
   --radius: 8px;
+  --radius-lg: 8px;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -1706,6 +1707,67 @@ tr:last-child td {
   background: #ffffff;
 }
 
+.gate-panel,
+.urgent-planner-panel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fafaf8;
+}
+
+.gate-panel.active {
+  border-color: rgba(183, 121, 31, 0.32);
+  background: #fff9ed;
+  box-shadow: inset 5px 0 0 #f2c36b;
+}
+
+.gate-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius);
+  background: var(--navy);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.gate-panel p,
+.urgent-planner-panel p {
+  margin: 4px 0 8px;
+}
+
+.urgent-planner-panel {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.55fr) auto;
+  border-color: rgba(200, 78, 72, 0.2);
+  background: #fff8f7;
+}
+
+.urgent-planner-panel h3 {
+  margin: 7px 0 4px;
+  font-size: 18px;
+}
+
+.urgent-plan-preview {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid rgba(200, 78, 72, 0.18);
+  border-radius: var(--radius);
+  background: #ffffff;
+}
+
+.urgent-plan-preview span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .assignee-picker {
   display: grid;
   gap: 8px;
@@ -1754,7 +1816,7 @@ tr:last-child td {
 
 .assignee-option {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   gap: 9px;
   align-items: start;
   min-height: auto;
@@ -1965,6 +2027,16 @@ tr:last-child td {
   font-size: 12px;
 }
 
+.assignee-tag {
+  justify-self: end;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #fff3da;
+  color: #8a5a12;
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .digest-mini-metrics strong {
   color: var(--ink);
   font-size: 22px;
@@ -2004,6 +2076,14 @@ tr:last-child td {
 .compact-brand-selection .brand-shortcut {
   min-height: 76px;
   padding: 11px;
+}
+
+.brand-selection-wide .panel {
+  width: 100%;
+}
+
+.brand-selection-wide .brand-shortcut-grid {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
 }
 
 .work-order-form-band > .panel {
@@ -2175,6 +2255,139 @@ tr:last-child td {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+.section-header.compact {
+  align-items: flex-start;
+}
+
+.urgent-order-banner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid rgba(200, 78, 72, 0.28);
+  border-radius: var(--radius);
+  background: #fff2ef;
+  box-shadow: inset 6px 0 0 var(--red);
+}
+
+.urgent-order-banner h3,
+.urgent-order-banner p {
+  margin: 0;
+}
+
+.urgent-order-banner h3 {
+  margin-top: 7px;
+  font-size: 20px;
+}
+
+.urgent-order-banner p {
+  color: #70423f;
+  line-height: 1.45;
+}
+
+.stage-control {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.stage-control button {
+  min-height: 52px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fafaf8;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.stage-control button.active {
+  border-color: rgba(73, 238, 140, 0.65);
+  background: #edfff4;
+  color: #176339;
+  box-shadow: inset 0 -4px 0 var(--green);
+}
+
+.stage-control button:not(.active):hover {
+  border-color: var(--green);
+  color: var(--ink);
+}
+
+.process-timeline-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fafaf8;
+}
+
+.process-timeline {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.process-step {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-height: 150px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+  color: var(--muted);
+}
+
+.process-step.done {
+  border-color: rgba(73, 238, 140, 0.38);
+  background: #f4fff8;
+}
+
+.process-step.active {
+  border-color: rgba(21, 122, 68, 0.48);
+  background: #edfff4;
+  color: var(--ink);
+  box-shadow: inset 0 4px 0 var(--green);
+}
+
+.process-step.blocked {
+  opacity: 0.68;
+}
+
+.process-step-index {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #f0f1ee;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.process-step.done .process-step-index,
+.process-step.active .process-step-index {
+  background: var(--navy);
+  color: #ffffff;
+}
+
+.process-step strong {
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+.process-step p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .detail-block,
@@ -2415,14 +2628,23 @@ tr:last-child td {
     grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   }
 
-  .workflow-steps {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+	  .workflow-steps {
+	    grid-template-columns: repeat(4, minmax(0, 1fr));
+	  }
+
+  .process-timeline,
+  .stage-control {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .operation-order-row {
+  .urgent-planner-panel {
     grid-template-columns: 1fr;
-    align-items: start;
   }
+
+	  .operation-order-row {
+	    grid-template-columns: 1fr;
+	    align-items: start;
+	  }
 
   .operation-status-control {
     justify-content: flex-start;
@@ -2515,8 +2737,13 @@ tr:last-child td {
   .brand-check-list,
   .brand-report-row,
   .report-team-row,
-  .work-order-detail-grid,
-  .notification-guide-grid,
+	  .work-order-detail-grid,
+    .process-timeline,
+    .stage-control,
+    .gate-panel,
+    .urgent-planner-panel,
+    .urgent-order-banner,
+	  .notification-guide-grid,
   .brand-shortcut-grid,
   .timeline-day,
   .digest-mini-metrics,

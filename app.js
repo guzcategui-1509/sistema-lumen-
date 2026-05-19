@@ -388,6 +388,20 @@ const notificationRules = [
     enabled: true,
   },
   {
+    id: "supervisor-gate",
+    title: "Revision de jefe inmediato",
+    channel: "Correo inmediato",
+    recipients: "Direccion/Cuentas por marca",
+    enabled: true,
+  },
+  {
+    id: "urgent-alert",
+    title: "Alerta de urgencia",
+    channel: "Correo prioritario",
+    recipients: "Direccion y Cuentas",
+    enabled: true,
+  },
+  {
     id: "overdue",
     title: "OT vencida",
     channel: "Correo + aviso dentro del sistema",
@@ -427,6 +441,89 @@ const weeklyDigestConfig = {
 const workOrderManagerRoles = ["admin", "directora", "cuentas"];
 const workOrderCreatorRoles = ["admin", "directora", "cuentas", "generador", "creativo"];
 const workOrderMaterialRoles = ["admin", "directora", "cuentas", "generador", "creativo", "disenador", "editor"];
+
+const supervisorGateCategories = ["diseno", "arte_final", "edicion", "produccion"];
+
+const lumenProcessAreas = {
+  diseno: {
+    label: "Diseño / Creatividad",
+    supervisorRoles: ["directora", "creativo", "cuentas"],
+    executionRoles: ["disenador", "creativo", "editor"],
+    steps: [
+      ["Brief validado", "Cuentas confirma objetivo, target, entregables, fechas y presupuesto."],
+      ["Asignacion de jefe", "Direccion/Creatividad revisa la OT, asigna responsable y ajusta deadline."],
+      ["Concepto y diseño", "Creativo/Diseño desarrolla propuesta visual alineada al brief."],
+      ["Revision interna", "Director de Arte o responsable valida calidad antes de cliente."],
+      ["Cliente / cambios", "Cuentas presenta, recibe feedback y centraliza ajustes."],
+      ["Entrega y cierre", "Se entregan versiones finales y Cuentas cierra oficialmente la OT."],
+    ],
+  },
+  arte_final: {
+    label: "Arte final",
+    supervisorRoles: ["directora", "creativo", "cuentas"],
+    executionRoles: ["disenador", "editor"],
+    steps: [
+      ["Brief y propuesta aprobada", "La solicitud entra con material o propuesta ya aprobada."],
+      ["Asignacion de jefe", "Direccion/Creatividad confirma responsable y tiempo de entrega."],
+      ["Adaptaciones", "Arte final prepara formatos, resoluciones y versiones."],
+      ["Revision interna", "Se valida que el material este listo para medios o cliente."],
+      ["Ajustes finales", "Se corrigen observaciones puntuales antes de entrega."],
+      ["Entrega y archivo", "Se suben finales a carpeta y se marca cierre."],
+    ],
+  },
+  edicion: {
+    label: "Edicion / Post",
+    supervisorRoles: ["directora", "operaciones", "creativo", "cuentas"],
+    executionRoles: ["editor", "generador", "creativo"],
+    steps: [
+      ["Brief o matriz aprobada", "La edicion parte de materiales e instrucciones aprobadas."],
+      ["Asignacion de jefe", "Produccion/Operacion asigna editor y deadline realista."],
+      ["Primer corte", "Editor procesa materiales y arma version inicial."],
+      ["Revision interna", "Responsable del proyecto revisa ritmo, copy, musica y formatos."],
+      ["Cambios", "Se aplica una ronda ordenada de ajustes."],
+      ["Entrega final", "Se exportan y suben archivos optimizados."],
+    ],
+  },
+  produccion: {
+    label: "Produccion",
+    supervisorRoles: ["directora", "operaciones", "cuentas"],
+    executionRoles: ["operaciones", "generador", "editor"],
+    steps: [
+      ["Solicitud de produccion", "Cuentas, Creatividad o Digital registra necesidad y brief."],
+      ["Asignacion de responsable", "Director/Operaciones asigna responsable, equipo y fecha."],
+      ["Diseño de produccion", "Se define locacion, props, shotlist, equipo y plan."],
+      ["Produccion de materiales", "Generador/equipo captura los materiales."],
+      ["Edicion y revision", "Post produce entregables y responsable valida."],
+      ["Entrega al cliente", "Cuentas entrega y cierra formalmente."],
+    ],
+  },
+  pauta: {
+    label: "Pauta digital",
+    supervisorRoles: ["directora", "cuentas", "pauta"],
+    executionRoles: ["pauta", "medios"],
+    steps: [
+      ["Brief de pauta", "Cuentas entrega objetivos, presupuesto, target, fechas y canales."],
+      ["Planeacion", "Pauta define canales, audiencias, KPIs y distribucion de presupuesto."],
+      ["Aprobacion", "Cliente aprueba plan antes de implementar."],
+      ["Implementacion", "Se configura pixel, campañas, ad sets y anuncios."],
+      ["Optimizacion", "Trafico monitorea y documenta ajustes."],
+      ["Reporte final", "Se entrega performance y aprendizajes."],
+    ],
+  },
+  matriz: {
+    label: "Matriz / Digital",
+    supervisorRoles: ["directora", "cuentas", "creativo"],
+    executionRoles: ["generador", "creativo", "community"],
+    steps: [
+      ["Brief mensual", "Cuentas entrega informacion del mes y prioridades."],
+      ["Estrategia", "Digital/Creatividad define pilares, angulos y KPIs."],
+      ["Desarrollo de matriz", "Generador/Community arma estructura y copys."],
+      ["Revision interna", "Una ronda interna valida calidad y enfoque."],
+      ["Calendario", "Se monta calendario para aprobacion."],
+      ["Aprobacion y cierre", "Cliente aprueba y se programa o entrega."],
+    ],
+  },
+};
 
 const productions = [
   {
@@ -723,6 +820,7 @@ const workOrderCategoryOptions = {
   cotizacion: "Cotizacion",
   diseno: "Diseno",
   edicion: "Edicion",
+  produccion: "Produccion",
 };
 
 const legacyWorkOrderCategoryLabels = {
@@ -1437,6 +1535,116 @@ function teamWorkload(userId, sourceOrders = workOrders) {
   return { assigned, open, overdue, review };
 }
 
+function workOrderProcessArea(category = "diseno") {
+  const aliases = {
+    campana: "diseno",
+    dinamica_digital: "matriz",
+    copy: "matriz",
+    propuesta: "diseno",
+    cotizacion: "pauta",
+    otro: "diseno",
+  };
+  return lumenProcessAreas[category] || lumenProcessAreas[aliases[category]] || lumenProcessAreas.diseno;
+}
+
+function requiresSupervisorGate(category = "diseno") {
+  return supervisorGateCategories.includes(category);
+}
+
+function usersForBrandByRoles(roles = [], brandId = state.currentBrandId) {
+  const roleSet = new Set(roles);
+  return activeUsers()
+    .filter((user) => user.role !== "cliente" && roleSet.has(user.role) && user.email && canUserAccessBrand(user, brandId))
+    .sort((a, b) => {
+      const aLoad = workloadScoreForUser(a.id);
+      const bLoad = workloadScoreForUser(b.id);
+      return aLoad - bLoad || a.name.localeCompare(b.name);
+    });
+}
+
+function supervisorCandidates(category = "diseno", brandId = state.currentBrandId) {
+  const area = workOrderProcessArea(category);
+  const candidates = usersForBrandByRoles(area.supervisorRoles, brandId);
+  if (candidates.length) return candidates;
+  return usersForBrandByRoles(["admin", "directora", "cuentas"], brandId);
+}
+
+function executionCandidates(category = "diseno", brandId = state.currentBrandId) {
+  const area = workOrderProcessArea(category);
+  const candidates = usersForBrandByRoles(area.executionRoles, brandId);
+  if (candidates.length) return candidates;
+  return activeUsers().filter((user) => user.role !== "cliente" && canUserAccessBrand(user, brandId));
+}
+
+function workloadScoreForUser(userId, sourceOrders = workOrders) {
+  const workload = teamWorkload(userId, sourceOrders);
+  const dueSoon = workload.open.filter((order) => daysUntil(order.dueDate) <= 2).length;
+  const urgent = workload.open.filter((order) => order.priority === "high").length;
+  return workload.open.length * 2 + workload.overdue.length * 5 + workload.review.length * 2 + dueSoon * 2 + urgent * 3;
+}
+
+function workloadLabelForUser(userId) {
+  const workload = teamWorkload(userId);
+  return `${workload.open.length} abiertas / ${workload.overdue.length} vencidas`;
+}
+
+function addBusinessDays(startDate, amount) {
+  const date = new Date(startDate);
+  let added = 0;
+  while (added < amount) {
+    date.setDate(date.getDate() + 1);
+    const day = date.getDay();
+    if (day !== 0 && day !== 6) added += 1;
+  }
+  return date;
+}
+
+function urgentWorkOrderPlan({ category = "diseno", brandId = state.currentBrandId, priority = "medium" } = {}) {
+  const candidates = executionCandidates(category, brandId);
+  const ranked = candidates
+    .map((user) => ({
+      user,
+      score: workloadScoreForUser(user.id),
+      workload: teamWorkload(user.id),
+    }))
+    .sort((a, b) => a.score - b.score || a.user.name.localeCompare(b.user.name));
+  const best = ranked[0] || null;
+  const baseDaysByCategory = {
+    arte_final: 1,
+    edicion: 2,
+    diseno: 2,
+    produccion: 3,
+    matriz: 3,
+    pauta: 2,
+  };
+  const loadDelay = best ? Math.min(4, Math.floor(best.score / 5)) : 2;
+  const baseDays = baseDaysByCategory[category] || 2;
+  const days = Math.max(1, priority === "high" ? baseDays + loadDelay : baseDays + loadDelay + 1);
+  const dueDate = isoDateFromDate(addBusinessDays(todayAtNoon(), days));
+  return {
+    candidate: best?.user || null,
+    candidateScore: best?.score || 0,
+    candidates: ranked.slice(0, 4),
+    dueDate,
+    reason: best
+      ? `${best.user.name} tiene ${best.workload.open.length} abiertas, ${best.workload.review.length} en revision y ${best.workload.overdue.length} vencidas.`
+      : "No hay responsables disponibles para esta marca; deja la OT en revision de jefe.",
+  };
+}
+
+function processStepIndex(order) {
+  if (!order || order.status === "cancelled") return -1;
+  const statusMap = {
+    new: 1,
+    in_progress: 2,
+    in_review: 3,
+    completed: 4,
+    client_approved: 5,
+    scheduled: 5,
+  };
+  return statusMap[order.status] ?? 0;
+}
+
 function weeklyDigestRows(sourceOrders = workOrders) {
   return internalUsers().map((user) => {
     const workload = teamWorkload(user.id, sourceOrders);
@@ -1777,7 +1985,7 @@ function renderAllBrandsDashboard() {
     .slice()
     .sort((a, b) => daysUntil(a.dueDate) - daysUntil(b.dueDate))
     .slice(0, 6);
-  const teamRows = weeklyDigestRows()
+  const teamRows = weeklyDigestRows(scopedOrders)
     .sort((a, b) => b.overdue - a.overdue || b.open - a.open || a.user.name.localeCompare(b.user.name));
 
   return `
@@ -1819,7 +2027,7 @@ function renderAllBrandsDashboard() {
       <div class="panel section visual-panel">
         <div class="section-header">
           <h2 class="section-title">Flujo de OTs</h2>
-          <button class="button-ghost small" data-module="work-orders">Ver kanban</button>
+          <button class="button-ghost small" data-module="work-orders">Ver OTs</button>
         </div>
         <div class="status-board">
           ${statusRows
@@ -2007,7 +2215,7 @@ function renderDashboard() {
       <div class="panel section">
         <div class="section-header">
           <h2 class="section-title">OTs recientes</h2>
-          <button class="button-ghost small" data-module="work-orders">Ver kanban</button>
+          <button class="button-ghost small" data-module="work-orders">Ver OTs</button>
         </div>
         <div class="stack">
           ${orders
@@ -2126,7 +2334,7 @@ function renderWorkOrderSetupSection(allBrands) {
   }
 
   return `
-    <section class="work-order-action-band single compact-brand-selection">
+    <section class="work-order-action-band single compact-brand-selection brand-selection-wide">
       <div class="panel section">
         <div class="section-header">
           <div>
@@ -2597,6 +2805,135 @@ function renderWorkOrderAiAssistant(isEditing) {
   `;
 }
 
+function renderSupervisorGatePanelContent(category = "diseno", brandId = state.currentBrandId) {
+  const area = workOrderProcessArea(category);
+  const needsGate = requiresSupervisorGate(category);
+  const supervisors = supervisorCandidates(category, brandId).slice(0, 4);
+  return `
+    <div class="gate-panel ${needsGate ? "active" : ""}">
+      <div class="gate-icon">${needsGate ? "JD" : "OK"}</div>
+      <div>
+        <strong>${needsGate ? "Primero revisa jefe inmediato" : "Flujo directo"}</strong>
+        <p class="muted">
+          ${
+            needsGate
+              ? `${area.label}: la OT se manda primero a jefe/direccion para asignar responsable final y confirmar deadline.`
+              : `${area.label}: puede asignarse directo al equipo responsable.`
+          }
+        </p>
+        <div class="badge-row">
+          ${
+            supervisors.length
+              ? supervisors.map((user) => `<span class="badge ${needsGate ? "amber" : "green"}">${escapeHtml(user.name)} · ${escapeHtml(roleLabels[user.role] || user.role)}</span>`).join("")
+              : `<span class="badge amber">Sin jefe configurado para esta marca</span>`
+          }
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderSupervisorGatePanel(category = "diseno") {
+  return `<div id="supervisor-gate-panel">${renderSupervisorGatePanelContent(category)}</div>`;
+}
+
+function renderUrgentPlannerPanel(category = "diseno", priority = "medium") {
+  const plan = urgentWorkOrderPlan({ category, priority });
+  return `
+    <div class="urgent-planner-panel">
+      <div>
+        <span class="badge red">Urgencias</span>
+        <h3>Planificador de carga</h3>
+        <p class="muted">Si esta solicitud entra urgente, Lumen compara carga abierta, vencidas y revision para sugerir persona y deadline.</p>
+      </div>
+      <div class="urgent-plan-preview" id="urgent-plan-preview">
+        <strong>${plan.candidate ? escapeHtml(plan.candidate.name) : "Pendiente de asignar"}</strong>
+        <span>${escapeHtml(plan.reason)}</span>
+        <span class="badge ${priority === "high" ? "red" : "blue"}">Fecha sugerida: ${escapeHtml(formatDate(plan.dueDate))}</span>
+      </div>
+      <button class="button-ghost small" data-action="optimize-work-order-urgency">Aplicar sugerencia urgente</button>
+    </div>
+  `;
+}
+
+function renderWorkOrderProcessTimeline(order) {
+  const area = workOrderProcessArea(order.category);
+  const activeIndex = processStepIndex(order);
+  return `
+    <div class="process-timeline-card">
+      <div class="section-header compact">
+        <div>
+          <h3 class="section-title">Timeline del proceso</h3>
+          <div class="small-muted">${escapeHtml(area.label)} segun procesos Lumen.</div>
+        </div>
+        <span class="badge blue">${escapeHtml(workOrderStatusLabels[order.status] || order.status)}</span>
+      </div>
+      <div class="process-timeline">
+        ${area.steps
+          .map(([title, detail], index) => {
+            const stateClass = activeIndex < 0 ? "blocked" : index < activeIndex ? "done" : index === activeIndex ? "active" : "";
+            return `
+              <div class="process-step ${stateClass}">
+                <span class="process-step-index">${index + 1}</span>
+                <div>
+                  <strong>${escapeHtml(title)}</strong>
+                  <p>${escapeHtml(detail)}</p>
+                </div>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderUrgentOrderBanner(order) {
+  const days = daysUntil(order.dueDate);
+  const shouldShow = order.priority === "high" || days <= 1 || days < 0;
+  if (!shouldShow || isArchivedWorkOrder(order) || !isOpenWorkOrder(order)) return "";
+  const plan = urgentWorkOrderPlan({ category: order.category, brandId: order.brandId, priority: "high" });
+  return `
+    <div class="urgent-order-banner">
+      <div>
+        <span class="badge red">Alerta visible</span>
+        <h3>Esta OT necesita decision rapida</h3>
+        <p>
+          ${escapeHtml(plan.reason)}
+          ${plan.candidate ? ` Fecha ideal sugerida: ${escapeHtml(formatDate(plan.dueDate))}.` : ""}
+        </p>
+      </div>
+      <div class="row wrap">
+        ${plan.candidate ? `<span class="badge">${escapeHtml(plan.candidate.name)} · ${escapeHtml(workloadLabelForUser(plan.candidate.id))}</span>` : ""}
+        ${canManageWorkOrders() ? `<button class="button-danger small" data-action="apply-urgent-workload-plan" data-id="${order.id}">Aplicar plan sugerido</button>` : ""}
+        ${canManageWorkOrders() ? `<button class="button small" data-action="send-urgent-alert" data-id="${order.id}">Enviar alerta a jefes</button>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderWorkOrderStageControl(order) {
+  const statuses = ["new", "in_progress", "in_review", "completed", "client_approved", "scheduled"];
+  return `
+    <div class="stage-control">
+      ${statuses
+        .map(
+          (status) => `
+            <button
+              class="${order.status === status ? "active" : ""}"
+              data-action="set-order-status"
+              data-id="${escapeHtml(`${order.id}::${status}`)}"
+              ${order.status === status ? "disabled" : ""}
+            >
+              ${escapeHtml(workOrderStatusLabels[status])}
+            </button>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderWorkOrderForm(order = null) {
   const isEditing = Boolean(order);
   const canUseForm = isEditing ? canManageWorkOrders() : canCreateWorkOrders();
@@ -2645,6 +2982,8 @@ function renderWorkOrderForm(order = null) {
         <span class="badge blue">${isEditing ? "Edicion activa" : "Foco operativo"}</span>
       </div>
       ${renderWorkOrderAiAssistant(isEditing)}
+      ${renderSupervisorGatePanel(categoryValue)}
+      ${renderUrgentPlannerPanel(categoryValue, priorityValue)}
       <div class="form-grid">
         <div class="field full">
           <label>Titulo</label>
@@ -2673,16 +3012,21 @@ function renderWorkOrderForm(order = null) {
             <div class="assignee-options">
               ${availableUsers
                 .map(
-                  (user) => `
+                  (user) => {
+                    const userLoad = workloadLabelForUser(user.id);
+                    const isSupervisor = supervisorCandidates(categoryValue, state.currentBrandId).some((candidate) => candidate.id === user.id);
+                    return `
                     <label class="assignee-option" data-assignee-option="${escapeHtml(`${user.name} ${user.email} ${roleLabels[user.role] || user.role}`.toLowerCase())}">
                       <input type="checkbox" data-ot-assignee value="${user.id}" ${selectedAssignees.has(user.id) ? "checked" : ""} />
                       <span>
                         <strong>${escapeHtml(user.name)}</strong>
-                        <small>${escapeHtml(roleLabels[user.role] || user.role)}</small>
+                        <small>${escapeHtml(roleLabels[user.role] || user.role)} · ${escapeHtml(userLoad)}</small>
                         <em>${escapeHtml(user.email)}</em>
                       </span>
+                      ${isSupervisor ? `<small class="assignee-tag">Jefe</small>` : ""}
                     </label>
-                  `,
+                  `;
+                  },
                 )
                 .join("") || `<div class="empty compact-empty">No hay responsables disponibles para esta marca</div>`}
             </div>
@@ -2776,7 +3120,6 @@ function renderWorkOrderDetailPanel(order) {
   const canManage = canManageWorkOrders();
   const canUploadMaterials = canUploadWorkOrderMaterials(order);
   const archived = isArchivedWorkOrder(order);
-  const nextStatus = archived ? null : nextWorkOrderStatus(order);
 
   return `
     <section class="panel section work-order-detail-panel" data-order-detail="${escapeHtml(order.id)}">
@@ -2793,11 +3136,6 @@ function renderWorkOrderDetailPanel(order) {
         <div class="row wrap">
           ${canManage ? `<button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>` : ""}
           ${
-            canManage && nextStatus
-              ? `<button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar a ${workOrderStatusLabels[nextStatus]}</button>`
-              : ""
-          }
-          ${
             canManage
               ? archived
                 ? `<button class="button-ghost small" data-action="unarchive-work-order" data-id="${order.id}">Restaurar</button>`
@@ -2807,6 +3145,9 @@ function renderWorkOrderDetailPanel(order) {
           <button class="button-ghost small" data-action="close-work-order-detail">Cerrar</button>
         </div>
       </div>
+      ${renderUrgentOrderBanner(order)}
+      ${canManage && !archived ? renderWorkOrderStageControl(order) : ""}
+      ${renderWorkOrderProcessTimeline(order)}
       <div class="work-order-detail-grid">
         <div class="detail-block">
           <span>Estado</span>
@@ -3780,6 +4121,191 @@ function reportInsights({ overdueOpen, lateCompleted, reviewOrders, teamRows, cl
   return insights;
 }
 
+function currentReportSnapshot() {
+  const rawScopedOrders = brandOrders();
+  const scopedOrders = reportFilteredOrders(rawScopedOrders);
+  const scopedBrands = reportScopeBrands();
+  const openOrders = scopedOrders.filter(isOpenWorkOrder);
+  const completedOrders = scopedOrders.filter(isDeliveredWorkOrder);
+  const overdueOpen = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
+  const lateCompleted = completedOrders.filter(wasCompletedLate);
+  const reviewOrders = openOrders.filter((order) => order.status === "in_review");
+  const teamRows = weeklyDigestRows(scopedOrders)
+    .map((row) => ({ ...row, load: reportLoadScore(row) }))
+    .sort((a, b) => b.overdue - a.overdue || b.open - a.open || b.load - a.load || a.user.name.localeCompare(b.user.name));
+  const clientRows = clientReportRows(scopedOrders, scopedBrands);
+  const brandRows = brandReportRows(scopedOrders, scopedBrands);
+  const categoryRows = categoryReportRows(scopedOrders);
+  return {
+    rawScopedOrders,
+    scopedOrders,
+    scopedBrands,
+    openOrders,
+    completedOrders,
+    overdueOpen,
+    lateCompleted,
+    reviewOrders,
+    teamRows,
+    clientRows,
+    brandRows,
+    categoryRows,
+    onTimeRate: completedOrders.length ? percent(completedOrders.length - lateCompleted.length, completedOrders.length) : 0,
+  };
+}
+
+function reportPeriodLabel() {
+  if (state.reportMonth) return state.reportMonth;
+  if (state.reportStartDate || state.reportEndDate) {
+    return `${state.reportStartDate || "inicio"} a ${state.reportEndDate || "hoy"}`;
+  }
+  return "Todos los registros";
+}
+
+function csvValue(value) {
+  const text = String(value ?? "");
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function downloadTextFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadWorkspaceBackup() {
+  const rows = workOrders.map((order) => {
+    const brand = getBrand(order.brandId);
+    const client = getClient(brand.clientId);
+    return [
+      order.id,
+      client?.name || "",
+      brand.shortName,
+      order.title,
+      workOrderStatusLabels[order.status] || order.status,
+      workOrderPriorityLabels[order.priority] || order.priority,
+      workOrderCategoryLabels[order.category] || order.category,
+      order.dueDate || "",
+      orderAssignees(order).map(userName).join("; "),
+      orderFiles(order).map((file) => file.name).join("; "),
+      isArchivedWorkOrder(order) ? "si" : "no",
+      order.createdAt || "",
+      order.updatedAt || "",
+    ];
+  });
+  const header = ["codigo", "cliente", "marca", "titulo", "estado", "prioridad", "categoria", "deadline", "responsables", "archivos", "archivada", "creada", "actualizada"];
+  const csv = [header, ...rows].map((row) => row.map(csvValue).join(",")).join("\n");
+  downloadTextFile(`lumen-workspace-backup-${isoDateFromDate(todayAtNoon())}.csv`, csv, "text/csv;charset=utf-8");
+  showToast("Backup CSV descargado. Excel lo abre directo.");
+}
+
+function downloadWorkspaceJsonBackup() {
+  const backup = {
+    exportedAt: new Date().toISOString(),
+    clients,
+    brands,
+    users: users.map(({ id, name, email, role, isActive, brands: userBrands }) => ({ id, name, email, role, isActive, brands: userBrands })),
+    workOrders,
+    contentItems,
+    assetVersions,
+    canvaDesigns,
+  };
+  downloadTextFile(
+    `lumen-workspace-backup-${isoDateFromDate(todayAtNoon())}.json`,
+    JSON.stringify(backup, null, 2),
+    "application/json;charset=utf-8",
+  );
+  showToast("Backup JSON descargado para migracion o recuperacion tecnica.");
+}
+
+function downloadReportPdf() {
+  const snapshot = currentReportSnapshot();
+  const scopeTitle = getScopeTitle();
+  const rows = snapshot.clientRows
+    .map(
+      (row) => `
+        <tr>
+          <td>${escapeHtml(row.client.name)}</td>
+          <td>${row.open}</td>
+          <td>${row.completed}</td>
+          <td>${row.lateCompleted} cerradas / ${row.overdueOpen} abiertas</td>
+          <td>${row.onTime === null ? "N/A" : `${row.onTime}%`}</td>
+        </tr>
+      `,
+    )
+    .join("");
+  const teamRows = snapshot.teamRows
+    .map(
+      (row) => `
+        <tr>
+          <td>${escapeHtml(row.user.name)}</td>
+          <td>${escapeHtml(roleLabels[row.user.role] || row.user.role)}</td>
+          <td>${row.open}</td>
+          <td>${row.review}</td>
+          <td>${row.overdue}</td>
+        </tr>
+      `,
+    )
+    .join("");
+  const reportWindow = window.open("", "_blank", "width=980,height=720");
+  if (!reportWindow) {
+    showToast("El navegador bloqueo la ventana del PDF. Permite popups para descargar.");
+    return;
+  }
+  reportWindow.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <title>Informe Lumen Workspace</title>
+        <style>
+          body{font-family:Arial,Helvetica,sans-serif;margin:34px;color:#2d2d2d;background:#fff;}
+          header{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;border-bottom:3px solid #49ee8c;padding-bottom:18px;margin-bottom:22px;}
+          h1{margin:0;font-size:30px;} h2{font-size:18px;margin:24px 0 10px;} p{color:#62655f;}
+          .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0;}
+          .metric{border:1px solid #deded8;border-radius:8px;padding:12px;} .metric strong{display:block;font-size:28px;}
+          table{width:100%;border-collapse:collapse;margin-top:8px;} th,td{border-bottom:1px solid #e5e5df;padding:10px;text-align:left;font-size:13px;}
+          th{background:#f6f6f3;text-transform:uppercase;font-size:11px;letter-spacing:.04em;}
+          .badge{display:inline-block;background:#eafff3;color:#157a44;border-radius:999px;padding:6px 10px;font-weight:700;}
+          @media print{button{display:none;} body{margin:20px;}}
+        </style>
+      </head>
+      <body>
+        <header>
+          <div>
+            <span class="badge">Lumen Workspace</span>
+            <h1>Informe operativo</h1>
+            <p>${escapeHtml(scopeTitle)} / ${escapeHtml(reportPeriodLabel())}</p>
+          </div>
+          <button onclick="window.print()" style="padding:10px 14px;border:0;border-radius:8px;background:#2d2d2d;color:#fff;font-weight:800;">Guardar como PDF</button>
+        </header>
+        <section class="metrics">
+          <div class="metric"><span>OTs abiertas</span><strong>${snapshot.openOrders.length}</strong></div>
+          <div class="metric"><span>Entregadas</span><strong>${snapshot.completedOrders.length}</strong></div>
+          <div class="metric"><span>Fuera de fecha</span><strong>${snapshot.lateCompleted.length}</strong></div>
+          <div class="metric"><span>Cumplimiento</span><strong>${snapshot.completedOrders.length ? `${snapshot.onTimeRate}%` : "N/A"}</strong></div>
+        </section>
+        <h2>Clientes y cumplimiento</h2>
+        <table>
+          <thead><tr><th>Cliente</th><th>Abiertas</th><th>Entregadas</th><th>Fuera de fecha</th><th>A tiempo</th></tr></thead>
+          <tbody>${rows || `<tr><td colspan="5">Sin datos</td></tr>`}</tbody>
+        </table>
+        <h2>Carga por responsable</h2>
+        <table>
+          <thead><tr><th>Responsable</th><th>Rol</th><th>Abiertas</th><th>Revision</th><th>Vencidas</th></tr></thead>
+          <tbody>${teamRows || `<tr><td colspan="5">Sin equipo activo</td></tr>`}</tbody>
+        </table>
+      </body>
+    </html>
+  `);
+  reportWindow.document.close();
+  showToast("Informe imprimible abierto. Usa Guardar como PDF.");
+}
+
 function renderReports() {
   const rawScopedOrders = brandOrders();
   const scopedOrders = reportFilteredOrders(rawScopedOrders);
@@ -3793,7 +4319,7 @@ function renderReports() {
   const clientRows = clientReportRows(scopedOrders, scopedBrands);
   const brandRows = brandReportRows(scopedOrders, scopedBrands);
   const categoryRows = categoryReportRows(scopedOrders);
-  const teamRows = weeklyDigestRows()
+  const teamRows = weeklyDigestRows(scopedOrders)
     .map((row) => ({ ...row, load: reportLoadScore(row) }))
     .sort((a, b) => b.overdue - a.overdue || b.open - a.open || b.load - a.load || a.user.name.localeCompare(b.user.name));
   const maxCategory = Math.max(...categoryRows.map((row) => row.total), 1);
@@ -3810,9 +4336,11 @@ function renderReports() {
           <p class="muted">Panorama de carga, entregas, atrasos y trabajo activo por cliente, marca y responsable.</p>
         </div>
         <div class="quick-links">
-          <button class="button" data-module="work-orders">Ver OTs</button>
+          <button class="button" data-action="download-report-pdf">Descargar informe PDF</button>
+          <button class="button-ghost" data-action="download-workspace-backup">Backup Excel</button>
+          <button class="button-ghost" data-action="download-workspace-json">Backup JSON</button>
+          <button class="button-ghost" data-module="work-orders">Ver OTs</button>
           <button class="button-ghost" data-module="team">Ver equipo</button>
-          <button class="button-ghost" data-module="notifications">Emails</button>
         </div>
       </div>
 
@@ -4003,7 +4531,7 @@ function renderReports() {
               <h2 class="section-title">OTs que explican el atraso</h2>
               <div class="small-muted">Abiertas vencidas y entregas completadas fuera de fecha.</div>
             </div>
-            <button class="button-ghost small" data-module="work-orders">Abrir kanban</button>
+	            <button class="button-ghost small" data-module="work-orders">Abrir panel</button>
           </div>
           <div class="stack">
             ${[...overdueOpen, ...lateCompleted]
@@ -4524,6 +5052,10 @@ function bindEvents() {
     input.addEventListener("change", refreshAssigneeSelectedList);
   });
 
+  ["ot-category", "ot-priority"].forEach((fieldId) => {
+    document.getElementById(fieldId)?.addEventListener("change", refreshWorkOrderGuidancePanels);
+  });
+
   document.querySelectorAll("[data-work-order-month]").forEach((input) => {
     input.addEventListener("change", () => {
       state.workOrderMonth = input.value;
@@ -4575,6 +5107,23 @@ function refreshAssigneeSelectedList() {
     .join("");
 }
 
+function refreshWorkOrderGuidancePanels() {
+  const category = document.getElementById("ot-category")?.value || "diseno";
+  const priority = document.getElementById("ot-priority")?.value || "medium";
+  const gate = document.getElementById("supervisor-gate-panel");
+  const planner = document.querySelector(".urgent-planner-panel");
+  if (gate) gate.innerHTML = renderSupervisorGatePanelContent(category);
+  if (planner) {
+    const next = document.createElement("div");
+    next.innerHTML = renderUrgentPlannerPanel(category, priority);
+    const replacement = next.firstElementChild;
+    planner.replaceWith(replacement);
+    replacement.querySelectorAll("[data-action]").forEach((button) => {
+      button.addEventListener("click", () => handleAction(button.dataset.action, button.dataset.id));
+    });
+  }
+}
+
 function bindAuthEvents() {
   document.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleAction(button.dataset.action, button.dataset.id));
@@ -4615,6 +5164,7 @@ async function handleAction(action, id) {
     },
     "export-brand-config": () => showToast("Resumen de marca preparado para compartir internamente"),
     "fill-work-order-ai": () => fillWorkOrderWithAi(),
+    "optimize-work-order-urgency": () => optimizeWorkOrderUrgency(),
     "create-work-order": () => createWorkOrderFromForm(),
     "view-work-order": () => viewWorkOrder(id),
     "close-work-order-detail": () => closeWorkOrderDetail(),
@@ -4622,6 +5172,7 @@ async function handleAction(action, id) {
     "cancel-edit-work-order": () => cancelEditWorkOrder(),
     "update-work-order": () => updateWorkOrderFromForm(),
     "update-order-status": () => updateOrderStatusFromSelect(id),
+    "set-order-status": () => setOrderStatusFromButton(id),
     "advance-order": () => advanceWorkOrder(id),
     "archive-work-order": () => archiveWorkOrder(id),
     "unarchive-work-order": () => unarchiveWorkOrder(id),
@@ -4630,12 +5181,16 @@ async function handleAction(action, id) {
     "open-work-order-file": () => openWorkOrderFile(id),
     "delete-work-order-file": () => deleteWorkOrderFile(id),
     "send-urgent-alert": () => sendUrgentWorkOrderAlert(id),
+    "apply-urgent-workload-plan": () => applyUrgentWorkloadPlan(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
     "queue-weekly-digest": () => queueWeeklyDigest(),
     "send-email-queue": () => sendEmailQueue(),
     "run-weekly-digest-now": () => runWeeklyDigestNow(),
     "run-monthly-content-matrix": () => runMonthlyWorkOrderAutomation("content_matrix"),
     "run-monthly-paid-placement": () => runMonthlyWorkOrderAutomation("paid_placement"),
+    "download-report-pdf": () => downloadReportPdf(),
+    "download-workspace-backup": () => downloadWorkspaceBackup(),
+    "download-workspace-json": () => downloadWorkspaceJsonBackup(),
     "new-admin-user": () => newAdminUser(),
     "save-admin-user": () => saveAdminUser(),
     "deactivate-admin-user": () => setAdminUserActive(id, false),
@@ -4988,6 +5543,30 @@ function validateWorkOrderValues(values) {
   return true;
 }
 
+function applySupervisorGateToValues(values, brandId = state.currentBrandId) {
+  if (!requiresSupervisorGate(values.category)) {
+    values.supervisorGate = { required: false, supervisors: [] };
+    return values;
+  }
+  const supervisors = supervisorCandidates(values.category, brandId);
+  const supervisorIds = supervisors.map((user) => user.id);
+  const nextAssignees = Array.from(new Set([...supervisorIds, ...values.assignees]));
+  const gateTask = "Jefe inmediato revisa la OT, asigna responsable final y confirma deadline";
+  const nextSubtasks = values.subtasks.some((task) => plainText(task).toLowerCase() === gateTask.toLowerCase())
+    ? values.subtasks
+    : [gateTask, ...values.subtasks];
+
+  values.assignees = nextAssignees;
+  values.subtasks = nextSubtasks;
+  values.description = composeWorkOrderDescription(
+    splitWorkOrderDescription(values.description).description,
+    nextSubtasks,
+    values.materialChanges,
+  );
+  values.supervisorGate = { required: true, supervisors };
+  return values;
+}
+
 function fillWorkOrderWithAi() {
   if (isAllBrandsScope()) {
     showToast("Selecciona una marca para usar la IA de OTs");
@@ -5035,7 +5614,36 @@ function fillWorkOrderWithAi() {
     refreshAssigneeSelectedList();
   }
 
+  refreshWorkOrderGuidancePanels();
   showToast("IA completo la OT. Revisa los campos antes de guardar.");
+}
+
+function optimizeWorkOrderUrgency() {
+  if (isAllBrandsScope()) {
+    showToast("Selecciona una marca para calcular carga de urgencias");
+    return;
+  }
+  const category = document.getElementById("ot-category")?.value || "diseno";
+  const plan = urgentWorkOrderPlan({ category, priority: "high" });
+  const dueDateInput = document.getElementById("ot-due-date");
+  const priorityInput = document.getElementById("ot-priority");
+  const subtasksInput = document.getElementById("ot-subtasks");
+  const existingTasks = parseListLines(subtasksInput?.value || "");
+  const urgentTask = "Confirmar prioridad urgente y fecha ideal segun carga del equipo";
+
+  if (dueDateInput) dueDateInput.value = plan.dueDate;
+  if (priorityInput) priorityInput.value = "high";
+  if (subtasksInput && !existingTasks.includes(urgentTask)) {
+    subtasksInput.value = [urgentTask, ...existingTasks].join("\n");
+  }
+  if (plan.candidate) {
+    document.querySelectorAll("[data-ot-assignee]").forEach((input) => {
+      if (input.value === plan.candidate.id) input.checked = true;
+    });
+    refreshAssigneeSelectedList();
+  }
+  refreshWorkOrderGuidancePanels();
+  showToast(plan.candidate ? `Sugerencia aplicada: ${plan.candidate.name} / ${formatDate(plan.dueDate)}` : "Fecha urgente sugerida; falta responsable disponible");
 }
 
 async function uploadWorkOrderFiles(orderDbId, brandId, fileUploads) {
@@ -5073,6 +5681,8 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
   const creatorName = dataState.profile?.full_name || "Lumen Workspace";
   const parsedDescription = splitWorkOrderDescription(values.description);
   const description = plainText(parsedDescription.description);
+  const supervisorGate = values.supervisorGate?.required;
+  const supervisorNames = values.supervisorGate?.supervisors?.map((user) => user.name).join(", ") || "";
   const fileLabel =
     uploadedCount === 0 ? "Sin archivos adjuntos" : uploadedCount === 1 ? "1 archivo adjunto" : `${uploadedCount} archivos adjuntos`;
 
@@ -5088,6 +5698,18 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
         </div>
 
         <div style="padding:0 28px 24px;">
+          ${
+            supervisorGate
+              ? `
+                <div style="margin:16px 0 8px;border:1px solid #f3d59e;border-radius:12px;background:#fff7e5;padding:14px 16px;">
+                  <div style="font-size:13px;font-weight:800;text-transform:uppercase;color:#8a5a12;margin-bottom:6px;">Requiere asignacion de jefe inmediato</div>
+                  <div style="font-size:15px;line-height:1.5;color:#4b4232;">
+                    Esta OT entra primero a ${escapeHtml(supervisorNames || "Direccion/Cuentas")} para confirmar responsable final y deadline antes de ejecutar.
+                  </div>
+                </div>
+              `
+              : ""
+          }
           <table role="presentation" style="width:100%;border-collapse:collapse;margin:10px 0 22px;">
             <tr>
               <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Cliente / marca</td>
@@ -5373,7 +5995,7 @@ async function createWorkOrderFromForm() {
     showToast("Selecciona una marca antes de crear una OT");
     return;
   }
-  const values = getWorkOrderFormValues();
+  const values = applySupervisorGateToValues(getWorkOrderFormValues(), state.currentBrandId);
   if (!validateWorkOrderValues(values)) return;
   const code = `OT-${getBrand().shortName.toUpperCase().replaceAll(" ", "-")}-${String(workOrders.length + 1).padStart(3, "0")}`;
 
@@ -5444,7 +6066,7 @@ async function createWorkOrderFromForm() {
             recipient_user_id: user.id,
             recipient_email: user.email,
             notification_type: "assignment",
-            subject: `Nueva OT asignada: ${code} - ${values.title}`,
+            subject: `${values.supervisorGate?.required ? "Requiere asignacion de jefe: " : "Nueva OT asignada: "}${code} - ${values.title}`,
             html_body: htmlBody,
             status: "queued",
           })),
@@ -5456,6 +6078,7 @@ async function createWorkOrderFromForm() {
 
     await loadSupabaseData();
     showToast(`OT creada en Supabase: ${code}`);
+    render();
     return;
   }
 
@@ -5479,6 +6102,7 @@ async function createWorkOrderFromForm() {
   });
   saveWorkOrders();
   showToast(`OT creada y ${values.notifyOnEmail ? "email preparado" : "sin email"}`);
+  render();
 }
 
 async function sendUrgentWorkOrderAlert(id) {
@@ -5673,6 +6297,7 @@ async function updateWorkOrderFromForm() {
     await loadSupabaseData();
     state.editingWorkOrderId = "";
     showToast(`${order.id} actualizada`);
+    render();
     return;
   }
 
@@ -5695,6 +6320,7 @@ async function updateWorkOrderFromForm() {
   saveWorkOrders();
   state.editingWorkOrderId = "";
   showToast(`${order.id} actualizada`);
+  render();
 }
 
 async function uploadOrderMaterials(id) {
@@ -5727,6 +6353,7 @@ async function uploadOrderMaterials(id) {
     await queueWorkOrderUpdateEmails(order, describeWorkOrderChanges(order, {}, uploadedCount), uploadedCount);
     await loadSupabaseData();
     showToast(`${uploadedCount} material${uploadedCount === 1 ? "" : "es"} agregado${uploadedCount === 1 ? "" : "s"} a ${order.id}`);
+    render();
     return;
   }
 
@@ -5737,6 +6364,7 @@ async function uploadOrderMaterials(id) {
   order.updatedAt = new Date().toISOString();
   saveWorkOrders();
   showToast(`Materiales agregados a ${order.id}`);
+  render();
 }
 
 function findWorkOrderFile(fileKey) {
@@ -5873,6 +6501,7 @@ async function setWorkOrderStatus(order, nextStatus) {
     state.viewingWorkOrderId = updatedOrderForEmail.id;
     state.focusedWorkOrderId = updatedOrderForEmail.id;
     showToast(`${order.id} cambió a ${workOrderStatusLabels[nextStatus]}`);
+    render();
     return;
   }
 
@@ -5887,6 +6516,7 @@ async function setWorkOrderStatus(order, nextStatus) {
   state.viewingWorkOrderId = order.id;
   state.focusedWorkOrderId = order.id;
   showToast(`${order.id} cambió a ${workOrderStatusLabels[order.status]}`);
+  render();
 }
 
 async function updateOrderStatusFromSelect(id) {
@@ -5894,6 +6524,14 @@ async function updateOrderStatusFromSelect(id) {
   if (!order) return;
   const select = document.querySelector(`[data-status-select="${id}"]`);
   await setWorkOrderStatus(order, select?.value);
+}
+
+async function setOrderStatusFromButton(payload = "") {
+  const [id, status] = String(payload).split("::");
+  const order = workOrders.find((candidate) => candidate.id === id);
+  if (!order || !status) return;
+  await setWorkOrderStatus(order, status);
+  render();
 }
 
 async function advanceWorkOrder(id) {
@@ -5910,6 +6548,76 @@ async function advanceWorkOrder(id) {
   }
 
   await setWorkOrderStatus(order, nextStatus);
+}
+
+async function applyUrgentWorkloadPlan(id) {
+  if (!canManageWorkOrders()) {
+    showToast("Solo Direccion o Cuentas puede aplicar plan de urgencia");
+    return;
+  }
+  const order = workOrders.find((candidate) => candidate.id === id);
+  if (!order) return;
+  const plan = urgentWorkOrderPlan({ category: order.category, brandId: order.brandId, priority: "high" });
+  const currentAssignees = orderAssignees(order);
+  const nextAssignees = plan.candidate
+    ? Array.from(new Set([...currentAssignees, plan.candidate.id]))
+    : currentAssignees;
+  const changes = [
+    `Prioridad marcada como Alta`,
+    `Deadline sugerido por carga: ${formatDate(order.dueDate)} -> ${formatDate(plan.dueDate)}`,
+  ];
+  if (plan.candidate && !currentAssignees.includes(plan.candidate.id)) {
+    changes.push(`Responsable sugerido por carga: ${plan.candidate.name}`);
+  }
+
+  if (isSupabaseMode()) {
+    if (!order.dbId) {
+      showToast("Esta OT no tiene ID de Supabase");
+      return;
+    }
+    const { error } = await supabaseClient
+      .from("work_orders")
+      .update({ priority: "high", due_date: plan.dueDate, updated_at: new Date().toISOString() })
+      .eq("id", order.dbId);
+    if (error) {
+      showToast(`No se pudo aplicar plan urgente: ${error.message}`);
+      return;
+    }
+    const addedAssignees = nextAssignees.filter((userId) => !currentAssignees.includes(userId));
+    if (addedAssignees.length) {
+      const { error: assigneeError } = await supabaseClient.from("work_order_assignees").insert(
+        addedAssignees.map((userId) => ({
+          work_order_id: order.dbId,
+          user_id: userId,
+          assigned_by: dataState.session?.user?.id,
+        })),
+      );
+      if (assigneeError) {
+        showToast(`Plan aplicado, pero fallo responsable sugerido: ${assigneeError.message}`);
+      }
+    }
+    const updatedOrderForEmail = { ...order, priority: "high", dueDate: plan.dueDate, assignees: nextAssignees };
+    await supabaseClient.from("work_order_activity").insert({
+      work_order_id: order.dbId,
+      actor_id: dataState.session?.user?.id,
+      action: "urgent_rebalanced",
+      details: { due_date: plan.dueDate, suggested_user: plan.candidate?.id || null },
+    });
+    await queueWorkOrderUpdateEmails(updatedOrderForEmail, changes, 0, nextAssignees);
+    await loadSupabaseData();
+  } else {
+    order.priority = "high";
+    order.dueDate = plan.dueDate;
+    order.assignees = nextAssignees;
+    order.assignee = nextAssignees[0] || order.assignee;
+    order.updatedAt = new Date().toISOString();
+    saveWorkOrders();
+  }
+
+  state.viewingWorkOrderId = order.id;
+  state.focusedWorkOrderId = order.id;
+  showToast(`Plan urgente aplicado a ${order.id}: ${formatDate(plan.dueDate)}`);
+  render();
 }
 
 function archiveMigrationMessage(message = "") {
