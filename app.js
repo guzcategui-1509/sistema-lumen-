@@ -2429,6 +2429,174 @@ function renderWorkOrderFileChip(order, file, index, options = {}) {
   `;
 }
 
+function availableWorkOrderAssigneeUsers(selectedAssignees = new Set()) {
+  return users.filter(
+    (user) =>
+      user.role !== "cliente" &&
+      (user.isActive !== false || selectedAssignees.has(user.id)) &&
+      canUserAccessBrand(user, state.currentBrandId),
+  );
+}
+
+function normalizeAiText(value = "") {
+  return plainText(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function inferWorkOrderCategory(text = "") {
+  const normalized = normalizeAiText(text);
+  const categoryTerms = [
+    ["matriz", ["matriz", "calendario", "contenido mensual", "contenido del mes"]],
+    ["pauta", ["pauta", "ads", "anuncio", "campana pagada", "colocacion"]],
+    ["campana", ["campana", "lanzamiento", "temporada", "promocion"]],
+    ["dinamica_digital", ["dinamica", "giveaway", "sorteo", "interaccion"]],
+    ["arte_final", ["arte final", "exportar", "adaptacion", "resize", "formatos"]],
+    ["cotizacion", ["cotizacion", "presupuesto", "quote", "costeo"]],
+    ["propuesta", ["propuesta", "presentacion", "pitch", "deck"]],
+    ["edicion", ["editar", "edicion", "video", "reel", "tiktok", "podcast"]],
+    ["diseno", ["diseno", "arte", "pieza", "post", "carrusel", "story"]],
+    ["copy", ["copy", "caption", "texto", "redaccion"]],
+    ["produccion", ["shoot", "produccion", "grabacion", "foto", "filmacion"]],
+  ];
+  const match = categoryTerms.find(([, terms]) => terms.some((term) => normalized.includes(term)));
+  return match?.[0] || "diseno";
+}
+
+function parseAiDate(text = "") {
+  const normalized = normalizeAiText(text);
+  const isoMatch = normalized.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+  const slashMatch = normalized.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/);
+  if (slashMatch) {
+    const [, day, month, year] = slashMatch;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+  const offset = normalized.includes("hoy") ? 0 : normalized.includes("manana") ? 1 : null;
+  if (offset !== null) {
+    const date = todayAtNoon();
+    date.setDate(date.getDate() + offset);
+    return isoDateFromDate(date);
+  }
+  return "";
+}
+
+function defaultWorkOrderDueDate(category) {
+  const date = todayAtNoon();
+  const daysByCategory = {
+    pauta: 2,
+    arte_final: 2,
+    edicion: 3,
+    diseno: 4,
+    matriz: 5,
+    campana: 5,
+    produccion: 7,
+  };
+  date.setDate(date.getDate() + (daysByCategory[category] || 4));
+  return isoDateFromDate(date);
+}
+
+function inferWorkOrderPriority(text = "", dueDate = "") {
+  const normalized = normalizeAiText(text);
+  if (["urgente", "hoy", "asap", "prioridad alta", "para manana"].some((term) => normalized.includes(term))) return "high";
+  if (daysUntil(dueDate) <= 1) return "high";
+  if (["baja", "cuando se pueda", "sin prisa"].some((term) => normalized.includes(term))) return "low";
+  return "medium";
+}
+
+function workOrderAiSubtasks(category) {
+  const subtasksByCategory = {
+    matriz: ["Completar estructura de calendario", "Validar pilares y formatos", "Enviar a revision interna", "Preparar version para cliente"],
+    pauta: ["Confirmar objetivo de campana", "Revisar presupuesto y fechas", "Preparar assets finales", "Enviar para colocacion"],
+    campana: ["Definir concepto rector", "Listar entregables", "Asignar piezas por formato", "Preparar revision interna"],
+    dinamica_digital: ["Definir mecanica", "Validar restricciones", "Preparar copies y visuales", "Programar publicacion"],
+    arte_final: ["Revisar medidas finales", "Exportar formatos", "Subir materiales", "Confirmar aprobacion"],
+    propuesta: ["Ordenar contexto y objetivo", "Desarrollar propuesta", "Revisar con direccion", "Enviar version final"],
+    cotizacion: ["Levantar alcance", "Calcular recursos", "Preparar documento", "Enviar para aprobacion"],
+    diseno: ["Revisar brief", "Crear primera propuesta visual", "Subir material para revision", "Aplicar cambios finales"],
+    edicion: ["Revisar material base", "Crear primer corte", "Aplicar cambios", "Exportar version final"],
+    copy: ["Revisar contexto de marca", "Redactar opciones", "Revisar tono y CTA", "Enviar version final"],
+    produccion: ["Confirmar fecha y locacion", "Preparar shotlist", "Coordinar equipo", "Subir entregables"],
+  };
+  return subtasksByCategory[category] || subtasksByCategory.diseno;
+}
+
+function workOrderAiMaterialChanges(category, text = "") {
+  const normalized = normalizeAiText(text);
+  const changes = [];
+  if (normalized.includes("cambio") || normalized.includes("ajuste")) changes.push("Aplicar cambios solicitados en materiales existentes");
+  if (normalized.includes("formato") || normalized.includes("medida")) changes.push("Preparar adaptaciones por formato requerido");
+  if (normalized.includes("copy") || normalized.includes("texto")) changes.push("Validar textos visibles antes de exportar");
+  if (category === "arte_final") changes.push("Confirmar versiones finales antes de entrega");
+  return changes;
+}
+
+function workOrderAiAssignees(category, availableUsers = []) {
+  const rolesByCategory = {
+    matriz: ["generador", "creativo", "cuentas"],
+    pauta: ["pauta", "cuentas"],
+    campana: ["creativo", "generador", "cuentas"],
+    dinamica_digital: ["creativo", "community", "generador"],
+    arte_final: ["disenador", "editor", "creativo"],
+    propuesta: ["cuentas", "creativo", "generador"],
+    cotizacion: ["cuentas", "operaciones"],
+    diseno: ["disenador", "creativo"],
+    edicion: ["editor", "creativo"],
+    copy: ["generador", "creativo"],
+    produccion: ["operaciones", "creativo", "cuentas"],
+  };
+  const rolePriority = rolesByCategory[category] || rolesByCategory.diseno;
+  const selected = [];
+  rolePriority.forEach((role) => {
+    const user = availableUsers.find((candidate) => candidate.role === role && !selected.includes(candidate.id));
+    if (user) selected.push(user.id);
+  });
+  return selected.slice(0, 3);
+}
+
+function buildWorkOrderAiDraft(prompt = "", availableUsers = []) {
+  const brand = getBrand();
+  const cleanPrompt = plainText(prompt).trim();
+  const category = inferWorkOrderCategory(cleanPrompt);
+  const dueDate = parseAiDate(cleanPrompt) || defaultWorkOrderDueDate(category);
+  const priority = inferWorkOrderPriority(cleanPrompt, dueDate);
+  const categoryLabel = workOrderCategoryLabels[category] || "Solicitud";
+  const title = cleanPrompt
+    ? `${categoryLabel} - ${brand.shortName}`
+    : `Nueva ${categoryLabel.toLowerCase()} para ${brand.shortName}`;
+  return {
+    title,
+    category,
+    priority,
+    dueDate,
+    description: cleanPrompt || `Solicitud de ${categoryLabel.toLowerCase()} para ${brand.shortName}.`,
+    subtasks: workOrderAiSubtasks(category),
+    materialChanges: workOrderAiMaterialChanges(category, cleanPrompt),
+    assignees: workOrderAiAssignees(category, availableUsers),
+  };
+}
+
+function renderWorkOrderAiAssistant(isEditing) {
+  return `
+    <div class="ai-order-assistant">
+      <div>
+        <span class="badge green">IA de OTs</span>
+        <h3>Completar orden con IA</h3>
+        <p class="muted">Convierte una solicitud rapida en campos listos para revisar.</p>
+      </div>
+      <textarea class="textarea compact-textarea" id="ot-ai-brief" placeholder="Ej: matriz de contenido de julio para Danone, deadline 25/05/2026, incluir formatos para reels y carruseles"></textarea>
+      <div class="row wrap">
+        <button class="button-ghost small" data-action="fill-work-order-ai">${isEditing ? "Actualizar campos" : "Completar OT"}</button>
+        <span class="small-muted">Sugiere categoria, prioridad, subtareas y responsables.</span>
+      </div>
+    </div>
+  `;
+}
+
 function renderWorkOrderForm(order = null) {
   const isEditing = Boolean(order);
   const canUseForm = isEditing ? canManageWorkOrders() : canCreateWorkOrders();
@@ -2450,12 +2618,7 @@ function renderWorkOrderForm(order = null) {
   }
   const selectedAssignees = new Set(isEditing ? orderAssignees(order) : []);
   const parsedDescription = splitWorkOrderDescription(order?.description || "");
-  const availableUsers = users.filter(
-    (user) =>
-      user.role !== "cliente" &&
-      (user.isActive !== false || selectedAssignees.has(user.id)) &&
-      canUserAccessBrand(user, state.currentBrandId),
-  );
+  const availableUsers = availableWorkOrderAssigneeUsers(selectedAssignees);
   const selectedUsers = availableUsers.filter((user) => selectedAssignees.has(user.id));
   const files = isEditing ? orderFiles(order) : [];
   const titleValue = isEditing ? order.title : `Nueva solicitud para ${getBrand().shortName}`;
@@ -2481,6 +2644,7 @@ function renderWorkOrderForm(order = null) {
         </div>
         <span class="badge blue">${isEditing ? "Edicion activa" : "Foco operativo"}</span>
       </div>
+      ${renderWorkOrderAiAssistant(isEditing)}
       <div class="form-grid">
         <div class="field full">
           <label>Titulo</label>
@@ -4450,6 +4614,7 @@ async function handleAction(action, id) {
       showToast("IA lista con el contexto actualizado de marca");
     },
     "export-brand-config": () => showToast("Resumen de marca preparado para compartir internamente"),
+    "fill-work-order-ai": () => fillWorkOrderWithAi(),
     "create-work-order": () => createWorkOrderFromForm(),
     "view-work-order": () => viewWorkOrder(id),
     "close-work-order-detail": () => closeWorkOrderDetail(),
@@ -4821,6 +4986,56 @@ function validateWorkOrderValues(values) {
     return false;
   }
   return true;
+}
+
+function fillWorkOrderWithAi() {
+  if (isAllBrandsScope()) {
+    showToast("Selecciona una marca para usar la IA de OTs");
+    return;
+  }
+  const promptInput = document.getElementById("ot-ai-brief");
+  const prompt = promptInput?.value.trim() || "";
+  const fallbackPrompt = [
+    document.getElementById("ot-title")?.value,
+    document.getElementById("ot-description")?.value,
+    document.getElementById("ot-subtasks")?.value,
+    document.getElementById("ot-material-changes")?.value,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const sourcePrompt = prompt || fallbackPrompt;
+  if (!sourcePrompt.trim()) {
+    showToast("Escribe una solicitud para que la IA complete la orden");
+    return;
+  }
+
+  const selectedAssignees = new Set(Array.from(document.querySelectorAll("[data-ot-assignee]:checked")).map((input) => input.value));
+  const availableUsers = availableWorkOrderAssigneeUsers(selectedAssignees);
+  const draft = buildWorkOrderAiDraft(sourcePrompt, availableUsers);
+  const titleInput = document.getElementById("ot-title");
+  const dueDateInput = document.getElementById("ot-due-date");
+  const priorityInput = document.getElementById("ot-priority");
+  const categoryInput = document.getElementById("ot-category");
+  const descriptionInput = document.getElementById("ot-description");
+  const subtasksInput = document.getElementById("ot-subtasks");
+  const materialChangesInput = document.getElementById("ot-material-changes");
+
+  if (titleInput) titleInput.value = draft.title;
+  if (dueDateInput) dueDateInput.value = draft.dueDate;
+  if (priorityInput) priorityInput.value = draft.priority;
+  if (categoryInput) categoryInput.value = draft.category;
+  if (descriptionInput) descriptionInput.value = draft.description;
+  if (subtasksInput) subtasksInput.value = draft.subtasks.join("\n");
+  if (materialChangesInput) materialChangesInput.value = draft.materialChanges.join("\n");
+
+  if (draft.assignees.length) {
+    document.querySelectorAll("[data-ot-assignee]").forEach((input) => {
+      input.checked = selectedAssignees.has(input.value) || draft.assignees.includes(input.value);
+    });
+    refreshAssigneeSelectedList();
+  }
+
+  showToast("IA completo la OT. Revisa los campos antes de guardar.");
 }
 
 async function uploadWorkOrderFiles(orderDbId, brandId, fileUploads) {

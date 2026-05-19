@@ -1686,6 +1686,26 @@ tr:last-child td {
   gap: 6px;
 }
 
+.ai-order-assistant {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid rgba(73, 238, 140, 0.45);
+  border-radius: var(--radius-lg);
+  background: #f3fff7;
+}
+
+.ai-order-assistant h3 {
+  margin: 8px 0 4px;
+  font-size: 20px;
+}
+
+.ai-order-assistant .textarea {
+  min-height: 92px;
+  background: #ffffff;
+}
+
 .assignee-picker {
   display: grid;
   gap: 8px;
