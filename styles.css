@@ -2157,6 +2157,54 @@ tr:last-child td {
   align-items: stretch;
 }
 
+.ai-composer-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(73, 238, 140, 0.52);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(135deg, rgba(73, 238, 140, 0.12), transparent 38%),
+    #ffffff;
+  box-shadow: var(--shadow-soft);
+}
+
+.ai-composer-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.ai-composer-head h2 {
+  margin: 4px 0 5px;
+  font-size: 28px;
+}
+
+.ai-composer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.35fr) minmax(260px, 0.45fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.ai-composer-grid .field.full {
+  grid-column: auto;
+}
+
+.ai-composer-grid .textarea {
+  min-height: 118px;
+}
+
+.ai-composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  align-items: center;
+  grid-column: 1 / -1;
+}
+
 .smart-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -2768,6 +2816,10 @@ tr:last-child td {
   }
 
   .smart-work-order-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-composer-grid {
     grid-template-columns: 1fr;
   }
 

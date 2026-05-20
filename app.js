@@ -2391,6 +2391,7 @@ function renderWorkOrderSmartPanel(orders, allBrands) {
 
   return `
     <section class="smart-work-order-panel">
+      ${renderWorkOrderAiComposer(allBrands)}
       <article class="smart-card ai-smart-card">
         <div class="smart-icon">${iconSvg("ai")}</div>
         <div>
@@ -2453,6 +2454,61 @@ function renderWorkOrderSmartPanel(orders, allBrands) {
         </div>
       </div>
     </section>
+  `;
+}
+
+function renderWorkOrderAiComposer(allBrands) {
+  const brandSelectOptions = `
+    <option value="">Detectar por texto</option>
+    ${clients
+      .map(
+        (clientItem) => `
+          <optgroup label="${escapeHtml(clientItem.name)}">
+            ${brands
+              .filter((brandItem) => brandItem.clientId === clientItem.id)
+              .map(
+                (brandItem) => `
+                  <option value="${escapeHtml(brandItem.id)}" ${!allBrands && brandItem.id === state.currentBrandId ? "selected" : ""}>
+                    ${escapeHtml(brandItem.shortName)}
+                  </option>
+                `,
+              )
+              .join("")}
+          </optgroup>
+        `,
+      )
+      .join("")}
+  `;
+
+  return `
+    <article class="ai-composer-panel">
+      <div class="ai-composer-head">
+        <div class="smart-icon">${iconSvg("ai")}</div>
+        <div>
+          <span class="eyebrow">Asistente de creacion</span>
+          <h2>Describe la orden y Lumen arma el borrador</h2>
+          <p class="muted">Escribe como se lo dirias al equipo: que necesitas, para que marca, para quien va, fecha, prioridad y entregables.</p>
+        </div>
+      </div>
+      <div class="ai-composer-grid">
+        <div class="field full">
+          <label>Solicitud</label>
+          <textarea class="textarea" id="ai-order-brief" placeholder="Ej: Necesito una matriz de contenido de julio para Silk. Que la trabaje generador y creativo, incluir reels, carruseles y copies. Entrega el 25/05/2026. Es urgente."></textarea>
+        </div>
+        <div class="field">
+          <label>Marca</label>
+          <select class="input" id="ai-order-brand">${brandSelectOptions}</select>
+        </div>
+        <div class="field">
+          <label>Para quien / rol</label>
+          <input class="input" id="ai-order-target" placeholder="Ej: Raquel, diseño, edición, cuentas" />
+        </div>
+        <div class="ai-composer-actions">
+          <button class="button" data-action="draft-work-order-ai">Crear borrador de OT</button>
+          <span class="small-muted">No guarda nada hasta que revises y presiones Crear OT.</span>
+        </div>
+      </div>
+    </article>
   `;
 }
 
@@ -2871,13 +2927,55 @@ function workOrderAiAssignees(category, availableUsers = []) {
   return selected.slice(0, 3);
 }
 
-function buildWorkOrderAiDraft(prompt = "", availableUsers = []) {
-  const brand = getBrand();
+function inferBrandFromAiText(text = "") {
+  const normalized = normalizeAiText(text);
+  const scoredBrands = brands
+    .map((brand) => {
+      const client = getClient(brand.clientId);
+      const terms = [
+        brand.name,
+        brand.shortName,
+        brand.id,
+        brand.name.replace(/\bGT\b/gi, ""),
+        client?.name || "",
+      ]
+        .filter(Boolean)
+        .map(normalizeAiText)
+        .filter((term) => term.length >= 3);
+      const score = terms.reduce((sum, term) => sum + (normalized.includes(term) ? term.length : 0), 0);
+      return { brand, score };
+    })
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return scoredBrands[0]?.brand || null;
+}
+
+function inferMentionedAssignees(text = "", availableUsers = []) {
+  const normalized = normalizeAiText(text);
+  return availableUsers
+    .filter((user) => {
+      const name = normalizeAiText(user.name);
+      const email = normalizeAiText(user.email);
+      const role = normalizeAiText(roleLabels[user.role] || user.role);
+      const nameParts = name.split(" ").filter((part) => part.length > 2);
+      const nameMatched =
+        normalized.includes(name) ||
+        normalized.includes(email) ||
+        nameParts.some((part) => normalized.includes(part) && part.length >= 5);
+      const roleMatched = normalized.includes(role) || normalized.includes(normalizeAiText(user.role));
+      return nameMatched || roleMatched;
+    })
+    .map((user) => user.id);
+}
+
+function buildWorkOrderAiDraft(prompt = "", availableUsers = [], brandOverride = getBrand()) {
+  const brand = brandOverride || getBrand();
   const cleanPrompt = plainText(prompt).trim();
   const category = inferWorkOrderCategory(cleanPrompt);
   const dueDate = parseAiDate(cleanPrompt) || defaultWorkOrderDueDate(category);
   const priority = inferWorkOrderPriority(cleanPrompt, dueDate);
   const categoryLabel = workOrderCategoryLabels[category] || "Solicitud";
+  const mentionedAssignees = inferMentionedAssignees(cleanPrompt, availableUsers);
   const title = cleanPrompt
     ? `${categoryLabel} - ${brand.shortName}`
     : `Nueva ${categoryLabel.toLowerCase()} para ${brand.shortName}`;
@@ -2889,7 +2987,7 @@ function buildWorkOrderAiDraft(prompt = "", availableUsers = []) {
     description: cleanPrompt || `Solicitud de ${categoryLabel.toLowerCase()} para ${brand.shortName}.`,
     subtasks: workOrderAiSubtasks(category),
     materialChanges: workOrderAiMaterialChanges(category, cleanPrompt),
-    assignees: workOrderAiAssignees(category, availableUsers),
+    assignees: Array.from(new Set([...(mentionedAssignees.length ? mentionedAssignees : []), ...workOrderAiAssignees(category, availableUsers)])).slice(0, 4),
   };
 }
 
@@ -2898,13 +2996,13 @@ function renderWorkOrderAiAssistant(isEditing) {
     <div class="ai-order-assistant">
       <div>
         <span class="badge green">IA de OTs</span>
-        <h3>Completar orden con IA</h3>
-        <p class="muted">Convierte una solicitud rapida en campos listos para revisar.</p>
+        <h3>Asistente de creacion</h3>
+        <p class="muted">Describe la orden y a quien va dirigida; el sistema arma titulo, categoria, deadline, subtareas y responsables sugeridos.</p>
       </div>
-      <textarea class="textarea compact-textarea" id="ot-ai-brief" placeholder="Ej: matriz de contenido de julio para Danone, deadline 25/05/2026, incluir formatos para reels y carruseles"></textarea>
+      <textarea class="textarea compact-textarea" id="ot-ai-brief" placeholder="Ej: matriz de contenido de julio para Danone, para generador y creativo, deadline 25/05/2026, incluir formatos para reels y carruseles"></textarea>
       <div class="row wrap">
-        <button class="button-ghost small" data-action="fill-work-order-ai">${isEditing ? "Actualizar campos" : "Completar OT"}</button>
-        <span class="small-muted">Sugiere categoria, prioridad, subtareas y responsables.</span>
+        <button class="button small" data-action="fill-work-order-ai">${isEditing ? "Actualizar borrador" : "Armar borrador"}</button>
+        <span class="small-muted">Luego revisas y guardas manualmente la OT.</span>
       </div>
     </div>
   `;
@@ -5231,18 +5329,57 @@ function refreshWorkOrderGuidancePanels() {
 }
 
 function focusWorkOrderAi() {
-  if (isAllBrandsScope()) {
-    document.querySelector(".brand-selection-wide")?.scrollIntoView({ block: "start", behavior: "smooth" });
-    showToast("Elige una marca para abrir el formulario con IA");
+  const globalAssistant = document.getElementById("ai-order-brief");
+  if (globalAssistant) {
+    globalAssistant.scrollIntoView({ block: "center", behavior: "smooth" });
+    globalAssistant.focus();
+    showToast("Describe la OT y para quien es");
     return;
   }
   document.querySelector(".ai-order-assistant")?.scrollIntoView({ block: "center", behavior: "smooth" });
   document.getElementById("ot-ai-brief")?.focus();
-  showToast("IA de OTs lista para completar la orden");
 }
 
 function focusUrgentOrders() {
   document.querySelector("[data-urgent-orders-panel]")?.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+function draftWorkOrderFromAiComposer() {
+  const brief = document.getElementById("ai-order-brief")?.value.trim() || "";
+  const target = document.getElementById("ai-order-target")?.value.trim() || "";
+  const selectedBrandId = document.getElementById("ai-order-brand")?.value || "";
+  const prompt = [brief, target ? `Para: ${target}` : ""].filter(Boolean).join("\n");
+
+  if (!prompt.trim()) {
+    showToast("Describe la orden para que el asistente arme el borrador");
+    return;
+  }
+
+  const inferredBrand = selectedBrandId
+    ? brands.find((brand) => brand.id === selectedBrandId)
+    : isAllBrandsScope()
+      ? inferBrandFromAiText(prompt)
+      : getBrand();
+
+  if (!inferredBrand) {
+    showToast("No detecte la marca. Elige una marca o mencionala en la solicitud.");
+    document.getElementById("ai-order-brand")?.focus();
+    return;
+  }
+
+  state.currentModule = "work-orders";
+  state.currentBrandId = inferredBrand.id;
+  state.editingWorkOrderId = "";
+  state.viewingWorkOrderId = "";
+  state.focusedWorkOrderId = "";
+  render();
+
+  window.setTimeout(() => {
+    const formPrompt = document.getElementById("ot-ai-brief");
+    if (formPrompt) formPrompt.value = prompt;
+    fillWorkOrderWithAi(prompt);
+    document.querySelector(".work-order-form-band")?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, 80);
 }
 
 function bindAuthEvents() {
@@ -5285,6 +5422,7 @@ async function handleAction(action, id) {
     },
     "export-brand-config": () => showToast("Resumen de marca preparado para compartir internamente"),
     "fill-work-order-ai": () => fillWorkOrderWithAi(),
+    "draft-work-order-ai": () => draftWorkOrderFromAiComposer(),
     "focus-work-order-ai": () => focusWorkOrderAi(),
     "focus-urgent-orders": () => focusUrgentOrders(),
     "optimize-work-order-urgency": () => optimizeWorkOrderUrgency(),
@@ -5690,13 +5828,13 @@ function applySupervisorGateToValues(values, brandId = state.currentBrandId) {
   return values;
 }
 
-function fillWorkOrderWithAi() {
+function fillWorkOrderWithAi(promptOverride = "") {
   if (isAllBrandsScope()) {
     showToast("Selecciona una marca para usar la IA de OTs");
     return;
   }
   const promptInput = document.getElementById("ot-ai-brief");
-  const prompt = promptInput?.value.trim() || "";
+  const prompt = promptOverride || promptInput?.value.trim() || "";
   const fallbackPrompt = [
     document.getElementById("ot-title")?.value,
     document.getElementById("ot-description")?.value,
@@ -5713,7 +5851,7 @@ function fillWorkOrderWithAi() {
 
   const selectedAssignees = new Set(Array.from(document.querySelectorAll("[data-ot-assignee]:checked")).map((input) => input.value));
   const availableUsers = availableWorkOrderAssigneeUsers(selectedAssignees);
-  const draft = buildWorkOrderAiDraft(sourcePrompt, availableUsers);
+  const draft = buildWorkOrderAiDraft(sourcePrompt, availableUsers, getBrand());
   const titleInput = document.getElementById("ot-title");
   const dueDateInput = document.getElementById("ot-due-date");
   const priorityInput = document.getElementById("ot-priority");
@@ -5738,7 +5876,7 @@ function fillWorkOrderWithAi() {
   }
 
   refreshWorkOrderGuidancePanels();
-  showToast("IA completo la OT. Revisa los campos antes de guardar.");
+  showToast("Borrador armado con IA. Revisa y presiona Crear OT para guardarla.");
 }
 
 function optimizeWorkOrderUrgency() {
