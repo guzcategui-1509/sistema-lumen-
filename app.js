@@ -19,6 +19,23 @@ const OPERATIONS_MODE = true;
 const operationalModuleKeys = ["dashboard", "work-orders", "reports", "team", "notifications", "settings"];
 let supabaseClient = null;
 
+function iconSvg(name, className = "ui-icon") {
+  const icons = {
+    dashboard: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+    "work-orders": '<svg viewBox="0 0 24 24"><path d="M9 5h6"/><path d="M9 12h6"/><path d="M9 17h4"/><path d="M8 3h8l2 2v16H6V5l2-2z"/></svg>',
+    notifications: '<svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>',
+    reports: '<svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><rect x="7" y="11" width="3" height="5" rx="1"/><rect x="12" y="7" width="3" height="9" rx="1"/><rect x="17" y="9" width="3" height="7" rx="1"/></svg>',
+    team: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15 16.5a5 5 0 0 1 6 3.5"/></svg>',
+    settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.3 3.1a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 3.1h5l.3-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.5c.1-.3.1-.7.1-1z"/></svg>',
+    ai: '<svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></svg>',
+    alert: '<svg viewBox="0 0 24 24"><path d="M12 3l10 18H2L12 3z"/><path d="M12 9v5"/><path d="M12 18h.01"/></svg>',
+    time: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    archive: '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M6 7v13h12V7"/><path d="M8 3h8l2 4H6l2-4z"/><path d="M10 12h4"/></svg>',
+    brand: '<svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4v10l-8 4-8-4V7z"/><path d="M12 3v18"/><path d="M4 7l8 4 8-4"/></svg>',
+  };
+  return `<span class="${className}" aria-hidden="true">${icons[name] || icons.dashboard}</span>`;
+}
+
 const dataState = {
   mode: "demo",
   loading: true,
@@ -1749,7 +1766,7 @@ function render() {
             .map(
               (module) => `
                 <button class="nav-button ${module.key === state.currentModule ? "active" : ""}" data-module="${module.key}">
-                  <span class="nav-icon">${module.icon}</span>
+                  <span class="nav-icon">${iconSvg(module.key)}</span>
                   <span>${module.label}</span>
                 </button>
               `,
@@ -2245,9 +2262,23 @@ function renderDashboard() {
 }
 
 function renderMetric(label, value, detail) {
+  const lowerLabel = label.toLowerCase();
+  const iconKey = lowerLabel.includes("venc")
+    ? "alert"
+    : lowerLabel.includes("revision")
+      ? "time"
+      : lowerLabel.includes("email") || lowerLabel.includes("notific")
+        ? "notifications"
+        : lowerLabel.includes("usuario") || lowerLabel.includes("responsable") || lowerLabel.includes("destinatario")
+          ? "team"
+          : lowerLabel.includes("marca") || lowerLabel.includes("cliente")
+            ? "brand"
+            : lowerLabel.includes("archiv")
+              ? "archive"
+              : "work-orders";
   return `
     <div class="metric">
-      <div class="metric-label">${label}</div>
+      <div class="metric-label">${iconSvg(iconKey)}<span>${label}</span></div>
       <div class="metric-value">${value}</div>
       <div class="metric-detail">${detail}</div>
     </div>
@@ -2345,6 +2376,80 @@ function renderWorkOrderSetupSection(allBrands) {
         </div>
         <div class="brand-shortcut-grid">
           ${brands.map(renderWorkOrderBrandShortcut).join("")}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderWorkOrderSmartPanel(orders, allBrands) {
+  const urgentOrders = orders
+    .filter((order) => isOpenWorkOrder(order) && (order.priority === "high" || daysUntil(order.dueDate) <= 1))
+    .sort((a, b) => daysUntil(a.dueDate) - daysUntil(b.dueDate))
+    .slice(0, 4);
+  const smartBrand = allBrands ? "" : getBrand().shortName;
+
+  return `
+    <section class="smart-work-order-panel">
+      <article class="smart-card ai-smart-card">
+        <div class="smart-icon">${iconSvg("ai")}</div>
+        <div>
+          <span class="eyebrow">Asistente activo</span>
+          <h2>IA para llenar OTs</h2>
+          <p>${allBrands ? "Selecciona una marca y el formulario abrira el asistente para convertir una solicitud en titulo, categoria, subtareas y responsables." : `Lista para crear o editar ordenes de ${escapeHtml(smartBrand)}.`}</p>
+        </div>
+        <button class="button small" data-action="focus-work-order-ai">${allBrands ? "Elegir marca" : "Usar IA"}</button>
+      </article>
+      <article class="smart-card urgent-smart-card">
+        <div class="smart-icon alert-icon">${iconSvg("alert")}</div>
+        <div>
+          <span class="eyebrow">Alertas</span>
+          <h2>${urgentOrders.length} urgentes</h2>
+          <p>Ordenes vencidas, de alta prioridad o con deadline inmediato aparecen aqui para accionar rapido.</p>
+        </div>
+        <button class="button-danger small" data-action="focus-urgent-orders">Ver alertas</button>
+      </article>
+      <article class="smart-card time-smart-card">
+        <div class="smart-icon">${iconSvg("time")}</div>
+        <div>
+          <span class="eyebrow">Medicion</span>
+          <h2>Bloques de medio dia</h2>
+          <p>El siguiente paso del reporte medira horas entre En proceso y Entregada por rol y area.</p>
+        </div>
+        <button class="button-ghost small" data-module="reports">Ver reporteria</button>
+      </article>
+      <div class="urgent-inline-panel" data-urgent-orders-panel>
+        <div class="section-header compact">
+          <div>
+            <h3 class="section-title">Alertas urgentes visibles</h3>
+            <div class="small-muted">Acciones directas para jefes, cuentas y responsables.</div>
+          </div>
+          <span class="badge ${urgentOrders.length ? "red" : "green"}">${urgentOrders.length ? "Revisar" : "Sin urgencias"}</span>
+        </div>
+        <div class="urgent-inline-list">
+          ${
+            urgentOrders.length
+              ? urgentOrders
+                  .map((order) => {
+                    const brand = getBrand(order.brandId);
+                    const urgency = workOrderUrgency(order);
+                    return `
+                      <div class="urgent-inline-row">
+                        <button class="urgent-inline-main" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
+                          <strong>${escapeHtml(order.id)}</strong>
+                          <span>${escapeHtml(order.title)}</span>
+                          <small>${escapeHtml(getClient(brand.clientId)?.name || "Cliente")} / ${escapeHtml(brand.shortName)} / ${escapeHtml(urgency.label)}</small>
+                        </button>
+                        <div class="row wrap">
+                          <button class="button-ghost small" data-action="view-work-order" data-id="${escapeHtml(order.id)}">Ver</button>
+                          ${canManageWorkOrders() ? `<button class="button-danger small" data-action="send-urgent-alert" data-id="${escapeHtml(order.id)}">Enviar alerta</button>` : ""}
+                        </div>
+                      </div>
+                    `;
+                  })
+                  .join("")
+              : `<div class="empty compact-empty">No hay OTs urgentes en este scope.</div>`
+          }
         </div>
       </div>
     </section>
@@ -3245,6 +3350,7 @@ function renderWorkOrders() {
       ${renderMetric("En revision", orders.filter((order) => order.status === "in_review").length, "Esperando validacion")}
       ${renderMetric(state.showArchivedWorkOrders ? "Archivadas" : "Con email activo", state.showArchivedWorkOrders ? archivedOrders.length : emailOrders.length, state.showArchivedWorkOrders ? "Fuera del panel activo" : "Notifican a responsables")}
     </section>
+    ${renderWorkOrderSmartPanel(orders, allBrands)}
     ${detailPanel}
     ${allBrands ? `${operationsPanel}${timetable}${setupSection}` : `${setupSection}${operationsPanel}${timetable}`}
   `;
@@ -5124,6 +5230,21 @@ function refreshWorkOrderGuidancePanels() {
   }
 }
 
+function focusWorkOrderAi() {
+  if (isAllBrandsScope()) {
+    document.querySelector(".brand-selection-wide")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    showToast("Elige una marca para abrir el formulario con IA");
+    return;
+  }
+  document.querySelector(".ai-order-assistant")?.scrollIntoView({ block: "center", behavior: "smooth" });
+  document.getElementById("ot-ai-brief")?.focus();
+  showToast("IA de OTs lista para completar la orden");
+}
+
+function focusUrgentOrders() {
+  document.querySelector("[data-urgent-orders-panel]")?.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
 function bindAuthEvents() {
   document.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleAction(button.dataset.action, button.dataset.id));
@@ -5164,6 +5285,8 @@ async function handleAction(action, id) {
     },
     "export-brand-config": () => showToast("Resumen de marca preparado para compartir internamente"),
     "fill-work-order-ai": () => fillWorkOrderWithAi(),
+    "focus-work-order-ai": () => focusWorkOrderAi(),
+    "focus-urgent-orders": () => focusUrgentOrders(),
     "optimize-work-order-urgency": () => optimizeWorkOrderUrgency(),
     "create-work-order": () => createWorkOrderFromForm(),
     "view-work-order": () => viewWorkOrder(id),
