@@ -1985,7 +1985,7 @@ function renderAllBrandsDashboard() {
     .slice()
     .sort((a, b) => daysUntil(a.dueDate) - daysUntil(b.dueDate))
     .slice(0, 6);
-  const teamRows = weeklyDigestRows(scopedOrders)
+  const teamRows = weeklyDigestRows(workOrders)
     .sort((a, b) => b.overdue - a.overdue || b.open - a.open || a.user.name.localeCompare(b.user.name));
 
   return `
