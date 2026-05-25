@@ -2168,94 +2168,96 @@ function renderDashboardWorkloadTable(sourceOrders = dashboardScopedOrders()) {
   const rows = weeklyDigestRows(sourceOrders)
     .map((row) => ({ ...row, loadLevel: loadLevel(row) }))
     .sort((a, b) => b.overdue - a.overdue || b.open - a.open || b.review - a.review || a.user.name.localeCompare(b.user.name));
+  const activeRows = rows.filter((row) => row.open || row.overdue || row.review).slice(0, 8);
+  const quietCount = rows.filter((row) => !row.open && !row.overdue && !row.review).length;
 
   return `
     <section class="panel executive-panel">
       <div class="section-header">
         <div>
           <h2 class="section-title">Carga por responsable</h2>
-          <div class="small-muted">Distribución de OTs abiertas y vencidas por persona.</div>
+          <div class="small-muted">Personas con trabajo activo o atrasos. Los detalles se abren solo cuando los necesitas.</div>
         </div>
+        ${quietCount ? `<span class="badge neutral">${quietCount} sin carga activa</span>` : ""}
       </div>
-      <div class="compact-table executive-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Responsable</th>
-              <th>Abiertas</th>
-              <th>Vencidas</th>
-              <th>Revisión</th>
-              <th>Carga</th>
-              <th>Acción</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows
-              .map(
-                (row) => `
-                  <tr>
-                    <td>
+      <div class="executive-accordion-list">
+        ${
+          activeRows
+            .map((row, index) => {
+              const next = row.next;
+              return `
+                <details class="executive-disclosure" ${index === 0 ? "open" : ""}>
+                  <summary>
+                    <span class="summary-main">
                       <strong>${escapeHtml(row.user.name)}</strong>
-                      <div class="muted">${escapeHtml(roleLabels[row.user.role] || row.user.role)}</div>
-                    </td>
-                    <td>${row.open}</td>
-                    <td><span class="${row.overdue ? "text-red" : ""}">${row.overdue}</span></td>
-                    <td>${row.review}</td>
-                    <td><span class="badge ${row.loadLevel.cls}">${row.loadLevel.label}</span></td>
-                    <td><button class="button-ghost small" data-workorder-assignee-filter="${escapeHtml(row.user.id)}">Ver</button></td>
-                  </tr>
-                `,
-              )
-              .join("") || `<tr><td colspan="6"><div class="empty compact-empty">Sin responsables activos</div></td></tr>`}
-          </tbody>
-        </table>
+                      <small>${escapeHtml(roleLabels[row.user.role] || row.user.role)}</small>
+                    </span>
+                    <span class="summary-metrics">
+                      <span>${row.open} abiertas</span>
+                      <span class="${row.overdue ? "text-red" : ""}">${row.overdue} vencidas</span>
+                      <span>${row.review} revisión</span>
+                      <span class="badge ${row.loadLevel.cls}">${row.loadLevel.label}</span>
+                    </span>
+                  </summary>
+                  <div class="disclosure-body">
+                    <div>
+                      <strong>${next ? "Próxima OT" : "Sin pendiente próximo"}</strong>
+                      <p class="muted">${next ? `${next.id} / ${next.title} / ${formatDate(next.dueDate)}` : "Esta persona no tiene una OT abierta en este filtro."}</p>
+                    </div>
+                    <button class="button-ghost small" data-workorder-assignee-filter="${escapeHtml(row.user.id)}">Ver sus OTs</button>
+                  </div>
+                </details>
+              `;
+            })
+            .join("") || `<div class="empty compact-empty">No hay responsables con carga activa en este filtro.</div>`
+        }
       </div>
     </section>
   `;
 }
 
 function renderRiskBrandsTable(sourceOrders = dashboardScopedOrders(), sourceBrands = dashboardScopedBrands()) {
-  const rows = riskyBrandRows(sourceOrders, sourceBrands);
+  const rows = riskyBrandRows(sourceOrders, sourceBrands).slice(0, 8);
   return `
     <section class="panel executive-panel">
       <div class="section-header">
         <div>
           <h2 class="section-title">Marcas que necesitan seguimiento</h2>
-          <div class="small-muted">Marcas con OTs vencidas, en revisión o sin responsable.</div>
+          <div class="small-muted">Solo aparecen marcas con vencidas, revisión, urgencias o falta de responsable.</div>
         </div>
         <button class="button-ghost small" data-module="brands">Ver marcas</button>
       </div>
-      <div class="compact-table executive-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Marca</th>
-              <th>Cliente</th>
-              <th>Abiertas</th>
-              <th>Vencidas</th>
-              <th>Revisión</th>
-              <th>Responsable</th>
-              <th>Acción</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows
-              .map(
-                (row) => `
-                  <tr>
-                    <td><strong>${escapeHtml(row.brand.shortName)}</strong></td>
-                    <td>${escapeHtml(row.client?.name || "Cliente")}</td>
-                    <td>${row.open}</td>
-                    <td><span class="${row.overdue ? "text-red" : ""}">${row.overdue}</span></td>
-                    <td>${row.review}</td>
-                    <td>${escapeHtml(row.responsible)}</td>
-                    <td><button class="button-ghost small" data-brand-jump="${escapeHtml(row.brand.id)}">Ver marca</button></td>
-                  </tr>
-                `,
-              )
-              .join("") || `<tr><td colspan="7"><div class="empty compact-empty">No hay marcas en riesgo en este scope.</div></td></tr>`}
-          </tbody>
-        </table>
+      <div class="risk-card-list">
+        ${
+          rows
+            .map(
+              (row, index) => `
+                <details class="executive-disclosure brand-risk-disclosure" ${index === 0 ? "open" : ""}>
+                  <summary>
+                    <span class="summary-main">
+                      <strong>${escapeHtml(row.brand.shortName)}</strong>
+                      <small>${escapeHtml(row.client?.name || "Cliente")}</small>
+                    </span>
+                    <span class="summary-metrics">
+                      <span>${row.open} abiertas</span>
+                      <span class="${row.overdue ? "text-red" : ""}">${row.overdue} vencidas</span>
+                      <span>${row.review} revisión</span>
+                      ${row.unassigned ? `<span class="badge red">${row.unassigned} sin responsable</span>` : ""}
+                      ${row.urgent ? `<span class="badge amber">${row.urgent} urgentes</span>` : ""}
+                    </span>
+                  </summary>
+                  <div class="disclosure-body">
+                    <div>
+                      <strong>Responsable principal</strong>
+                      <p class="muted">${escapeHtml(row.responsible)}</p>
+                    </div>
+                    <button class="button-ghost small" data-brand-jump="${escapeHtml(row.brand.id)}">Ver marca</button>
+                  </div>
+                </details>
+              `,
+            )
+            .join("") || `<div class="empty compact-empty">No hay marcas en riesgo en este filtro.</div>`
+        }
       </div>
     </section>
   `;
@@ -4818,6 +4820,115 @@ function downloadReportPdf() {
   showToast("Informe imprimible abierto. Usa Guardar como PDF.");
 }
 
+function renderReportClientDisclosure(row, index = 0) {
+  const riskCount = row.lateCompleted + row.overdueOpen;
+  return `
+    <details class="report-disclosure" ${index === 0 && riskCount ? "open" : ""}>
+      <summary>
+        <span class="summary-main">
+          <strong>${escapeHtml(row.client.name)}</strong>
+          <small>${row.brands} marcas / ${row.total} OTs</small>
+        </span>
+        <span class="summary-metrics">
+          <span>${row.open} abiertas</span>
+          <span>${row.completed} entregadas</span>
+          <span class="${riskCount ? "text-red" : ""}">${riskCount} riesgos</span>
+          <span class="badge ${riskCount ? "red" : "green"}">${row.onTime === null ? "Sin cierre" : `${row.onTime}% a tiempo`}</span>
+        </span>
+      </summary>
+      <div class="disclosure-body">
+        <div>
+          <strong>Lectura rápida</strong>
+          <p class="muted">${row.overdueOpen ? `${row.overdueOpen} OTs siguen vencidas abiertas.` : "No hay vencidas abiertas para este cliente."} ${row.lateCompleted ? `${row.lateCompleted} entregas cerraron fuera de fecha.` : ""}</p>
+        </div>
+        <button class="button-ghost small" data-module="work-orders">Ver OTs</button>
+      </div>
+    </details>
+  `;
+}
+
+function renderReportTeamDisclosure(row, index = 0) {
+  const level = loadLevel(row);
+  const next = row.next;
+  return `
+    <details class="report-disclosure" ${index === 0 && (row.overdue || row.open) ? "open" : ""}>
+      <summary>
+        <span class="summary-main">
+          <strong>${escapeHtml(row.user.name)}</strong>
+          <small>${escapeHtml(roleLabels[row.user.role] || row.user.role)}</small>
+        </span>
+        <span class="summary-metrics">
+          <span>${row.open} abiertas</span>
+          <span class="${row.overdue ? "text-red" : ""}">${row.overdue} vencidas</span>
+          <span>${row.review} revisión</span>
+          <span class="badge ${level.cls}">${level.label}</span>
+        </span>
+      </summary>
+      <div class="disclosure-body">
+        <div>
+          <strong>${next ? "Siguiente entrega" : "Sin pendientes"}</strong>
+          <p class="muted">${next ? `${next.id} / ${next.title} / ${formatDate(next.dueDate)}` : "Sin OTs abiertas en este periodo."}</p>
+        </div>
+        <button class="button-ghost small" data-workorder-assignee-filter="${escapeHtml(row.user.id)}">Ver persona</button>
+      </div>
+    </details>
+  `;
+}
+
+function renderReportBrandDisclosure(row, index = 0) {
+  const riskCount = row.overdueOpen + row.lateCompleted;
+  return `
+    <details class="report-disclosure" ${index === 0 && riskCount ? "open" : ""}>
+      <summary>
+        <span class="summary-main">
+          <strong>${escapeHtml(row.brand.shortName)}</strong>
+          <small>${escapeHtml(row.client?.name || "Cliente")} / ${row.total} OTs</small>
+        </span>
+        <span class="summary-metrics">
+          <span>${row.open} abiertas</span>
+          <span>${row.completed} entregadas</span>
+          <span class="${riskCount ? "text-red" : ""}">${riskCount} riesgos</span>
+          <span>${row.completion}% avance</span>
+        </span>
+      </summary>
+      <div class="disclosure-body">
+        <div>
+          <strong>Estado de marca</strong>
+          <p class="muted">${row.review ? `${row.review} OTs en revisión.` : "Sin cola de revisión visible."} ${row.overdueOpen ? `${row.overdueOpen} vencidas abiertas.` : ""}</p>
+        </div>
+        <button class="button-ghost small" data-brand-jump="${escapeHtml(row.brand.id)}">Ver marca</button>
+      </div>
+    </details>
+  `;
+}
+
+function renderReportLateOrder(order) {
+  const brand = getBrand(order.brandId);
+  const urgency = isDeliveredWorkOrder(order) ? "Entregada tarde" : "Vencida abierta";
+  return `
+    <details class="report-disclosure critical-report-disclosure" open>
+      <summary>
+        <span class="summary-main">
+          <strong>${escapeHtml(order.id)}</strong>
+          <small>${escapeHtml(order.title)}</small>
+        </span>
+        <span class="summary-metrics">
+          <span>${escapeHtml(getClient(brand.clientId)?.name || "Cliente")} / ${escapeHtml(brand.shortName)}</span>
+          <span>${escapeHtml(formatDate(order.dueDate))}</span>
+          <span class="badge ${isDeliveredWorkOrder(order) ? "amber" : "red"}">${urgency}</span>
+        </span>
+      </summary>
+      <div class="disclosure-body">
+        <div>
+          <strong>Responsable</strong>
+          <p class="muted">${orderAssignees(order).map(userName).join(", ") || "Sin responsable asignado"}</p>
+        </div>
+        <button class="button-ghost small" data-action="view-work-order" data-id="${escapeHtml(order.id)}">Ver OT</button>
+      </div>
+    </details>
+  `;
+}
+
 function renderReports() {
   const rawScopedOrders = brandOrders();
   const scopedOrders = reportFilteredOrders(rawScopedOrders);
@@ -4836,6 +4947,11 @@ function renderReports() {
     .sort((a, b) => b.overdue - a.overdue || b.open - a.open || b.load - a.load || a.user.name.localeCompare(b.user.name));
   const maxCategory = Math.max(...categoryRows.map((row) => row.total), 1);
   const insights = reportInsights({ overdueOpen, lateCompleted, reviewOrders, teamRows, clientRows });
+  const visibleClientRows = clientRows.filter((row) => row.total).slice(0, 6);
+  const activeTeamRows = teamRows.filter((row) => row.open || row.overdue || row.review).slice(0, 8);
+  const quietTeamCount = teamRows.filter((row) => !row.open && !row.overdue && !row.review).length;
+  const visibleBrandRows = brandRows.filter((row) => row.total).slice(0, 8);
+  const criticalDelayOrders = [...overdueOpen, ...lateCompleted].slice(0, 6);
 
   return `
     <section class="section">
@@ -4887,140 +5003,16 @@ function renderReports() {
         ${renderMetric("Cumplimiento", completedOrders.length ? `${onTimeRate}%` : "N/A", "Entregas completadas a tiempo")}
       </section>
 
-      <section class="grid grid-2 top-aligned-grid">
-        <div class="panel section">
-          <div class="section-header">
-            <div>
-              <h2 class="section-title">Clientes y cumplimiento</h2>
-              <div class="small-muted">Que tanto trabajo se esta haciendo y donde se estan atrasando las entregas.</div>
-            </div>
-            <span class="badge blue">${clientRows.length} clientes</span>
-          </div>
-          <div class="compact-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>Cliente</th>
-                  <th>Abiertas</th>
-                  <th>Entregadas</th>
-                  <th>Fuera de fecha</th>
-                  <th>A tiempo</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${clientRows
-                  .map(
-                    (row) => `
-                      <tr>
-                        <td>
-                          <strong>${row.client.name}</strong>
-                          <div class="muted">${row.brands} marcas / ${row.total} OTs</div>
-                        </td>
-                        <td>${row.open}</td>
-                        <td>${row.completed}</td>
-                        <td><span class="badge ${row.lateCompleted || row.overdueOpen ? "red" : "green"}">${row.lateCompleted} cerradas / ${row.overdueOpen} abiertas</span></td>
-                        <td>${row.onTime === null ? "N/A" : `${row.onTime}%`}</td>
-                      </tr>
-                    `,
-                  )
-                  .join("") || `<tr><td colspan="5"><div class="empty compact-empty">Sin OTs para reportar</div></td></tr>`}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="panel section">
-          <div class="section-header">
-            <div>
-              <h2 class="section-title">Carga por responsable</h2>
-              <div class="small-muted">Todas las personas internas activas, no solo quienes tienen OTs.</div>
-            </div>
-            <span class="badge amber">${openOrders.length} abiertas</span>
-          </div>
-          <div class="team-workload-list report-workload-list">
-            ${teamRows
-              .map(
-                ({ user, open, overdue, review, load }) => `
-                  <div class="team-mini-row report-team-row">
-                    <div>
-                      <strong>${user.name}</strong>
-                      <span class="muted">${roleLabels[user.role] || user.role} / ${open} abiertas / ${review} rev. / ${overdue} venc.</span>
-                    </div>
-                    <div class="bar-track"><div class="bar-fill ${overdue ? "danger-fill" : ""}" style="width:${load}%"></div></div>
-                  </div>
-                `,
-              )
-              .join("") || `<div class="empty compact-empty">Sin equipo interno activo</div>`}
-          </div>
-        </div>
-      </section>
-
-      <section class="grid grid-2 top-aligned-grid">
-        <div class="panel section">
-          <div class="section-header">
-            <div>
-              <h2 class="section-title">Carga por marca</h2>
-              <div class="small-muted">Vista rápida para entrar a la marca que necesita seguimiento.</div>
-            </div>
-            <span class="badge">${brandRows.length} marcas</span>
-          </div>
-          <div class="brand-report-list">
-            ${brandRows
-              .map(
-                (row) => `
-                  <button class="brand-report-row" data-brand-jump="${row.brand.id}">
-                    <div>
-                      <strong>${row.brand.shortName}</strong>
-                      <span>${row.client?.name || "Cliente"} / ${row.total} OTs</span>
-                    </div>
-                    <div class="report-row-metrics">
-                      <span>${row.open} abiertas</span>
-                      <span>${row.completed} entregadas</span>
-                      <span class="${row.overdueOpen || row.lateCompleted ? "text-red" : ""}">${row.overdueOpen + row.lateCompleted} riesgos</span>
-                    </div>
-                    <div class="mini-progress"><div style="width:${row.completion}%"></div></div>
-                  </button>
-                `,
-              )
-              .join("") || `<div class="empty compact-empty">Sin marcas para reportar</div>`}
-          </div>
-        </div>
-
-        <div class="panel section">
-          <div class="section-header">
-            <div>
-              <h2 class="section-title">Carga por tipo de entregable</h2>
-              <div class="small-muted">Qué se está moviendo: diseño, copy, pauta, producción y más.</div>
-            </div>
-            <span class="badge blue">${categoryRows.length} categorías</span>
-          </div>
-          <div class="bar-chart">
-            ${categoryRows
-              .map(
-                (row) => `
-                  <div class="bar-row report-bar-row">
-                    <span>${row.label}</span>
-                    <div class="bar-track"><div class="bar-fill" style="width:${Math.max(8, percent(row.total, maxCategory))}%"></div></div>
-                    <strong>${row.total}</strong>
-                    <small>${row.open} abiertas / ${row.completed} entregadas</small>
-                  </div>
-                `,
-              )
-              .join("") || `<div class="empty compact-empty">Aún no hay categorías con OTs</div>`}
-          </div>
-        </div>
-      </section>
-
-      <section class="grid grid-2 top-aligned-grid">
-        <div class="panel section">
+      <section class="report-command-stack">
+        <div class="panel section report-priority-panel">
           <div class="section-header">
             <div>
               <h2 class="section-title">Qué revisar primero</h2>
-              <div class="small-muted">Lectura accionable para decidir qué revisar primero.</div>
+              <div class="small-muted">Lectura accionable para decidir dónde poner atención sin abrir todas las tablas.</div>
             </div>
             <span class="badge blue">${insights.length} insights</span>
           </div>
-          <div class="stack">
+          <div class="insight-grid">
             ${insights
               .map(
                 (insight) => `
@@ -5040,29 +5032,75 @@ function renderReports() {
         <div class="panel section">
           <div class="section-header">
             <div>
+              <h2 class="section-title">Clientes y cumplimiento</h2>
+              <div class="small-muted">Acordeones por cliente. Abre solo el que quieras revisar.</div>
+            </div>
+            <span class="badge blue">${clientRows.length} clientes</span>
+          </div>
+          <div class="report-accordion-list">
+            ${visibleClientRows.map(renderReportClientDisclosure).join("") || `<div class="empty compact-empty">Sin OTs para reportar</div>`}
+          </div>
+        </div>
+
+        <div class="panel section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Carga por responsable</h2>
+              <div class="small-muted">Solo personas con carga activa. El resto queda resumido para no hacer scroll innecesario.</div>
+            </div>
+            <div class="row wrap">
+              <span class="badge amber">${openOrders.length} abiertas</span>
+              ${quietTeamCount ? `<span class="badge neutral">${quietTeamCount} sin carga</span>` : ""}
+            </div>
+          </div>
+          <div class="report-accordion-list">
+            ${activeTeamRows.map(renderReportTeamDisclosure).join("") || `<div class="empty compact-empty">Sin equipo con carga activa en este periodo.</div>`}
+          </div>
+        </div>
+
+        <div class="panel section">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Marcas y entregables</h2>
+              <div class="small-muted">Resumen compacto de marcas activas y tipos de trabajo del periodo.</div>
+            </div>
+            <span class="badge">${brandRows.length} marcas</span>
+          </div>
+          <div class="report-split">
+            <div class="report-accordion-list">
+              ${visibleBrandRows.map(renderReportBrandDisclosure).join("") || `<div class="empty compact-empty">Sin marcas para reportar</div>`}
+            </div>
+            <div class="category-chip-panel">
+              <strong>Carga por tipo de entregable</strong>
+              <div class="category-chip-cloud">
+                ${
+                  categoryRows
+                    .map(
+                      (row) => `
+                        <span class="category-chip">
+                          <strong>${escapeHtml(row.label)}</strong>
+                          <small>${row.total} total / ${row.open} abiertas</small>
+                          <i style="width:${Math.max(10, percent(row.total, maxCategory))}%"></i>
+                        </span>
+                      `,
+                    )
+                    .join("") || `<span class="muted">Aún no hay categorías con OTs.</span>`
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel section">
+          <div class="section-header">
+            <div>
               <h2 class="section-title">OTs atrasadas críticas</h2>
               <div class="small-muted">Abiertas vencidas y entregas completadas fuera de fecha.</div>
             </div>
-	            <button class="button-ghost small" data-module="work-orders">Abrir panel</button>
+            <button class="button-ghost small" data-module="work-orders">Abrir panel</button>
           </div>
-          <div class="stack">
-            ${[...overdueOpen, ...lateCompleted]
-              .slice(0, 8)
-              .map((order) => {
-                const brand = getBrand(order.brandId);
-                return `
-                  <div class="mini-card">
-                    <div class="row between">
-                      <strong>${order.id}</strong>
-                      <span class="badge ${isDeliveredWorkOrder(order) ? "amber" : "red"}">${isDeliveredWorkOrder(order) ? "Entregada tarde" : "Vencida abierta"}</span>
-                    </div>
-                    <span>${order.title}</span>
-                    <span class="muted">${getClient(brand.clientId)?.name || "Cliente"} / ${brand.shortName} / ${formatDate(order.dueDate)}</span>
-                    <button class="button-ghost small" data-action="view-work-order" data-id="${order.id}">Ver OT</button>
-                  </div>
-                `;
-              })
-              .join("") || `<div class="empty compact-empty">Sin atrasos visibles en este scope</div>`}
+          <div class="report-accordion-list">
+            ${criticalDelayOrders.map(renderReportLateOrder).join("") || `<div class="empty compact-empty">Sin atrasos visibles en este scope</div>`}
           </div>
         </div>
       </section>
