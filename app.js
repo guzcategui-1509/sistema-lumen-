@@ -380,7 +380,7 @@ const brands = [
 
 const users = loadStoredCollection("lumen_users_v1", []);
 
-const demoWorkOrdersResetVersion = "2026-05-05-clean-work-orders";
+const demoWorkOrdersResetVersion = "2026-05-26-clean-all-test-work-orders";
 if (localStorage.getItem("lumen_work_orders_reset_version") !== demoWorkOrdersResetVersion) {
   localStorage.removeItem("lumen_work_orders_v1");
   localStorage.setItem("lumen_work_orders_reset_version", demoWorkOrdersResetVersion);
