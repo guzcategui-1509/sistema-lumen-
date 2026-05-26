@@ -778,10 +778,15 @@ const state = {
   editingWorkOrderId: "",
   viewingWorkOrderId: "",
   focusedWorkOrderId: "",
+  creatingWorkOrder: false,
   dashboardMonth: "",
   workOrderMonth: "",
+  workOrderView: "priority",
+  workOrderGroupLimits: {},
+  calendarView: "month",
   showArchivedWorkOrders: false,
   workOrderFilters: {
+    search: "",
     assignee: "",
     status: "",
     priority: "",
@@ -2274,6 +2279,13 @@ function renderExecutiveDashboard() {
 
   return `
     ${renderDashboardHeader()}
+    <section class="dashboard-status-line">
+      <strong>Hay ${overdueOrders.length} OTs vencidas, ${unassignedOrders.length} sin responsable y ${reviewOrders.length} en revisión.</strong>
+      <div class="row wrap">
+        <button class="button-ghost small" data-workorder-quick-filter="critical">Ver críticas</button>
+        <button class="button-ghost small" data-workorder-quick-filter="unassigned">Asignar responsables</button>
+      </div>
+    </section>
     <section class="executive-kpis">
       ${renderKpiCard("OTs abiertas", openOrders.length, "Trabajo activo", "dark")}
       ${renderKpiCard("Vencidas", overdueOrders.length, "Necesitan acción", overdueOrders.length ? "danger" : "neutral")}
@@ -2283,7 +2295,7 @@ function renderExecutiveDashboard() {
     <section class="panel attention-panel">
       <div class="section-header">
         <div>
-          <h2 class="section-title">Requiere atención</h2>
+          <h2 class="section-title">Prioridades de hoy</h2>
           <div class="small-muted">OTs vencidas, urgentes o bloqueadas que necesitan acción.</div>
         </div>
         ${criticalOrders.length > 5 ? `<button class="button-ghost small" data-workorder-quick-filter="critical">Ver todas las OTs críticas</button>` : ""}
@@ -2363,9 +2375,122 @@ function renderDashboardDeadlineCalendar(sourceOrders, title = "Calendario mensu
   `;
 }
 
+function weekDaysFromToday() {
+  const today = todayAtNoon();
+  const dayIndex = (today.getDay() + 6) % 7;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - dayIndex);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + index);
+    return {
+      label: ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"][index],
+      iso: isoDateFromDate(date),
+      day: date.getDate(),
+      isToday: isoDateFromDate(date) === isoDateFromDate(today),
+    };
+  });
+}
+
+function renderWeeklyDeadlineCalendar(sourceOrders) {
+  const days = weekDaysFromToday();
+  return `
+    <section class="panel section dashboard-calendar-panel">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Semana de deadlines</h2>
+          <div class="small-muted">Vista rápida de lunes a domingo con las OTs del periodo.</div>
+        </div>
+        <span class="badge blue">${sourceOrders.filter((order) => days.some((day) => day.iso === String(order.dueDate || "").slice(0, 10))).length} OTs</span>
+      </div>
+      <div class="deadline-week-grid">
+        ${days
+          .map((day) => {
+            const dayOrders = sourceOrders.filter((order) => String(order.dueDate || "").slice(0, 10) === day.iso);
+            return `
+              <article class="deadline-week-day ${day.isToday ? "today" : ""}">
+                <div class="deadline-week-head">
+                  <strong>${day.label}</strong>
+                  <span>${day.day}</span>
+                </div>
+                <div class="deadline-week-items">
+                  ${
+                    dayOrders.length
+                      ? dayOrders
+                          .slice(0, 6)
+                          .map((order) => {
+                            const urgency = workOrderUrgency(order);
+                            return `
+                              <button class="deadline-week-item ${urgency.cls}" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
+                                <strong>${escapeHtml(order.id)}</strong>
+                                <span>${escapeHtml(order.title)}</span>
+                              </button>
+                            `;
+                          })
+                          .join("")
+                      : `<span class="muted">Sin OTs</span>`
+                  }
+                  ${dayOrders.length > 6 ? `<span class="deadline-more">+${dayOrders.length - 6} más</span>` : ""}
+                </div>
+              </article>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderDeadlineList(sourceOrders) {
+  const ordered = sourceOrders
+    .slice()
+    .filter((order) => order.dueDate)
+    .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+  const grouped = ordered.reduce((acc, order) => {
+    const key = String(order.dueDate || "").slice(0, 10);
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(order);
+    return acc;
+  }, {});
+  const days = Object.keys(grouped);
+  return `
+    <section class="panel section dashboard-calendar-panel">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Lista por fecha</h2>
+          <div class="small-muted">Deadlines agrupados por día para revisar sin calendario visual.</div>
+        </div>
+        <span class="badge blue">${ordered.length} OTs</span>
+      </div>
+      <div class="deadline-list">
+        ${
+          days.length
+            ? days
+                .map(
+                  (day) => `
+                    <details class="deadline-list-group" ${days.indexOf(day) === 0 ? "open" : ""}>
+                      <summary>
+                        <strong>${escapeHtml(formatDate(day))}</strong>
+                        <span>${grouped[day].length} OTs</span>
+                      </summary>
+                      <div class="deadline-list-items">
+                        ${grouped[day].map((order) => renderOperationOrderRow(order, true)).join("")}
+                      </div>
+                    </details>
+                  `,
+                )
+                .join("")
+            : `<div class="empty compact-empty">Sin deadlines registrados.</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
 function renderCalendarWorkspace() {
   const orders = brandOrders();
   const openOrders = orders.filter(isOpenWorkOrder);
+  const calendarView = state.calendarView || "month";
   return `
     <section class="section">
       <section class="panel brand-hero calendar-hero">
@@ -2382,12 +2507,18 @@ function renderCalendarWorkspace() {
         </div>
       </section>
       <div class="segmented calendar-tabs" aria-label="Vistas de calendario">
-        <button class="active" type="button">Mes</button>
-        <button type="button">Semana</button>
-        <button type="button">Lista</button>
+        <button class="${calendarView === "month" ? "active" : ""}" type="button" data-calendar-view="month">Mes</button>
+        <button class="${calendarView === "week" ? "active" : ""}" type="button" data-calendar-view="week">Semana</button>
+        <button class="${calendarView === "list" ? "active" : ""}" type="button" data-calendar-view="list">Lista</button>
       </div>
-      ${renderDashboardDeadlineCalendar(orders, "Calendario mensual de deadlines", isAllBrandsScope() ? "OTs de todas las marcas" : getBrand().shortName)}
-      ${renderWorkOrderMonthTimeline(openOrders)}
+      ${
+        calendarView === "week"
+          ? renderWeeklyDeadlineCalendar(orders)
+          : calendarView === "list"
+            ? renderDeadlineList(orders)
+            : renderDashboardDeadlineCalendar(orders, "Calendario mensual de deadlines", isAllBrandsScope() ? "OTs de todas las marcas" : getBrand().shortName)
+      }
+      ${calendarView === "month" ? renderWorkOrderMonthTimeline(openOrders) : ""}
     </section>
   `;
 }
@@ -3516,7 +3647,9 @@ function renderWorkOrderDetailPanel(order) {
   const archived = isArchivedWorkOrder(order);
 
   return `
-    <section class="panel section work-order-detail-panel" data-order-detail="${escapeHtml(order.id)}">
+    <button class="drawer-backdrop" type="button" data-action="close-work-order-detail" aria-label="Cerrar detalle de OT"></button>
+    <aside class="work-order-detail-drawer" data-order-detail="${escapeHtml(order.id)}" aria-label="Detalle de orden de trabajo">
+      <div class="drawer-panel">
       <div class="section-header">
         <div>
           <div class="row wrap">
@@ -3615,20 +3748,22 @@ function renderWorkOrderDetailPanel(order) {
           `
           : ""
       }
-    </section>
+      </div>
+    </aside>
   `;
 }
 
 function renderWorkOrders() {
   const allScopeOrders = brandOrders(state.currentBrandId, { includeArchived: true });
   const archivedOrders = allScopeOrders.filter(isArchivedWorkOrder);
-  const activeScopeOrders = state.showArchivedWorkOrders ? archivedOrders : allScopeOrders.filter((order) => !isArchivedWorkOrder(order));
+  const browsingArchived = state.showArchivedWorkOrders || state.workOrderFilters?.quick === "archived";
+  const activeScopeOrders = browsingArchived ? archivedOrders : allScopeOrders.filter((order) => !isArchivedWorkOrder(order));
   const orders = filterWorkOrdersForPanel(activeScopeOrders);
   const openOrders = orders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
   const allBrands = isAllBrandsScope();
-  const detailPanel = renderWorkOrderDetailPanel(selectedViewingOrder());
-  const setupSection = renderWorkOrderSetupSection(allBrands);
+  const detailPanel = state.editingWorkOrderId ? "" : renderWorkOrderDetailPanel(selectedViewingOrder());
+  const setupSection = state.creatingWorkOrder || state.editingWorkOrderId ? renderWorkOrderSetupSection(allBrands) : "";
   const operationsPanel = renderWorkOrderOperationsPanel(orders, allBrands, archivedOrders.length);
   return `
     ${renderWorkOrdersHeader(allBrands)}
@@ -3639,9 +3774,9 @@ function renderWorkOrders() {
       ${renderKpiCard("Sin responsable", openOrders.filter((order) => !orderAssignees(order).length).length, "Pendientes de asignar", openOrders.some((order) => !orderAssignees(order).length) ? "danger" : "neutral")}
     </section>
     ${renderWorkOrderFilters(allBrands)}
-    ${detailPanel}
-    ${operationsPanel}
     ${setupSection}
+    ${operationsPanel}
+    ${detailPanel}
   `;
 }
 
@@ -3657,6 +3792,8 @@ function workOrderMatchesQuickFilter(order, filter) {
   if (!filter) return true;
   const dueDays = daysUntil(order.dueDate);
   const hasAssignee = orderAssignees(order).length > 0;
+  if (filter === "archived") return isArchivedWorkOrder(order);
+  if (filter === "new") return order.status === "new";
   if (filter === "critical") return criticalWorkOrders([order]).length > 0;
   if (filter === "overdue") return isOpenWorkOrder(order) && dueDays < 0;
   if (filter === "today") return isOpenWorkOrder(order) && dueDays === 0;
@@ -3670,6 +3807,24 @@ function workOrderMatchesQuickFilter(order, filter) {
 function filterWorkOrdersForPanel(orders) {
   const filters = state.workOrderFilters || {};
   return orders.filter((order) => {
+    const search = (filters.search || "").trim().toLowerCase();
+    if (search) {
+      const brand = getBrand(order.brandId);
+      const client = getClient(brand.clientId);
+      const haystack = [
+        order.id,
+        order.title,
+        order.description,
+        brand.shortName,
+        brand.name,
+        client?.name,
+        orderAssignees(order).map(userName).join(" "),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
     if (filters.assignee && !orderAssignees(order).includes(filters.assignee)) return false;
     if (filters.status && order.status !== filters.status) return false;
     if (filters.priority && order.priority !== filters.priority) return false;
@@ -3687,15 +3842,19 @@ function renderQuickFilterChip(value, label) {
 function renderWorkOrderFilters(allBrands) {
   const filters = state.workOrderFilters || {};
   return `
-    <section class="panel section work-order-filter-panel">
+    <section class="panel section work-order-filter-panel work-order-control-bar">
       <div class="section-header">
         <div>
-          <h2 class="section-title">Filtros de seguimiento</h2>
-          <div class="small-muted">Encuentra rápido OTs vencidas, sin responsable, en revisión o de alta prioridad.</div>
+          <h2 class="section-title">Bandeja operativa</h2>
+          <div class="small-muted">Busca, filtra y abre solo el grupo que necesitas revisar.</div>
         </div>
         <button class="button-ghost small" data-action="clear-work-order-filters">Limpiar filtros</button>
       </div>
       <div class="form-grid work-order-filter-grid">
+        <div class="field search-field">
+          <label>Buscar</label>
+          <input class="input" data-workorder-filter="search" placeholder="Buscar por OT, marca, título o responsable" value="${escapeHtml(filters.search || "")}" />
+        </div>
         <div class="field">
           <label>Cliente / marca</label>
           <select class="input js-brand-select">
@@ -3737,73 +3896,285 @@ function renderWorkOrderFilters(allBrands) {
           <label>Vencimiento</label>
           <select class="input" data-workorder-filter="quick">
             <option value="">Todos</option>
+            <option value="critical" ${filters.quick === "critical" ? "selected" : ""}>Críticas</option>
             <option value="overdue" ${filters.quick === "overdue" ? "selected" : ""}>Vencidas</option>
             <option value="today" ${filters.quick === "today" ? "selected" : ""}>Hoy</option>
             <option value="week" ${filters.quick === "week" ? "selected" : ""}>Esta semana</option>
+            <option value="archived" ${filters.quick === "archived" ? "selected" : ""}>Archivadas</option>
           </select>
         </div>
       </div>
       <div class="quick-chip-row">
+        ${renderQuickFilterChip("critical", "Críticas")}
         ${renderQuickFilterChip("overdue", "Vencidas")}
-        ${renderQuickFilterChip("today", "Hoy")}
-        ${renderQuickFilterChip("week", "Esta semana")}
         ${renderQuickFilterChip("unassigned", "Sin responsable")}
         ${renderQuickFilterChip("review", "En revisión")}
-        ${renderQuickFilterChip("high", "Alta prioridad")}
+        ${renderQuickFilterChip("today", "Hoy")}
+        ${renderQuickFilterChip("week", "Esta semana")}
+        ${renderQuickFilterChip("new", "Nuevas")}
+        ${renderQuickFilterChip("archived", "Archivadas")}
       </div>
     </section>
   `;
 }
 
-function renderWorkOrderOperationsPanel(orders, allBrands, archivedCount = 0) {
-  const sortedOrders = orders
-    .slice()
-    .sort((a, b) => {
-      const openDiff = Number(isOpenWorkOrder(b)) - Number(isOpenWorkOrder(a));
-      if (openDiff) return openDiff;
-      return daysUntil(a.dueDate) - daysUntil(b.dueDate);
+function sortOperationalOrders(orders) {
+  return orders.slice().sort((a, b) => {
+    const scoreDiff = workOrderCriticalScore(b) - workOrderCriticalScore(a);
+    if (scoreDiff) return scoreDiff;
+    const openDiff = Number(isOpenWorkOrder(b)) - Number(isOpenWorkOrder(a));
+    if (openDiff) return openDiff;
+    return daysUntil(a.dueDate) - daysUntil(b.dueDate);
+  });
+}
+
+function takeWorkOrderGroup(orders, usedIds, predicate) {
+  const picked = orders.filter((order) => !usedIds.has(order.id) && predicate(order));
+  picked.forEach((order) => usedIds.add(order.id));
+  return picked;
+}
+
+function buildPriorityWorkOrderGroups(orders) {
+  const sorted = sortOperationalOrders(orders);
+  const usedIds = new Set();
+  const critical = takeWorkOrderGroup(sorted, usedIds, (order) => {
+    const dueDays = daysUntil(order.dueDate);
+    return isOpenWorkOrder(order) && (dueDays < 0 || dueDays <= 1 || order.priority === "high");
+  });
+  const unassigned = takeWorkOrderGroup(sorted, usedIds, (order) => isOpenWorkOrder(order) && !orderAssignees(order).length);
+  const review = takeWorkOrderGroup(sorted, usedIds, (order) => order.status === "in_review");
+  const inProgress = takeWorkOrderGroup(sorted, usedIds, (order) => order.status === "in_progress");
+  const fresh = takeWorkOrderGroup(sorted, usedIds, (order) => order.status === "new");
+  const delivered = takeWorkOrderGroup(sorted, usedIds, (order) => isDeliveredWorkOrder(order));
+  const archived = takeWorkOrderGroup(sorted, usedIds, (order) => isArchivedWorkOrder(order));
+
+  return [
+    {
+      key: "critical",
+      title: "Críticas / vencidas",
+      description: "Vencidas, alta prioridad o con deadline inmediato.",
+      orders: critical,
+      open: true,
+      tone: "danger",
+    },
+    {
+      key: "unassigned",
+      title: "Sin responsable",
+      description: "Necesitan asignación antes de avanzar.",
+      orders: unassigned,
+      open: false,
+      tone: "warning",
+    },
+    {
+      key: "review",
+      title: "En revisión interna",
+      description: "Esperando validación o cambios internos.",
+      orders: review,
+      open: false,
+      tone: "warning",
+    },
+    {
+      key: "in_progress",
+      title: "En proceso",
+      description: "Trabajo activo del equipo.",
+      orders: inProgress,
+      open: false,
+      tone: "info",
+    },
+    {
+      key: "new",
+      title: "Nuevas",
+      description: "Entradas recientes por iniciar.",
+      orders: fresh,
+      open: false,
+      tone: "neutral",
+    },
+    {
+      key: "delivered",
+      title: "Entregadas / programadas",
+      description: "Cerradas operativamente o listas para publicar.",
+      orders: delivered,
+      open: false,
+      tone: "success",
+    },
+    {
+      key: "archived",
+      title: "Archivadas",
+      description: "Fuera del panel activo.",
+      orders: archived,
+      open: state.showArchivedWorkOrders || state.workOrderFilters?.quick === "archived",
+      tone: "neutral",
+    },
+  ].filter((group) => group.orders.length || ["critical", "unassigned", "review", "in_progress", "new"].includes(group.key));
+}
+
+function buildStatusWorkOrderGroups(orders) {
+  const statusOrder = ["new", "in_progress", "in_review", "client_approved", "scheduled", "completed", "cancelled"];
+  return statusOrder
+    .map((status) => ({
+      key: `status-${status}`,
+      title: workOrderStatusLabels[status] || status,
+      description: "Órdenes agrupadas por etapa actual.",
+      orders: sortOperationalOrders(orders.filter((order) => order.status === status && !isArchivedWorkOrder(order))),
+      open: status === "in_review" || status === "in_progress",
+      tone: status === "completed" || status === "client_approved" || status === "scheduled" ? "success" : "neutral",
+    }))
+    .filter((group) => group.orders.length);
+}
+
+function buildResponsibleWorkOrderGroups(orders) {
+  const groups = [];
+  const unassigned = sortOperationalOrders(orders.filter((order) => !orderAssignees(order).length && isOpenWorkOrder(order)));
+  if (unassigned.length) {
+    groups.push({
+      key: "responsible-unassigned",
+      title: "Sin responsable",
+      description: "Órdenes que necesitan dueño.",
+      orders: unassigned,
+      open: true,
+      tone: "warning",
     });
-  const statusRows = Object.entries(workOrderEditableStatusLabels).map(([status, label]) => ({
-    status,
-    label,
-    count: orders.filter((order) => order.status === status).length,
-  }));
+  }
+
+  internalUsers()
+    .map((user) => ({
+      user,
+      orders: sortOperationalOrders(orders.filter((order) => orderAssignees(order).includes(user.id))),
+    }))
+    .filter((entry) => entry.orders.length)
+    .sort((a, b) => b.orders.filter(isOpenWorkOrder).length - a.orders.filter(isOpenWorkOrder).length)
+    .forEach(({ user, orders: userOrders }) => {
+      const open = userOrders.filter(isOpenWorkOrder).length;
+      const overdue = userOrders.filter((order) => isOpenWorkOrder(order) && daysUntil(order.dueDate) < 0).length;
+      groups.push({
+        key: `responsible-${user.id}`,
+        title: `${user.name}`,
+        description: `${open} abiertas / ${overdue} vencidas`,
+        orders: userOrders,
+        open: overdue > 0,
+        tone: overdue ? "danger" : "neutral",
+      });
+    });
+  return groups;
+}
+
+function buildBrandWorkOrderGroups(orders) {
+  return brands
+    .map((brand) => {
+      const brandGroupOrders = sortOperationalOrders(orders.filter((order) => order.brandId === brand.id));
+      const open = brandGroupOrders.filter(isOpenWorkOrder).length;
+      const overdue = brandGroupOrders.filter((order) => isOpenWorkOrder(order) && daysUntil(order.dueDate) < 0).length;
+      return {
+        key: `brand-${brand.id}`,
+        title: brand.shortName,
+        description: `${getClient(brand.clientId)?.name || "Cliente"} / ${open} abiertas / ${overdue} vencidas`,
+        orders: brandGroupOrders,
+        open: overdue > 0,
+        tone: overdue ? "danger" : "neutral",
+      };
+    })
+    .filter((group) => group.orders.length);
+}
+
+function workOrderInboxGroups(orders) {
+  if (state.workOrderView === "status") return buildStatusWorkOrderGroups(orders);
+  if (state.workOrderView === "responsible") return buildResponsibleWorkOrderGroups(orders);
+  if (state.workOrderView === "brand") return buildBrandWorkOrderGroups(orders);
+  return buildPriorityWorkOrderGroups(orders);
+}
+
+function renderWorkOrderViewSwitch() {
+  const views = [
+    ["priority", "Prioridad"],
+    ["status", "Estado"],
+    ["responsible", "Responsable"],
+    ["brand", "Marca"],
+  ];
+  return `
+    <div class="view-switch" aria-label="Vista de órdenes">
+      ${views
+        .map(
+          ([value, label]) => `
+            <button class="${state.workOrderView === value ? "active" : ""}" type="button" data-workorder-view="${value}">
+              ${label}
+            </button>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function workOrderGroupLimit(groupKey) {
+  return state.workOrderGroupLimits?.[groupKey] || 10;
+}
+
+function renderWorkOrderInboxGroup(group, allBrands) {
+  const limit = workOrderGroupLimit(group.key);
+  const visibleOrders = group.orders.slice(0, limit);
+  const hiddenCount = Math.max(0, group.orders.length - visibleOrders.length);
+  const openAttr = group.open || limit > 10 ? "open" : "";
+  return `
+    <details class="work-order-inbox-group group-${group.tone || "neutral"}" ${openAttr}>
+      <summary>
+        <span class="group-summary-main">
+          <strong>${escapeHtml(group.title)}</strong>
+          <small>${escapeHtml(group.description || "")}</small>
+        </span>
+        <span class="group-count">${group.orders.length}</span>
+      </summary>
+      <div class="work-order-inbox-body">
+        ${
+          visibleOrders.length
+            ? `
+              <div class="compact-order-list">
+                ${visibleOrders.map((order) => renderOperationOrderRow(order, allBrands)).join("")}
+              </div>
+              ${
+                hiddenCount
+                  ? `<button class="button-ghost small show-more-row" data-workorder-show-more="${escapeHtml(group.key)}">Ver ${hiddenCount} más</button>`
+                  : ""
+              }
+            `
+            : `<div class="empty compact-empty">Sin OTs en este grupo.</div>`
+        }
+      </div>
+    </details>
+  `;
+}
+
+function renderWorkOrderOperationsPanel(orders, allBrands, archivedCount = 0) {
+  const groups = workOrderInboxGroups(orders);
+  const visibleCount = groups.reduce((sum, group) => sum + group.orders.length, 0);
+  const viewLabel = {
+    priority: "Vista por prioridad",
+    status: "Vista por estado",
+    responsible: "Vista por responsable",
+    brand: "Vista por marca",
+  }[state.workOrderView || "priority"];
 
   return `
-    <section class="panel section operations-panel">
+    <section class="panel section operations-panel inbox-panel">
       <div class="section-header">
         <div>
-          <h2 class="section-title">${state.showArchivedWorkOrders ? "OTs archivadas" : "Lista operativa de OTs"}</h2>
-          <div class="small-muted">${state.showArchivedWorkOrders ? "Órdenes fuera del flujo activo. Puedes restaurarlas cuando vuelvan a moverse." : "Gestiona estado, responsable, fechas, archivos y seguimiento desde una sola lista."}</div>
+          <h2 class="section-title">${state.showArchivedWorkOrders ? "OTs archivadas" : viewLabel}</h2>
+          <div class="small-muted">${visibleCount} OTs visibles. Solo abre el grupo que necesitas atender.</div>
         </div>
         <div class="row wrap">
           <button class="button-ghost small" data-action="toggle-archived-work-orders">
             ${state.showArchivedWorkOrders ? "Ocultar archivadas" : `Ver archivadas (${archivedCount})`}
           </button>
           <button class="button-ghost small" data-module="team">Ver carga equipo</button>
-          <button class="button-ghost small" data-module="notifications">Reglas email</button>
         </div>
       </div>
-      <div class="status-summary-strip">
-        ${statusRows
-          .map(
-            (row) => `
-              <div class="status-summary-card status-${row.status}">
-                <strong>${row.count}</strong>
-                <span>${row.label}</span>
-              </div>
-            `,
-          )
-          .join("")}
-        <div class="status-summary-card status-archived">
-          <strong>${archivedCount}</strong>
-          <span>Archivadas</span>
-        </div>
+      <div class="inbox-toolbar">
+        ${renderWorkOrderViewSwitch()}
+        <span class="small-muted">Default: críticas abiertas, todo lo demás colapsado.</span>
       </div>
-      <div class="operations-list">
+      <div class="work-order-inbox">
         ${
-          sortedOrders.length
-            ? sortedOrders.map((order) => renderOperationOrderRow(order, allBrands)).join("")
+          groups.length
+            ? groups.map((group) => renderWorkOrderInboxGroup(group, allBrands)).join("")
             : `<div class="empty compact-empty">Sin OTs en este scope</div>`
         }
       </div>
@@ -3816,15 +4187,15 @@ function renderOperationOrderRow(order, allBrands) {
   const files = orderFiles(order);
   const urgency = workOrderUrgency(order);
   const brand = getBrand(order.brandId);
-  const canManage = canManageWorkOrders();
   const archived = isArchivedWorkOrder(order);
   return `
-    <article class="operation-order-row ${order.id === state.focusedWorkOrderId ? "focused-row" : ""} ${archived ? "archived-row" : ""}">
-      <button class="operation-order-main" data-action="view-work-order" data-id="${order.id}">
+    <article class="operation-order-row compact-order-row ${order.id === state.focusedWorkOrderId ? "focused-row" : ""} ${archived ? "archived-row" : ""}">
+      <button class="operation-order-main compact-order-main" data-action="view-work-order" data-id="${order.id}">
         <span class="status-dot ${urgency.cls}"></span>
         <span>
-          <strong>${escapeHtml(order.id)} / ${escapeHtml(order.title)}</strong>
-          <small>${escapeHtml(allBrands ? `${getClient(brand.clientId)?.name || "Cliente"} / ${brand.shortName}` : workOrderCategoryLabels[order.category] || order.category)}</small>
+          <strong>${escapeHtml(order.id)}</strong>
+          <small>${escapeHtml(order.title)}</small>
+          <em>${escapeHtml(allBrands ? `${getClient(brand.clientId)?.name || "Cliente"} / ${brand.shortName}` : brand.shortName)} · ${escapeHtml(assignees.map(userName).join(", ") || "Sin responsable")}</em>
         </span>
       </button>
       <div class="operation-meta">
@@ -3832,28 +4203,11 @@ function renderOperationOrderRow(order, allBrands) {
         <span class="muted">${escapeHtml(formatDate(order.dueDate))}</span>
       </div>
       <div class="operation-assignees">
-        ${assignees.slice(0, 3).map((userId) => `<span class="avatar-pill">${escapeHtml(userName(userId))}</span>`).join("") || `<span class="muted">Sin asignar</span>`}
-        ${assignees.length > 3 ? `<span class="badge">+${assignees.length - 3}</span>` : ""}
-      </div>
-      <div class="operation-files">
-        <span class="badge">${files.length} archivo${files.length === 1 ? "" : "s"}</span>
+        <span class="badge blue">${archived ? "Archivada" : escapeHtml(workOrderStatusLabels[order.status] || order.status)}</span>
+        <span class="badge neutral">${files.length} archivo${files.length === 1 ? "" : "s"}</span>
       </div>
       <div class="operation-status-control">
-        ${
-          canManage
-            ? `
-              ${
-                archived
-                  ? `<button class="button small" data-action="unarchive-work-order" data-id="${order.id}">Restaurar</button>`
-                  : `
-                    ${renderWorkOrderStatusSelect(order)}
-                    <button class="button small" data-action="update-order-status" data-id="${order.id}">Guardar</button>
-                    <button class="button-ghost small archive-secondary-action" data-action="archive-work-order" data-id="${order.id}" title="Mover fuera del panel activo">Más: archivar</button>
-                  `
-              }
-            `
-            : `<span class="badge blue">${archived ? "Archivada" : escapeHtml(workOrderStatusLabels[order.status] || order.status)}</span>`
-        }
+        <button class="button-ghost small" data-action="view-work-order" data-id="${order.id}">Ver OT</button>
       </div>
     </article>
   `;
@@ -3982,13 +4336,14 @@ function renderWorkOrdersHeader(allBrands) {
       <div>
         <span class="eyebrow">Operación diaria</span>
         <h2>Órdenes de trabajo</h2>
-        <p>Gestiona estados, responsables, fechas y seguimiento de cada OT.</p>
+        <p>Gestiona, filtra y da seguimiento a las solicitudes activas.</p>
       </div>
       <div class="dashboard-command-actions">
         <select class="brand-select js-brand-select" aria-label="Cliente o marca">
           ${renderBrandOptions(state.currentBrandId)}
         </select>
         <button class="button" data-action="open-create-work-order">+ Crear OT</button>
+        <button class="button-ghost" data-action="toggle-archived-work-orders">${state.showArchivedWorkOrders ? "Ocultar archivadas" : "Ver archivadas"}</button>
         <button class="button-ghost" data-module="calendar">Ver calendario</button>
       </div>
     </section>
@@ -5639,13 +5994,44 @@ function bindEvents() {
       state.workOrderFilters[input.dataset.workorderFilter] = input.value;
       render();
     });
+    if (input.dataset.workorderFilter === "search") {
+      input.addEventListener("input", () => {
+        state.workOrderFilters.search = input.value;
+        window.clearTimeout(input._lumenSearchTimer);
+        input._lumenSearchTimer = window.setTimeout(render, 180);
+      });
+    }
   });
 
   document.querySelectorAll("[data-workorder-quick-filter]").forEach((button) => {
     button.addEventListener("click", () => {
       const selected = button.dataset.workorderQuickFilter;
       state.workOrderFilters.quick = state.workOrderFilters.quick === selected ? "" : selected;
+      if (selected === "archived") state.showArchivedWorkOrders = state.workOrderFilters.quick === "archived";
       state.currentModule = "work-orders";
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-workorder-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.workOrderView = button.dataset.workorderView;
+      state.workOrderGroupLimits = {};
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-workorder-show-more]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.workorderShowMore;
+      state.workOrderGroupLimits[key] = workOrderGroupLimit(key) + 20;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-calendar-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.calendarView = button.dataset.calendarView;
       render();
     });
   });
@@ -5716,12 +6102,14 @@ function openCreateWorkOrder() {
   state.editingWorkOrderId = "";
   state.viewingWorkOrderId = "";
   state.focusedWorkOrderId = "";
+  state.creatingWorkOrder = true;
   render();
   window.setTimeout(() => focusWorkOrderAi(), 0);
 }
 
 function clearWorkOrderFilters() {
-  state.workOrderFilters = { assignee: "", status: "", priority: "", due: "", quick: "" };
+  state.workOrderFilters = { search: "", assignee: "", status: "", priority: "", due: "", quick: "" };
+  state.showArchivedWorkOrders = false;
   render();
 }
 
@@ -6725,6 +7113,7 @@ async function createWorkOrderFromForm() {
     }
 
     await loadSupabaseData();
+    state.creatingWorkOrder = false;
     showToast(`OT creada en Supabase: ${code}`);
     render();
     return;
@@ -6749,6 +7138,7 @@ async function createWorkOrderFromForm() {
     linkedContentId: state.selectedContentId,
   });
   saveWorkOrders();
+  state.creatingWorkOrder = false;
   showToast(`OT creada y ${values.notifyOnEmail ? "email preparado" : "sin email"}`);
   render();
 }
@@ -6807,7 +7197,6 @@ function viewWorkOrder(id) {
     return;
   }
   state.currentModule = "work-orders";
-  state.currentBrandId = order.brandId;
   state.viewingWorkOrderId = id;
   state.focusedWorkOrderId = id;
   showToast(`Abriendo ${id}`);
@@ -7276,10 +7665,12 @@ function archiveMigrationMessage(message = "") {
 
 function toggleArchivedWorkOrders() {
   state.showArchivedWorkOrders = !state.showArchivedWorkOrders;
+  state.workOrderFilters.quick = state.showArchivedWorkOrders ? "archived" : "";
   state.editingWorkOrderId = "";
   state.viewingWorkOrderId = "";
   state.focusedWorkOrderId = "";
   showToast(state.showArchivedWorkOrders ? "Mostrando OTs archivadas" : "Mostrando panel activo");
+  render();
 }
 
 async function setWorkOrderArchived(id, shouldArchive) {
