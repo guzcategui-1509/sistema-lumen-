@@ -27,6 +27,11 @@ type BrandResponsibility = {
   is_active?: boolean;
 };
 
+type BrandNotificationRecipient = {
+  brand_id: string;
+  user_id: string;
+};
+
 type WorkOrder = {
   id: string;
   code: string;
@@ -257,12 +262,14 @@ Deno.serve(async (request) => {
   const targetLabel = monthLabel(targetDate);
   const appUrl = getAppUrl(request);
 
-  const [brandsResponse, profilesResponse, membershipsResponse, responsibilitiesResponse] = await Promise.all([
-    supabaseRequest("brands?is_active=eq.true&select=id,name,slug,client_id,clients(slug,name)"),
-    supabaseRequest("profiles?is_active=eq.true&role=neq.cliente&select=id,full_name,email,role,is_active"),
-    supabaseRequest("brand_memberships?select=brand_id,user_id,role"),
-    supabaseRequest("brand_responsibilities?select=brand_id,user_id,responsibility_role,is_active"),
-  ]);
+  const [brandsResponse, profilesResponse, membershipsResponse, responsibilitiesResponse, notificationRecipientsResponse] =
+    await Promise.all([
+      supabaseRequest("brands?is_active=eq.true&select=id,name,slug,client_id,clients(slug,name)"),
+      supabaseRequest("profiles?is_active=eq.true&role=neq.cliente&select=id,full_name,email,role,is_active"),
+      supabaseRequest("brand_memberships?select=brand_id,user_id,role"),
+      supabaseRequest("brand_responsibilities?select=brand_id,user_id,responsibility_role,is_active"),
+      supabaseRequest("brand_notification_recipients?select=brand_id,user_id"),
+    ]);
 
   if (!brandsResponse.ok) return jsonResponse({ error: await brandsResponse.text() }, 500);
   if (!profilesResponse.ok) return jsonResponse({ error: await profilesResponse.text() }, 500);
@@ -273,6 +280,9 @@ Deno.serve(async (request) => {
   const memberships = (await membershipsResponse.json()) as BrandMembership[];
   const responsibilities = responsibilitiesResponse.ok
     ? ((await responsibilitiesResponse.json()) as BrandResponsibility[])
+    : [];
+  const notificationRecipients = notificationRecipientsResponse.ok
+    ? ((await notificationRecipientsResponse.json()) as BrandNotificationRecipient[])
     : [];
   const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
 
@@ -339,8 +349,14 @@ Deno.serve(async (request) => {
       }),
     });
 
+    const configuredRecipients = notificationRecipients
+      .filter((row) => row.brand_id === brand.id)
+      .map((row) => profilesById.get(row.user_id))
+      .filter((profile): profile is Profile => Boolean(profile?.email));
     const recipients = new Map<string, Profile>();
-    [...accounts, ...finalAssignees].forEach((profile) => recipients.set(profile.id, profile));
+    (configuredRecipients.length ? configuredRecipients : [...accounts, ...finalAssignees]).forEach((profile) =>
+      recipients.set(profile.id, profile)
+    );
     if (recipients.size) {
       const notifications = [...recipients.values()].map((profile) => ({
         brand_id: brand.id,

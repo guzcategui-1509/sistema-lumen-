@@ -105,6 +105,14 @@ CREATE TABLE IF NOT EXISTS brand_memberships (
   UNIQUE (user_id, brand_id)
 );
 
+CREATE TABLE IF NOT EXISTS brand_notification_recipients (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  brand_id UUID NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (brand_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS module_permissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   role app_role NOT NULL,
@@ -405,6 +413,8 @@ ALTER TABLE content_items
 CREATE INDEX IF NOT EXISTS idx_brands_client_id ON brands(client_id);
 CREATE INDEX IF NOT EXISTS idx_brand_memberships_user_id ON brand_memberships(user_id);
 CREATE INDEX IF NOT EXISTS idx_brand_memberships_brand_id ON brand_memberships(brand_id);
+CREATE INDEX IF NOT EXISTS idx_brand_notification_recipients_brand ON brand_notification_recipients(brand_id);
+CREATE INDEX IF NOT EXISTS idx_brand_notification_recipients_user ON brand_notification_recipients(user_id);
 CREATE INDEX IF NOT EXISTS idx_brand_channels_brand_id ON brand_channels(brand_id);
 CREATE INDEX IF NOT EXISTS idx_brand_assets_brand_id ON brand_assets(brand_id);
 CREATE INDEX IF NOT EXISTS idx_brand_audit_log_brand_id ON brand_audit_log(brand_id, created_at DESC);
@@ -516,6 +526,7 @@ ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE brands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE brand_memberships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE brand_notification_recipients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE module_permissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE brand_channels ENABLE ROW LEVEL SECURITY;
 ALTER TABLE brand_assets ENABLE ROW LEVEL SECURITY;
@@ -548,6 +559,8 @@ DROP POLICY IF EXISTS "brands_select_members" ON brands;
 DROP POLICY IF EXISTS "brands_manage_admin_directora" ON brands;
 DROP POLICY IF EXISTS "brand_memberships_select_related" ON brand_memberships;
 DROP POLICY IF EXISTS "brand_memberships_manage_admin_directora" ON brand_memberships;
+DROP POLICY IF EXISTS "brand_notification_recipients_select_internal" ON brand_notification_recipients;
+DROP POLICY IF EXISTS "brand_notification_recipients_manage" ON brand_notification_recipients;
 DROP POLICY IF EXISTS "module_permissions_select_all_authenticated" ON module_permissions;
 DROP POLICY IF EXISTS "module_permissions_manage_admin" ON module_permissions;
 DROP POLICY IF EXISTS "brand_channels_select_brand_access" ON brand_channels;
@@ -638,6 +651,15 @@ CREATE POLICY "brand_memberships_manage_admin_directora"
 ON brand_memberships FOR ALL
 USING (current_app_role() IN ('admin', 'directora'))
 WITH CHECK (current_app_role() IN ('admin', 'directora'));
+
+CREATE POLICY "brand_notification_recipients_select_internal"
+ON brand_notification_recipients FOR SELECT
+USING (current_app_role() <> 'cliente' AND can_access_brand(brand_id));
+
+CREATE POLICY "brand_notification_recipients_manage"
+ON brand_notification_recipients FOR ALL
+USING (current_app_role() IN ('admin', 'directora', 'cuentas') AND can_access_brand(brand_id))
+WITH CHECK (current_app_role() IN ('admin', 'directora', 'cuentas') AND can_access_brand(brand_id));
 
 CREATE POLICY "module_permissions_select_all_authenticated"
 ON module_permissions FOR SELECT
@@ -1074,11 +1096,11 @@ ON CONFLICT (role, module_key) DO UPDATE SET
   can_manage = EXCLUDED.can_manage;
 
 INSERT INTO notification_rules (rule_key, title, channel, recipients, is_enabled) VALUES
-  ('assignment', 'Asignacion de OT', 'email,in_app', 'assigned_user', true),
+  ('assignment', 'Nueva OT creada', 'email,in_app', 'brand_notification_recipients,fallback_work_order_assignees', true),
   ('deadline_24h', 'Deadline en 24h', 'email', 'assigned_user,direccion', true),
   ('overdue', 'OT vencida', 'email,in_app', 'assigned_user,created_by,direccion', true),
   ('weekly_digest', 'Digest lunes 8am', 'email', 'internal_team', true),
-  ('daily_activity_digest', 'Resumen diario de actividad', 'email', 'work_order_assignees,created_by', true)
+  ('daily_activity_digest', 'Resumen diario de actividad', 'email', 'brand_notification_recipients,fallback_work_order_assignees', true)
 ON CONFLICT (rule_key) DO UPDATE SET
   title = EXCLUDED.title,
   channel = EXCLUDED.channel,

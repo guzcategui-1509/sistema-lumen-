@@ -25,6 +25,11 @@ type WorkOrderAssignee = {
   user_id: string;
 };
 
+type BrandNotificationRecipient = {
+  brand_id: string;
+  user_id: string;
+};
+
 type Activity = {
   id: string;
   work_order_id: string;
@@ -224,7 +229,7 @@ function buildDigestHtml(
           <div style="font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#49ee8c;margin-bottom:9px;">Lumen Workspace</div>
           <h1 style="margin:0;color:#ffffff;font-size:28px;line-height:1.15;">Resumen diario de actividad</h1>
           <p style="margin:10px 0 0;color:#d7dbd7;font-size:15px;line-height:1.45;">
-            Hola ${escapeHtml(firstName)}, hoy hubo ${activities.length} cambio${activities.length === 1 ? "" : "s"} en ${grouped.size} OT${grouped.size === 1 ? "" : "s"} relacionadas contigo.
+            Hola ${escapeHtml(firstName)}, hoy hubo ${activities.length} cambio${activities.length === 1 ? "" : "s"} en ${grouped.size} OT${grouped.size === 1 ? "" : "s"} bajo tu seguimiento.
           </p>
         </div>
         <div style="background:#ffffff;border:1px solid #deded8;border-top:0;border-radius:0 0 14px 14px;padding:22px;">
@@ -262,7 +267,7 @@ Deno.serve(async (request) => {
     "ejecutivo",
   ].join(",");
 
-  const [profilesResponse, activitiesResponse, ordersResponse, brandsResponse, assigneesResponse, existingResponse] =
+  const [profilesResponse, activitiesResponse, ordersResponse, brandsResponse, assigneesResponse, existingResponse, brandRecipientsResponse] =
     await Promise.all([
       supabaseRequest(`profiles?is_active=eq.true&role=in.(${internalRoles})&select=id,full_name,email,role,is_active`),
       supabaseRequest(
@@ -274,6 +279,7 @@ Deno.serve(async (request) => {
       supabaseRequest(
         `email_notifications?notification_type=eq.daily_digest&created_at=gte.${encodedStart}&select=recipient_user_id`,
       ),
+      supabaseRequest("brand_notification_recipients?select=brand_id,user_id"),
     ]);
 
   for (const response of [profilesResponse, activitiesResponse, ordersResponse, brandsResponse, assigneesResponse, existingResponse]) {
@@ -285,6 +291,9 @@ Deno.serve(async (request) => {
   const orders = (await ordersResponse.json()) as WorkOrder[];
   const brands = (await brandsResponse.json()) as Brand[];
   const assignees = (await assigneesResponse.json()) as WorkOrderAssignee[];
+  const brandRecipients = brandRecipientsResponse.ok
+    ? ((await brandRecipientsResponse.json()) as BrandNotificationRecipient[])
+    : [];
   const existingRecipients = new Set(
     ((await existingResponse.json()) as { recipient_user_id: string | null }[])
       .map((item) => item.recipient_user_id)
@@ -295,11 +304,21 @@ Deno.serve(async (request) => {
   const brandMap = new Map(brands.map((brand) => [brand.id, brand.name]));
   const profileMap = new Map(profiles.map((profile) => [profile.id, profile]));
   const recipientIdsByOrder = new Map<string, Set<string>>();
+  const recipientIdsByBrand = new Map<string, Set<string>>();
+
+  brandRecipients.forEach((recipient) => {
+    const recipients = recipientIdsByBrand.get(recipient.brand_id) ?? new Set<string>();
+    recipients.add(recipient.user_id);
+    recipientIdsByBrand.set(recipient.brand_id, recipients);
+  });
 
   orders.forEach((order) => {
-    const recipientIds = new Set<string>();
-    if (order.created_by) recipientIds.add(order.created_by);
-    assignees.filter((assignee) => assignee.work_order_id === order.id).forEach((assignee) => recipientIds.add(assignee.user_id));
+    const configuredRecipientIds = recipientIdsByBrand.get(order.brand_id);
+    const recipientIds = configuredRecipientIds?.size ? new Set(configuredRecipientIds) : new Set<string>();
+    if (!configuredRecipientIds?.size) {
+      if (order.created_by) recipientIds.add(order.created_by);
+      assignees.filter((assignee) => assignee.work_order_id === order.id).forEach((assignee) => recipientIds.add(assignee.user_id));
+    }
     recipientIdsByOrder.set(order.id, recipientIds);
   });
 
@@ -337,5 +356,6 @@ Deno.serve(async (request) => {
     activities: activities.length,
     orders: new Set(activities.map((activity) => activity.work_order_id)).size,
     skipped_existing: existingRecipients.size,
+    configured_brands: recipientIdsByBrand.size,
   });
 });

@@ -51,6 +51,7 @@ const dataState = {
   error: "",
   session: null,
   profile: null,
+  brandNotificationRecipientsReady: false,
 };
 
 const clients = [
@@ -379,6 +380,7 @@ const brands = [
 ];
 
 const users = loadStoredCollection("lumen_users_v1", []);
+const brandNotificationRecipients = loadStoredCollection("lumen_brand_notification_recipients_v1", []);
 
 const demoWorkOrdersResetVersion = "2026-05-26-clean-all-test-work-orders";
 if (localStorage.getItem("lumen_work_orders_reset_version") !== demoWorkOrdersResetVersion) {
@@ -394,9 +396,9 @@ workOrders = loadStoredCollection("lumen_work_orders_v1", initialWorkOrders);
 const notificationRules = [
   {
     id: "assignment",
-    title: "Asignación de OT",
+    title: "Nueva OT creada",
     channel: "Correo + aviso dentro del sistema",
-    recipients: "Responsables asignados",
+    recipients: "Destinatarios por marca / respaldo responsables",
     enabled: true,
   },
   {
@@ -410,7 +412,7 @@ const notificationRules = [
     id: "work-order-edits",
     title: "Cambios y subtareas en OT",
     channel: "Resumen diario",
-    recipients: "Responsables de la orden",
+    recipients: "Destinatarios por marca / respaldo responsables",
     enabled: true,
   },
   {
@@ -803,6 +805,7 @@ const state = {
   reportMonth: "",
   reportStartDate: "",
   reportEndDate: "",
+  notificationBrandId: "",
   initialRouteApplied: false,
   passwordResetMode: false,
   toast: "",
@@ -988,7 +991,7 @@ function mapDbWorkOrder(row) {
 async function loadSupabaseData() {
   if (!isSupabaseMode() || !dataState.session) return;
 
-  const [profileResult, clientsResult, brandsResult, membershipsResult, profilesResult, ordersResult] = await Promise.all([
+  const [profileResult, clientsResult, brandsResult, membershipsResult, profilesResult, ordersResult, notificationRecipientsResult] = await Promise.all([
     supabaseClient.from("profiles").select("*").eq("id", dataState.session.user.id).maybeSingle(),
     supabaseClient.from("clients").select("*").order("name"),
     supabaseClient.from("brands").select("*").eq("is_active", true).order("name"),
@@ -1004,6 +1007,7 @@ async function loadSupabaseData() {
         `,
       )
       .order("due_date", { ascending: true }),
+    supabaseClient.from("brand_notification_recipients").select("brand_id,user_id"),
   ]);
 
   const error =
@@ -1027,6 +1031,14 @@ async function loadSupabaseData() {
   );
   setCollection(brands, (brandsResult.data || []).map(mapDbBrand));
   setCollection(users, (profilesResult.data || []).map((profile) => mapDbUser(profile, membershipsResult.data || [])));
+  dataState.brandNotificationRecipientsReady = !notificationRecipientsResult.error;
+  setCollection(
+    brandNotificationRecipients,
+    (notificationRecipientsResult.data || []).map((recipient) => ({
+      brandId: recipient.brand_id,
+      userId: recipient.user_id,
+    })),
+  );
   workOrders = (ordersResult.data || []).map(mapDbWorkOrder);
 
   if (!isAllBrandsScope() && !brands.some((brand) => brand.id === state.currentBrandId)) {
@@ -1445,6 +1457,34 @@ function internalUsers() {
 
 function activeUsers() {
   return users.filter((user) => user.isActive !== false);
+}
+
+function brandEmailRecipientIds(brandId) {
+  if (!brandId) return [];
+  return brandNotificationRecipients
+    .filter((recipient) => recipient.brandId === brandId)
+    .map((recipient) => recipient.userId);
+}
+
+function configuredBrandEmailRecipientUsers(brandId) {
+  const recipientIds = brandEmailRecipientIds(brandId);
+  return internalUsers().filter((user) => recipientIds.includes(user.id) && user.email);
+}
+
+function brandEmailRecipientUsers(brandId, fallbackUserIds = []) {
+  const configuredRecipients = configuredBrandEmailRecipientUsers(brandId);
+  if (configuredRecipients.length) return configuredRecipients;
+  return internalUsers().filter((user) => fallbackUserIds.includes(user.id) && user.email);
+}
+
+function brandEmailRecipientSummary(brandId, fallbackUserIds = []) {
+  const configuredRecipients = configuredBrandEmailRecipientUsers(brandId);
+  if (configuredRecipients.length) {
+    return `Se enviara a ${configuredRecipients.map((user) => user.name).join(", ")}.`;
+  }
+  const fallbackRecipients = brandEmailRecipientUsers(brandId, fallbackUserIds);
+  if (fallbackRecipients.length) return `Sin lista fija: se enviara a responsables seleccionados.`;
+  return "Sin lista fija: si no eliges responsables, no se preparara email.";
 }
 
 function isSystemAdmin() {
@@ -3503,6 +3543,7 @@ function renderWorkOrderForm(order = null) {
   const statusValue = isEditing ? order.status : "new";
   const categoryValue = isEditing ? order.category : "diseno";
   const notifyOnEmail = isEditing ? order.notifyOnEmail !== false : true;
+  const emailRecipientSummary = brandEmailRecipientSummary(state.currentBrandId, Array.from(selectedAssignees));
 
   return `
     <div class="panel section">
@@ -3629,8 +3670,9 @@ function renderWorkOrderForm(order = null) {
         <div class="full row wrap form-actions">
           <label class="checkbox-line">
             <input id="ot-email" type="checkbox" ${notifyOnEmail ? "checked" : ""} />
-            Notificar por email a responsables
+            Enviar notificacion por email
           </label>
+          <span class="field-help email-recipient-help">${escapeHtml(emailRecipientSummary)} Configura la lista por marca en Notificaciones.</span>
           <button class="button" data-action="${isEditing ? "update-work-order" : "create-work-order"}">
             ${isEditing ? "Guardar cambios" : "Crear OT"}
           </button>
@@ -4357,6 +4399,83 @@ function renderWorkOrdersHeader(allBrands) {
   `;
 }
 
+function renderBrandEmailRecipientManager() {
+  const manageableBrands = brands.filter((brand) => canUserAccessBrand(users.find((user) => user.id === dataState.session?.user?.id), brand.id) || !isSupabaseMode());
+  const selectableBrands = manageableBrands.length ? manageableBrands : brands;
+  const selectedBrandId = state.notificationBrandId && selectableBrands.some((brand) => brand.id === state.notificationBrandId)
+    ? state.notificationBrandId
+    : selectableBrands[0]?.id || "";
+  state.notificationBrandId = selectedBrandId;
+
+  const selectedBrand = brands.find((brand) => brand.id === selectedBrandId);
+  const selectedRecipientIds = new Set(brandEmailRecipientIds(selectedBrandId));
+  const selectedRecipients = configuredBrandEmailRecipientUsers(selectedBrandId);
+  const canEditRecipients = canManageWorkOrders() || isSystemAdmin();
+  const internalRecipients = internalUsers().filter((user) => user.email);
+
+  return `
+    <section class="panel section brand-email-manager">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Destinatarios por marca</h2>
+          <div class="small-muted">Define quién recibe correos cuando se crea una OT de cada marca. Esto es independiente de los responsables operativos.</div>
+        </div>
+        <span class="badge ${selectedRecipients.length ? "blue" : "amber"}">
+          ${selectedRecipients.length ? `${selectedRecipients.length} configurados` : "Usa responsables"}
+        </span>
+      </div>
+      ${
+        !dataState.brandNotificationRecipientsReady && isSupabaseMode()
+          ? `<div class="admin-note">Para guardar esta configuración, ejecuta primero el SQL <strong>supabase/patch_brand_notification_recipients.sql</strong> en Supabase.</div>`
+          : ""
+      }
+      <div class="recipient-manager-grid">
+        <div class="field">
+          <label>Marca</label>
+          <select class="input" id="brand-email-recipient-brand">
+            ${selectableBrands
+              .map((brand) => {
+                const client = getClient(brand.clientId);
+                return `<option value="${brand.id}" ${brand.id === selectedBrandId ? "selected" : ""}>${escapeHtml(client?.name ? `${client.name} / ${brand.name}` : brand.name)}</option>`;
+              })
+              .join("")}
+          </select>
+          <div class="field-help">${selectedBrand ? escapeHtml(brandEmailRecipientSummary(selectedBrand.id)) : "Selecciona una marca para editar su lista."}</div>
+        </div>
+        <div class="recipient-summary-box">
+          <strong>Reciben email</strong>
+          <div class="recipient-chip-row">
+            ${
+              selectedRecipients.length
+                ? selectedRecipients.map((user) => `<span class="badge blue">${escapeHtml(user.name)}</span>`).join("")
+                : `<span class="badge amber">Sin lista fija</span><span class="muted">Se usaran los responsables seleccionados en la OT.</span>`
+            }
+          </div>
+        </div>
+      </div>
+      <div class="recipient-checkbox-grid">
+        ${internalRecipients
+          .map(
+            (user) => `
+              <label class="recipient-option">
+                <input type="checkbox" data-brand-email-recipient value="${user.id}" ${selectedRecipientIds.has(user.id) ? "checked" : ""} ${canEditRecipients ? "" : "disabled"} />
+                <span>
+                  <strong>${escapeHtml(user.name)}</strong>
+                  <small>${escapeHtml(roleLabels[user.role] || user.role)} · ${escapeHtml(user.email || "sin correo")}</small>
+                </span>
+              </label>
+            `,
+          )
+          .join("") || `<div class="empty compact-empty">No hay usuarios internos activos.</div>`}
+      </div>
+      <div class="row wrap form-actions">
+        <button class="button" data-action="save-brand-email-recipients" ${canEditRecipients && selectedBrandId ? "" : "disabled"}>Guardar destinatarios</button>
+        <button class="button-ghost" data-action="clear-brand-email-recipients" ${canEditRecipients && selectedBrandId ? "" : "disabled"}>Usar responsables de cada OT</button>
+      </div>
+    </section>
+  `;
+}
+
 function renderNotifications() {
   const openOrders = workOrders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
@@ -4383,6 +4502,7 @@ function renderNotifications() {
         ${renderMetric("Vencen mañana", dueTomorrow.length, "Recordatorio 24h")}
         ${renderMetric("Destinatarios", internalUsers().length, "Equipo interno")}
       </section>
+      ${renderBrandEmailRecipientManager()}
       <section class="grid grid-2 notifications-detail-grid">
         <div class="panel section">
           <div class="section-header">
@@ -4439,7 +4559,7 @@ function renderNotifications() {
           </div>
           <div class="mini-card">
             <strong>3. Resumen al final del día</strong>
-            <span class="muted">Cada persona recibe un solo correo con todo lo ocurrido en las OTs que creó o tiene asignadas.</span>
+            <span class="muted">Cada persona recibe un solo correo con lo ocurrido en las marcas donde fue configurada como destinataria.</span>
           </div>
           <div class="mini-card">
             <strong>4. Resumen semanal</strong>
@@ -5884,6 +6004,11 @@ function bindEvents() {
     });
   });
 
+  document.getElementById("brand-email-recipient-brand")?.addEventListener("change", (event) => {
+    state.notificationBrandId = event.target.value;
+    render();
+  });
+
   document.querySelectorAll("[data-content]").forEach((button) => {
     button.addEventListener("click", () => {
       const contentId = button.dataset.content;
@@ -6236,6 +6361,8 @@ async function handleAction(action, id) {
     "run-weekly-digest-now": () => runWeeklyDigestNow(),
     "run-monthly-content-matrix": () => runMonthlyWorkOrderAutomation("content_matrix"),
     "run-monthly-paid-placement": () => runMonthlyWorkOrderAutomation("paid_placement"),
+    "save-brand-email-recipients": () => saveBrandEmailRecipients(),
+    "clear-brand-email-recipients": () => clearBrandEmailRecipients(),
     "download-report-pdf": () => downloadReportPdf(),
     "download-workspace-backup": () => downloadWorkspaceBackup(),
     "download-workspace-json": () => downloadWorkspaceJsonBackup(),
@@ -6739,7 +6866,7 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
       <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #deded8;border-radius:14px;overflow:hidden;">
         <div style="padding:26px 28px 20px;border-left:7px solid #49ee8c;">
           <div style="font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#5f6b61;margin-bottom:10px;">
-            Nueva orden asignada
+            Nueva orden para seguimiento
           </div>
           <h1 style="margin:0 0 8px;font-size:28px;line-height:1.15;color:#2d2d2d;">${escapeHtml(code)}</h1>
           <p style="margin:0;color:#5f6760;font-size:17px;line-height:1.45;">${escapeHtml(title)}</p>
@@ -6830,7 +6957,7 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
 }
 
 function workOrderRecipientUsers(order, assigneeIds = orderAssignees(order)) {
-  return users.filter((user) => assigneeIds.includes(user.id) && user.email && user.isActive !== false);
+  return brandEmailRecipientUsers(order.brandId, assigneeIds);
 }
 
 function describeListChanges(label, previousItems = [], nextItems = [], gender = "f") {
@@ -7079,7 +7206,7 @@ async function createWorkOrderFromForm() {
     });
 
     if (values.notifyOnEmail) {
-      const recipients = users.filter((user) => values.assignees.includes(user.id));
+      const recipients = brandEmailRecipientUsers(state.currentBrandId, values.assignees);
       if (recipients.length) {
         const htmlBody = buildWorkOrderAssignmentEmail({
           code,
@@ -7095,7 +7222,7 @@ async function createWorkOrderFromForm() {
             recipient_user_id: user.id,
             recipient_email: user.email,
             notification_type: "assignment",
-            subject: `${values.supervisorGate?.required ? "Requiere asignacion de jefe: " : "Nueva OT asignada: "}${code} - ${values.title}`,
+            subject: `${values.supervisorGate?.required ? "Requiere asignacion de jefe: " : "Nueva OT creada: "}${code} - ${values.title}`,
             html_body: htmlBody,
             status: "queued",
           })),
@@ -7719,6 +7846,58 @@ async function archiveWorkOrder(id) {
 
 async function unarchiveWorkOrder(id) {
   await setWorkOrderArchived(id, false);
+}
+
+async function persistBrandEmailRecipients(recipientIds) {
+  const brandId = state.notificationBrandId;
+  if (!brandId) {
+    showToast("Selecciona una marca");
+    return false;
+  }
+  if (!(canManageWorkOrders() || isSystemAdmin())) {
+    showToast("Solo Dirección o Cuentas puede editar destinatarios por marca");
+    return false;
+  }
+
+  if (isSupabaseMode()) {
+    const { error: deleteError } = await supabaseClient.from("brand_notification_recipients").delete().eq("brand_id", brandId);
+    if (deleteError) {
+      showToast("Falta activar la tabla de destinatarios por marca en Supabase");
+      return false;
+    }
+    if (recipientIds.length) {
+      const { error: insertError } = await supabaseClient.from("brand_notification_recipients").insert(
+        recipientIds.map((userId) => ({ brand_id: brandId, user_id: userId })),
+      );
+      if (insertError) {
+        showToast(`No se pudo guardar destinatarios: ${insertError.message}`);
+        return false;
+      }
+    }
+    await loadSupabaseData();
+  } else {
+    const nextRecipients = [
+      ...brandNotificationRecipients.filter((recipient) => recipient.brandId !== brandId),
+      ...recipientIds.map((userId) => ({ brandId, userId })),
+    ];
+    setCollection(brandNotificationRecipients, nextRecipients);
+    localStorage.setItem("lumen_brand_notification_recipients_v1", JSON.stringify(brandNotificationRecipients));
+  }
+
+  showToast(recipientIds.length ? "Destinatarios de la marca actualizados" : "La marca usara los responsables de cada OT");
+  render();
+  return true;
+}
+
+async function saveBrandEmailRecipients() {
+  const recipientIds = Array.from(document.querySelectorAll("[data-brand-email-recipient]:checked")).map((input) => input.value);
+  await persistBrandEmailRecipients(recipientIds);
+}
+
+async function clearBrandEmailRecipients() {
+  const confirmed = window.confirm("¿Quitar la lista fija? Los correos de esta marca se enviarán a los responsables seleccionados en cada OT.");
+  if (!confirmed) return;
+  await persistBrandEmailRecipients([]);
 }
 
 function previewWeeklyDigest() {

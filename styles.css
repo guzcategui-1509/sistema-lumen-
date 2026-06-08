@@ -2985,6 +2985,66 @@ tr:last-child td {
   gap: 10px;
 }
 
+.brand-email-manager {
+  display: grid;
+  gap: 14px;
+}
+
+.recipient-manager-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(280px, 1.1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.recipient-summary-box {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(16, 35, 26, 0.1);
+  border-radius: var(--radius);
+  background: rgba(246, 246, 243, 0.72);
+}
+
+.recipient-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.recipient-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.recipient-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid rgba(16, 35, 26, 0.1);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.recipient-option span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.recipient-option small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.email-recipient-help {
+  max-width: 620px;
+}
+
 .digest-row > * {
   min-width: 0;
 }
@@ -3947,6 +4007,7 @@ tr:last-child td {
     .urgent-planner-panel,
     .urgent-order-banner,
 	  .notification-guide-grid,
+  .recipient-manager-grid,
   .brand-shortcut-grid,
   .timeline-day,
   .digest-mini-metrics,
