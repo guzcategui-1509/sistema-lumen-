@@ -1762,10 +1762,10 @@ function urgentWorkOrderPlan({ category = "diseno", brandId = state.currentBrand
 function processStepIndex(order) {
   if (!order || order.status === "cancelled") return -1;
   const statusMap = {
-    new: 1,
+    new: 0,
     in_progress: 2,
     in_review: 3,
-    completed: 4,
+    completed: 5,
     client_approved: 5,
     scheduled: 5,
   };
@@ -3433,12 +3433,18 @@ function renderUrgentPlannerPanel(category = "diseno", priority = "medium") {
 function renderWorkOrderProcessTimeline(order) {
   const area = workOrderProcessArea(order.category);
   const activeIndex = processStepIndex(order);
+  const stepStateLabel = (index, stateClass) => {
+    if (stateClass === "done") return "Completado";
+    if (stateClass === "active") return "Actual";
+    if (stateClass === "blocked") return "Pausado";
+    return `Paso ${index + 1}`;
+  };
   return `
     <div class="process-timeline-card">
       <div class="section-header compact">
         <div>
-          <h3 class="section-title">Timeline del proceso</h3>
-          <div class="small-muted">${escapeHtml(area.label)} segun procesos Lumen.</div>
+          <h3 class="section-title">Proceso de la OT</h3>
+          <div class="small-muted">${escapeHtml(area.label)} según procesos Lumen. La etapa marcada indica dónde va hoy.</div>
         </div>
         <span class="badge blue">${escapeHtml(workOrderStatusLabels[order.status] || order.status)}</span>
       </div>
@@ -3448,9 +3454,12 @@ function renderWorkOrderProcessTimeline(order) {
             const stateClass = activeIndex < 0 ? "blocked" : index < activeIndex ? "done" : index === activeIndex ? "active" : "";
             return `
               <div class="process-step ${stateClass}">
-                <span class="process-step-index">${index + 1}</span>
+                <span class="process-step-index" aria-hidden="true">${index + 1}</span>
                 <div>
-                  <strong>${escapeHtml(title)}</strong>
+                  <div class="process-step-header">
+                    <strong>${escapeHtml(title)}</strong>
+                    <span>${escapeHtml(stepStateLabel(index, stateClass))}</span>
+                  </div>
                   <p>${escapeHtml(detail)}</p>
                 </div>
               </div>
@@ -3699,6 +3708,7 @@ function renderWorkOrderDetailPanel(order) {
     <button class="drawer-backdrop" type="button" data-action="close-work-order-detail" aria-label="Cerrar detalle de OT"></button>
     <aside class="work-order-detail-drawer" data-order-detail="${escapeHtml(order.id)}" aria-label="Detalle de orden de trabajo">
       <div class="drawer-panel">
+      <button class="drawer-close-button" type="button" data-action="close-work-order-detail" aria-label="Cerrar detalle">×</button>
       <div class="section-header">
         <div>
           <div class="row wrap">
@@ -4571,7 +4581,7 @@ function renderNotifications() {
           </div>
           <div class="mini-card">
             <strong>6. Matriz mensual</strong>
-            <span class="muted">El 25 se crean OTs para la matriz de contenido del mes objetivo, excepto Proyectos, Pitch y Constructivos.</span>
+            <span class="muted">El 25 se crean OTs para la matriz de contenido del mes objetivo, excepto Proyectos, Pitch, Constructivos, Lumen Podcast y Bonafont.</span>
             <button class="button-ghost small" data-action="run-monthly-content-matrix">Probar matrices</button>
           </div>
           <div class="mini-card">

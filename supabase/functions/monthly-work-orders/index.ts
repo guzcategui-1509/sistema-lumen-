@@ -153,9 +153,9 @@ function automationConfig(kind: string) {
   return {
     codePrefix: "AUTO-MATRIZ",
     titlePrefix: "Matriz de contenido",
-    category: "copy",
+    category: "matriz",
     assigneeRoles: ["generador", "creativo"],
-    excludedBrandSlugs: new Set(["constructivos", "lumen-proyectos", "lumen-pitch"]),
+    excludedBrandSlugs: new Set(["constructivos", "lumen-proyectos", "lumen-pitch", "lumen-podcast", "bonafont-gt"]),
     excludedClientSlugs: new Set<string>(),
     description:
       "Orden automatica para preparar matriz mensual de contenido: pilares, formatos, copies, necesidades de diseno, referencias y entregables.",

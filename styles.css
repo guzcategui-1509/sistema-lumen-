@@ -3163,32 +3163,32 @@ tr:last-child td {
 
 .process-timeline {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
 }
 
 .process-step {
   display: grid;
-  gap: 8px;
-  align-content: start;
-  min-height: 150px;
-  padding: 10px;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-height: 0;
+  padding: 11px;
   border: 1px solid rgba(16, 35, 26, 0.1);
-  border-radius: var(--radius);
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.94);
   color: var(--muted);
 }
 
 .process-step.done {
   border-color: rgba(73, 238, 140, 0.38);
-  background: #f4fff8;
+  background: #f7fff9;
 }
 
 .process-step.active {
   border-color: rgba(21, 122, 68, 0.48);
   background: #edfff4;
   color: var(--ink);
-  box-shadow: inset 0 4px 0 var(--green);
+  box-shadow: inset 5px 0 0 var(--green);
 }
 
 .process-step.blocked {
@@ -3198,8 +3198,8 @@ tr:last-child td {
 .process-step-index {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
   background: #f0f1ee;
   color: var(--muted);
@@ -3213,15 +3213,38 @@ tr:last-child td {
   color: #ffffff;
 }
 
+.process-step-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .process-step strong {
   color: var(--ink);
   line-height: 1.2;
 }
 
+.process-step-header span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(16, 35, 26, 0.06);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.process-step.active .process-step-header span {
+  background: rgba(73, 238, 140, 0.2);
+  color: #176339;
+}
+
 .process-step p {
   margin: 0;
   font-size: 12px;
-  line-height: 1.35;
+  line-height: 1.4;
+  overflow-wrap: normal;
 }
 
 .detail-block,
@@ -3681,10 +3704,11 @@ tr:last-child td {
 }
 
 .drawer-panel {
+  position: relative;
   display: grid;
   gap: 14px;
   height: 100%;
-  padding: 18px;
+  padding: 22px 18px 18px;
   border: 1px solid rgba(16, 35, 26, 0.12);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.98);
@@ -3695,6 +3719,31 @@ tr:last-child td {
 
 .drawer-panel > * {
   min-width: 0;
+}
+
+.drawer-close-button {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  justify-self: end;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin: -8px -4px -12px 0;
+  border: 1px solid rgba(16, 35, 26, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--ink);
+  font-size: 24px;
+  line-height: 1;
+  box-shadow: 0 12px 28px rgba(16, 35, 26, 0.12);
+  cursor: pointer;
+}
+
+.drawer-close-button:hover {
+  border-color: rgba(73, 238, 140, 0.6);
+  background: #f2fff7;
 }
 
 .deadline-week-grid {
@@ -3875,7 +3924,6 @@ tr:last-child td {
 	    grid-template-columns: repeat(4, minmax(0, 1fr));
 	  }
 
-  .process-timeline,
   .stage-control {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
