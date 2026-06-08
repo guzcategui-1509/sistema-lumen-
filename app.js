@@ -3424,7 +3424,7 @@ function renderUrgentOrderBanner(order) {
     <div class="urgent-order-banner">
       <div>
         <span class="badge red">Alerta visible</span>
-        <h3>Esta OT necesita decision rapida</h3>
+        <h3>Esta OT necesita una decisión rápida</h3>
         <p>
           ${escapeHtml(plan.reason)}
           ${plan.candidate ? ` Fecha ideal sugerida: ${escapeHtml(formatDate(plan.dueDate))}.` : ""}
