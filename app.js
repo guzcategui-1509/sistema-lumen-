@@ -409,7 +409,7 @@ const notificationRules = [
   {
     id: "work-order-edits",
     title: "Cambios y subtareas en OT",
-    channel: "Correo inmediato",
+    channel: "Resumen diario",
     recipients: "Responsables de la orden",
     enabled: true,
   },
@@ -439,6 +439,13 @@ const notificationRules = [
     title: "Digest semanal personal",
     channel: "Correo",
     recipients: "Cada persona interna con sus OTs asignadas",
+    enabled: true,
+  },
+  {
+    id: "daily-activity-digest",
+    title: "Resumen diario de actividad",
+    channel: "Un correo al final del día",
+    recipients: "Responsables y creadores de OTs con cambios",
     enabled: true,
   },
   {
@@ -4362,10 +4369,10 @@ function renderNotifications() {
             <h2>Notificaciones de OTs</h2>
             <span class="badge blue">Correo operativo</span>
           </div>
-          <p class="muted">Correos automaticos para asignaciones, vencimientos y resumen semanal del equipo.</p>
+          <p class="muted">Las asignaciones y urgencias llegan al momento. Los demás cambios se agrupan en un resumen diario.</p>
         </div>
         <div class="quick-links">
-          <button class="button" data-action="run-weekly-digest-now">Preparar y enviar ahora</button>
+          <button class="button" data-action="run-daily-digest-now">Enviar resumen diario ahora</button>
           <button class="button-ghost" data-action="send-email-queue">Enviar pendientes</button>
           <button class="button-ghost" data-module="work-orders">Ver OTs</button>
         </div>
@@ -4400,13 +4407,16 @@ function renderNotifications() {
         </div>
         <div class="panel section">
           <div class="section-header">
-            <h2 class="section-title">Resumen del lunes</h2>
+            <div>
+              <h2 class="section-title">Resúmenes programados</h2>
+              <div class="small-muted">Un correo diario de actividad y un panorama personal cada lunes.</div>
+            </div>
             <div class="row wrap">
-              <button class="button-ghost small" data-action="queue-weekly-digest">Preparar sin enviar</button>
-              <button class="button-ghost small" data-action="preview-weekly-digest">Ver resumen</button>
+              <button class="button-ghost small" data-action="queue-daily-digest">Preparar resumen diario</button>
+              <button class="button-ghost small" data-action="queue-weekly-digest">Preparar resumen semanal</button>
             </div>
           </div>
-          <div class="small-muted">Preparar sin enviar solo deja los correos listos; no salen hasta tocar "Enviar pendientes".</div>
+          <div class="small-muted">Preparar solo deja los correos listos; no salen hasta tocar "Enviar pendientes".</div>
           ${renderWeeklyDigestPreview()}
         </div>
       </section>
@@ -4420,24 +4430,24 @@ function renderNotifications() {
         </div>
         <div class="notification-guide-grid">
           <div class="mini-card">
-            <strong>1. Se prepara el aviso</strong>
-            <span class="muted">Cuando una OT tiene email activo, Lumen crea el correo para los responsables.</span>
+            <strong>1. Avisos inmediatos</strong>
+            <span class="muted">Una nueva asignación, urgencia o vencimiento importante sí llega al momento.</span>
           </div>
           <div class="mini-card">
-            <strong>2. Queda pendiente</strong>
-            <span class="muted">El mensaje se guarda como pendiente para poder revisarlo o enviarlo en lote.</span>
+            <strong>2. Cambios sin ruido</strong>
+            <span class="muted">Ediciones, subtareas, materiales y cambios de estado quedan registrados sin mandar un correo por cada acción.</span>
           </div>
           <div class="mini-card">
-            <strong>3. Se envia por Brevo</strong>
-            <span class="muted">El boton Enviar pendientes manda los correos listos al equipo interno.</span>
+            <strong>3. Resumen al final del día</strong>
+            <span class="muted">Cada persona recibe un solo correo con todo lo ocurrido en las OTs que creó o tiene asignadas.</span>
           </div>
           <div class="mini-card">
             <strong>4. Resumen semanal</strong>
             <span class="muted">Cada persona interna recibe sus OTs asignadas todos los lunes, con foco semanal y mensual.</span>
           </div>
           <div class="mini-card">
-            <strong>5. Cambios y subtareas</strong>
-            <span class="muted">Al editar responsables, brief, subtareas, estado o materiales, los responsables reciben aviso por correo.</span>
+            <strong>5. Envío por Brevo</strong>
+            <span class="muted">Los resúmenes preparados se envían automáticamente por Brevo; también puedes probarlos desde esta pantalla.</span>
           </div>
           <div class="mini-card">
             <strong>6. Matriz mensual</strong>
@@ -6219,8 +6229,10 @@ async function handleAction(action, id) {
     "send-urgent-alert": () => sendUrgentWorkOrderAlert(id),
     "apply-urgent-workload-plan": () => applyUrgentWorkloadPlan(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
+    "queue-daily-digest": () => queueDailyDigest(),
     "queue-weekly-digest": () => queueWeeklyDigest(),
     "send-email-queue": () => sendEmailQueue(),
+    "run-daily-digest-now": () => runDailyDigestNow(),
     "run-weekly-digest-now": () => runWeeklyDigestNow(),
     "run-monthly-content-matrix": () => runMonthlyWorkOrderAutomation("content_matrix"),
     "run-monthly-paid-placement": () => runMonthlyWorkOrderAutomation("paid_placement"),
@@ -6937,26 +6949,7 @@ function buildWorkOrderUpdateEmail(order, changes, uploadedCount = 0) {
 async function queueWorkOrderUpdateEmails(order, changes, uploadedCount = 0, assigneeIds = orderAssignees(order)) {
   if (!isSupabaseMode() || !order.dbId || !changes.length || order.notifyOnEmail === false) return 0;
   const recipients = workOrderRecipientUsers(order, assigneeIds);
-  if (!recipients.length) return 0;
-  const htmlBody = buildWorkOrderUpdateEmail(order, changes, uploadedCount);
-  const { error } = await supabaseClient.from("email_notifications").insert(
-    recipients.map((user) => ({
-      brand_id: order.brandId,
-      work_order_id: order.dbId,
-      recipient_user_id: user.id,
-      recipient_email: user.email,
-      notification_type: "status_change",
-      subject: `Actualizacion de OT: ${order.id} - ${order.title}`,
-      html_body: htmlBody,
-      status: "queued",
-      scheduled_for: new Date().toISOString(),
-    })),
-  );
-  if (error) {
-    showToast(`OT actualizada, pero fallo email: ${error.message}`);
-    return 0;
-  }
-  await invokeEmailFunction("email-worker", (data) => `Correos de actualizacion procesados: ${data?.processed ?? 0}`, {}, true);
+  // Los cambios rutinarios ya están en work_order_activity y se agrupan al final del día.
   return recipients.length;
 }
 
@@ -7327,6 +7320,7 @@ async function updateWorkOrderFromForm() {
         status_to: values.status,
         assignees: values.assignees.length,
         files_added: uploadedCount,
+        changes,
       },
     });
     await queueWorkOrderUpdateEmails(updatedOrderForEmail, changes, uploadedCount, values.assignees);
@@ -7782,6 +7776,13 @@ async function queueWeeklyDigest() {
   );
 }
 
+async function queueDailyDigest() {
+  return invokeEmailFunction(
+    "daily-activity-digest",
+    (data) => `Resumen diario preparado para ${data?.queued ?? 0} personas con ${data?.activities ?? 0} cambios.`,
+  );
+}
+
 async function sendEmailQueue() {
   const confirmed = window.confirm(
     "Esto enviara los correos que ya estan preparados usando Brevo. Si hay correos pendientes, el equipo los recibira ahora. ¿Enviar pendientes?",
@@ -7805,6 +7806,20 @@ async function runWeeklyDigestNow() {
   await invokeEmailFunction(
     "email-worker",
     (data) => `Resumen semanal enviado. Correos procesados: ${data?.processed ?? 0}`,
+  );
+}
+
+async function runDailyDigestNow() {
+  const confirmed = window.confirm(
+    "Esto preparará un solo resumen con los cambios de las últimas 24 horas y lo enviará ahora. ¿Continuar?",
+  );
+  if (!confirmed) return;
+
+  const queued = await queueDailyDigest();
+  if (!queued) return;
+  await invokeEmailFunction(
+    "email-worker",
+    (data) => `Resumen diario enviado. Correos procesados: ${data?.processed ?? 0}`,
   );
 }
 

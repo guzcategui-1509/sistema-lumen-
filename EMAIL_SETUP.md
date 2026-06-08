@@ -8,9 +8,14 @@ Lenguaje dentro del sistema:
 
 - **Preparar correos**: el sistema arma los mensajes y los deja listos.
 - **Enviar pendientes**: manda los correos preparados usando Brevo.
-- **Preparar y enviar ahora**: hace ambos pasos en una sola accion.
+- **Enviar resumen diario ahora**: agrupa las últimas 24 horas y hace ambos pasos en una sola acción.
 
 Por debajo esos correos preparados viven en `email_notifications`, pero el equipo no necesita ver ni entender la palabra "cola".
+
+Para reducir ruido:
+
+- Nuevas asignaciones, urgencias y vencimientos importantes se notifican de inmediato.
+- Ediciones, cambios de estado, subtareas, materiales, archivos y archivo/restauración de OTs se reúnen en un solo resumen diario por persona.
 
 ## Variables
 
@@ -39,14 +44,15 @@ En `config.js`, `appUrl` es opcional. Si se llena con la URL de Vercel, los boto
 ## Funciones
 
 - `weekly-digest`: prepara el resumen semanal para todo el equipo interno activo.
+- `daily-activity-digest`: prepara un solo correo por persona con la actividad de sus OTs en las últimas 24 horas.
 - `email-worker`: envia los correos preparados con Brevo.
 - `monthly-work-orders`: crea OTs automaticas mensuales y deja sus correos listos.
 
 Desde la app:
 
-- `Notificaciones > Preparar sin enviar`: prepara el digest en `email_notifications`.
+- `Notificaciones > Preparar resumen diario`: prepara el resumen de las últimas 24 horas en `email_notifications`.
 - `Notificaciones > Enviar pendientes`: envia correos reales pendientes.
-- `Notificaciones > Preparar y enviar ahora`: prepara el digest y lo envia en un solo flujo.
+- `Notificaciones > Enviar resumen diario ahora`: prepara el resumen diario y lo envia en un solo flujo.
 
 Usuarios `admin`, `directora` y `cuentas` pueden disparar automatizaciones generales. `generador` y `creativo` pueden crear OTs; al crear una OT con email activo, la app prepara y procesa los correos de asignacion.
 
@@ -62,6 +68,7 @@ supabase secrets set EMAIL_FROM="Lumen Workspace <workspace@grupolumen.com>"
 supabase secrets set CRON_SECRET="un-secreto-largo-y-privado"
 supabase secrets set APP_URL="https://tu-app.vercel.app"
 supabase functions deploy weekly-digest --no-verify-jwt
+supabase functions deploy daily-activity-digest --no-verify-jwt
 supabase functions deploy email-worker --no-verify-jwt
 supabase functions deploy monthly-work-orders --no-verify-jwt
 ```
@@ -95,3 +102,13 @@ supabase/schedule_email_automation.sql
 ```
 
 Antes de ejecutarlo, reemplaza `REPLACE_WITH_YOUR_CRON_SECRET` por el mismo valor que guardaste en `CRON_SECRET`.
+
+## Activar el resumen diario
+
+En un proyecto ya existente:
+
+1. Ejecuta `supabase/patch_daily_activity_digest.sql` en SQL Editor.
+2. Despliega `daily-activity-digest`.
+3. Ejecuta `supabase/schedule_daily_activity_digest.sql` en SQL Editor.
+
+El horario recomendado es 23:00 Guatemala/Mexico. El resumen se prepara a esa hora y el `email-worker` existente lo envía dentro de los siguientes 10 minutos.

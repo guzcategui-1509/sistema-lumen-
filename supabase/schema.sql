@@ -369,7 +369,7 @@ CREATE TABLE IF NOT EXISTS email_notifications (
   work_order_id UUID REFERENCES work_orders(id) ON DELETE CASCADE,
   recipient_user_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
   recipient_email TEXT NOT NULL,
-  notification_type TEXT NOT NULL CHECK (notification_type IN ('assignment', 'deadline_24h', 'overdue', 'weekly_digest')),
+  notification_type TEXT NOT NULL CHECK (notification_type IN ('assignment', 'deadline_24h', 'overdue', 'weekly_digest', 'daily_digest')),
   subject TEXT NOT NULL,
   html_body TEXT,
   status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'sent', 'failed', 'cancelled')),
@@ -1077,7 +1077,8 @@ INSERT INTO notification_rules (rule_key, title, channel, recipients, is_enabled
   ('assignment', 'Asignacion de OT', 'email,in_app', 'assigned_user', true),
   ('deadline_24h', 'Deadline en 24h', 'email', 'assigned_user,direccion', true),
   ('overdue', 'OT vencida', 'email,in_app', 'assigned_user,created_by,direccion', true),
-  ('weekly_digest', 'Digest lunes 8am', 'email', 'internal_team', true)
+  ('weekly_digest', 'Digest lunes 8am', 'email', 'internal_team', true),
+  ('daily_activity_digest', 'Resumen diario de actividad', 'email', 'work_order_assignees,created_by', true)
 ON CONFLICT (rule_key) DO UPDATE SET
   title = EXCLUDED.title,
   channel = EXCLUDED.channel,

@@ -6,6 +6,7 @@
 -- 2. Lunes 08:02 Guatemala/Mexico (14:02 UTC): envia el digest preparado.
 -- 3. Cada 10 minutos: envia otros correos preparados, como asignaciones de OTs.
 -- 4. Dia 25 de cada mes: crea OTs automaticas de matriz de contenido y pauta.
+-- 5. Todos los dias 23:00 Guatemala/Mexico (05:00 UTC): prepara un resumen de actividad por persona.
 
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 CREATE EXTENSION IF NOT EXISTS pg_net;
@@ -31,6 +32,9 @@ WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'lumen-monthly-content-matr
 
 SELECT cron.unschedule('lumen-monthly-paid-placement')
 WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'lumen-monthly-paid-placement');
+
+SELECT cron.unschedule('lumen-prepare-daily-activity-digest')
+WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'lumen-prepare-daily-activity-digest');
 
 SELECT cron.schedule(
   'lumen-prepare-weekly-digest',
@@ -103,6 +107,21 @@ SELECT cron.schedule(
       'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'lumen_cron_secret')
     ),
     body := '{"source":"pg_cron","job":"send-prepared-emails"}'::jsonb
+  );
+  $$
+);
+
+SELECT cron.schedule(
+  'lumen-prepare-daily-activity-digest',
+  '0 5 * * *',
+  $$
+  SELECT net.http_post(
+    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'lumen_project_url') || '/functions/v1/daily-activity-digest',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'lumen_cron_secret')
+    ),
+    body := '{"source":"pg_cron","job":"daily-activity-digest"}'::jsonb
   );
   $$
 );

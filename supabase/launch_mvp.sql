@@ -55,7 +55,8 @@ BEGIN
     'status_change',
     'deadline_24h',
     'overdue',
-    'weekly_digest'
+    'weekly_digest',
+    'daily_digest'
   );
 EXCEPTION
   WHEN duplicate_object THEN NULL;
@@ -550,7 +551,8 @@ INSERT INTO notification_rules (rule_key, title, channel, recipients, is_enabled
   ('status_change', 'Cambio de estado de OT', 'in_app', 'assigned_users,created_by', true),
   ('deadline_24h', 'Deadline en 24h', 'email', 'assigned_users,direccion', true),
   ('overdue', 'OT vencida', 'email,in_app', 'assigned_users,created_by,direccion', true),
-  ('weekly_digest', 'Digest lunes 8am', 'email', 'internal_team', true)
+  ('weekly_digest', 'Digest lunes 8am', 'email', 'internal_team', true),
+  ('daily_activity_digest', 'Resumen diario de actividad', 'email', 'work_order_assignees,created_by', true)
 ON CONFLICT (rule_key) DO UPDATE SET
   title = EXCLUDED.title,
   channel = EXCLUDED.channel,
