@@ -257,6 +257,17 @@ const brands = [
     canvaFolder: "Continental / Bestune",
   },
   {
+    id: "212-continental",
+    clientId: "continental",
+    name: "212",
+    shortName: "212",
+    color: "#2d2d2d",
+    platforms: ["Facebook", "Instagram"],
+    services: ["Publicacion", "Comunidad", "Reporteria", "Pauta Meta"],
+    monthlyGoal: 10,
+    canvaFolder: "Continental / 212",
+  },
+  {
     id: "danone-gt",
     clientId: "danone",
     name: "Danone",
@@ -937,8 +948,8 @@ function mapDbBrand(row) {
     color: row.color_primary || "#2d2d2d",
     platforms: row.platforms || [],
     services: row.services || [],
-    monthlyGoal: 10,
-    canvaFolder: "",
+    monthlyGoal: row.posts_per_month || 10,
+    canvaFolder: row.canva_folder_url || "",
     isActive: row.is_active,
   };
 }
