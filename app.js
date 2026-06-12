@@ -1512,6 +1512,11 @@ function canCreateWorkOrders() {
   return workOrderCreatorRoles.includes(dataState.profile?.role);
 }
 
+function canArchiveWorkOrders() {
+  if (!isSupabaseMode()) return true;
+  return canManageWorkOrders() || canCreateWorkOrders();
+}
+
 function canUploadWorkOrderMaterials(order = null) {
   if (!isSupabaseMode()) return true;
   const role = dataState.profile?.role;
@@ -3712,6 +3717,7 @@ function renderWorkOrderDetailPanel(order) {
   const parsedDescription = splitWorkOrderDescription(order.description || "");
   const urgency = workOrderUrgency(order);
   const canManage = canManageWorkOrders();
+  const canArchive = canArchiveWorkOrders();
   const canUploadMaterials = canUploadWorkOrderMaterials(order);
   const archived = isArchivedWorkOrder(order);
 
@@ -3733,7 +3739,7 @@ function renderWorkOrderDetailPanel(order) {
         <div class="row wrap">
           ${canManage ? `<button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>` : ""}
           ${
-            canManage
+            canArchive
               ? archived
                 ? `<button class="button-ghost small" data-action="unarchive-work-order" data-id="${order.id}">Restaurar</button>`
                 : `<button class="button-danger small" data-action="archive-work-order" data-id="${order.id}">Archivar</button>`
@@ -4289,6 +4295,7 @@ function renderOrderCard(order) {
   const urgency = workOrderUrgency(order);
   const isFocused = order.id === state.focusedWorkOrderId;
   const canManage = canManageWorkOrders();
+  const canArchive = canArchiveWorkOrders();
   const canUploadMaterials = canUploadWorkOrderMaterials(order);
   const archived = isArchivedWorkOrder(order);
   const nextStatus = archived ? null : nextWorkOrderStatus(order);
@@ -4381,13 +4388,15 @@ function renderOrderCard(order) {
                   ? `<button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar a ${workOrderStatusLabels[nextStatus]}</button>`
                   : ""
               }
-              ${
-                archived
-                  ? `<button class="button-ghost small" data-action="unarchive-work-order" data-id="${order.id}">Restaurar</button>`
-                  : `<button class="button-ghost small" data-action="archive-work-order" data-id="${order.id}">Archivar</button>`
-              }
               <button class="button-danger small" data-action="send-urgent-alert" data-id="${order.id}">Alerta urgente</button>
             `
+            : ""
+        }
+        ${
+          canArchive
+            ? archived
+              ? `<button class="button-ghost small" data-action="unarchive-work-order" data-id="${order.id}">Restaurar</button>`
+              : `<button class="button-ghost small" data-action="archive-work-order" data-id="${order.id}">Archivar</button>`
             : `<span class="badge amber">Lectura</span>`
         }
       </div>
@@ -7800,7 +7809,11 @@ async function applyUrgentWorkloadPlan(id) {
 }
 
 function archiveMigrationMessage(message = "") {
-  return message.includes("archived_at") || message.includes("column")
+  return message.includes("archived_at") ||
+    message.includes("archive_work_order") ||
+    message.includes("Could not find the function") ||
+    message.includes("schema cache") ||
+    message.includes("column")
     ? "Falta activar archivo de OTs en Supabase: ejecuta supabase/patch_work_order_archive.sql"
     : "";
 }
@@ -7816,8 +7829,8 @@ function toggleArchivedWorkOrders() {
 }
 
 async function setWorkOrderArchived(id, shouldArchive) {
-  if (!canManageWorkOrders()) {
-    showToast("Solo Dirección o Cuentas puede archivar órdenes");
+  if (!canArchiveWorkOrders()) {
+    showToast("Solo Admin, Dirección, Cuentas, Generador o Creativo puede archivar órdenes");
     return;
   }
   const order = workOrders.find((candidate) => candidate.id === id);
@@ -7829,20 +7842,14 @@ async function setWorkOrderArchived(id, shouldArchive) {
   const archivedAt = shouldArchive ? new Date().toISOString() : null;
 
   if (isSupabaseMode()) {
-    const { error } = await supabaseClient
-      .from("work_orders")
-      .update({ archived_at: archivedAt, updated_at: new Date().toISOString() })
-      .eq("id", order.dbId);
+    const { error } = await supabaseClient.rpc("archive_work_order", {
+      target_work_order_id: order.dbId,
+      should_archive: shouldArchive,
+    });
     if (error) {
       showToast(archiveMigrationMessage(error.message || "") || `No se pudo ${shouldArchive ? "archivar" : "restaurar"} la OT: ${error.message}`);
       return;
     }
-    await supabaseClient.from("work_order_activity").insert({
-      work_order_id: order.dbId,
-      actor_id: dataState.session?.user?.id,
-      action: shouldArchive ? "archived" : "unarchived",
-      details: { archived_at: archivedAt },
-    });
     const updatedOrderForEmail = { ...order, archivedAt };
     await queueWorkOrderUpdateEmails(
       updatedOrderForEmail,
