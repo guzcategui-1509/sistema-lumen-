@@ -57,6 +57,21 @@ EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
 
+DO $$
+BEGIN
+  CREATE TYPE work_order_phase_status AS ENUM (
+    'pending',
+    'in_progress',
+    'blocked',
+    'in_review',
+    'changes_requested',
+    'completed',
+    'cancelled'
+  );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
 CREATE TABLE IF NOT EXISTS clients (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
@@ -340,6 +355,25 @@ CREATE TABLE IF NOT EXISTS work_order_assignees (
   UNIQUE (work_order_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS work_order_phases (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  work_order_id UUID NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+  phase_key TEXT NOT NULL DEFAULT 'custom',
+  title TEXT NOT NULL,
+  description TEXT,
+  assigned_to UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  status work_order_phase_status NOT NULL DEFAULT 'pending',
+  due_date DATE,
+  completed_at TIMESTAMPTZ,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT work_order_phases_phase_key_check CHECK (
+    phase_key IN ('brief', 'creatividad', 'produccion', 'revision', 'ajustes', 'entrega', 'custom')
+    OR phase_key ~ '^[a-z0-9_-]+$'
+  )
+);
+
 CREATE TABLE IF NOT EXISTS work_order_files (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   work_order_id UUID REFERENCES work_orders(id) ON DELETE CASCADE,
@@ -431,6 +465,9 @@ CREATE INDEX IF NOT EXISTS idx_work_orders_assigned_due ON work_orders(assigned_
 CREATE INDEX IF NOT EXISTS idx_work_orders_archived_at ON work_orders(archived_at);
 CREATE INDEX IF NOT EXISTS idx_work_order_assignees_user ON work_order_assignees(user_id);
 CREATE INDEX IF NOT EXISTS idx_work_order_assignees_order ON work_order_assignees(work_order_id);
+CREATE INDEX IF NOT EXISTS idx_work_order_phases_order ON work_order_phases(work_order_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_work_order_phases_assigned_to ON work_order_phases(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_work_order_phases_status ON work_order_phases(status);
 CREATE INDEX IF NOT EXISTS idx_work_order_files_order ON work_order_files(work_order_id);
 CREATE INDEX IF NOT EXISTS idx_email_notifications_status_scheduled ON email_notifications(status, scheduled_for);
 CREATE INDEX IF NOT EXISTS idx_weekly_digest_runs_run_date ON weekly_digest_runs(run_date);
@@ -517,6 +554,11 @@ CREATE TRIGGER trg_work_orders_updated_at
 BEFORE UPDATE ON work_orders
 FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
+DROP TRIGGER IF EXISTS trg_work_order_phases_updated_at ON work_order_phases;
+CREATE TRIGGER trg_work_order_phases_updated_at
+BEFORE UPDATE ON work_order_phases
+FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+
 DROP TRIGGER IF EXISTS trg_notification_rules_updated_at ON notification_rules;
 CREATE TRIGGER trg_notification_rules_updated_at
 BEFORE UPDATE ON notification_rules
@@ -545,6 +587,7 @@ ALTER TABLE reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE work_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE work_order_comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE work_order_assignees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE work_order_phases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE work_order_files ENABLE ROW LEVEL SECURITY;
 ALTER TABLE work_order_activity ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notification_rules ENABLE ROW LEVEL SECURITY;
@@ -596,6 +639,8 @@ DROP POLICY IF EXISTS "work_order_comments_brand_access" ON work_order_comments;
 DROP POLICY IF EXISTS "work_order_comments_internal_manage" ON work_order_comments;
 DROP POLICY IF EXISTS "work_order_assignees_brand_access" ON work_order_assignees;
 DROP POLICY IF EXISTS "work_order_assignees_internal_manage" ON work_order_assignees;
+DROP POLICY IF EXISTS "work_order_phases_brand_access" ON work_order_phases;
+DROP POLICY IF EXISTS "work_order_phases_internal_manage" ON work_order_phases;
 DROP POLICY IF EXISTS "work_order_files_brand_access" ON work_order_files;
 DROP POLICY IF EXISTS "work_order_files_internal_manage" ON work_order_files;
 DROP POLICY IF EXISTS "work_order_activity_brand_access" ON work_order_activity;
@@ -911,6 +956,36 @@ WITH CHECK (
   AND EXISTS (
     SELECT 1 FROM work_orders wo
     WHERE wo.id = work_order_assignees.work_order_id
+    AND can_access_brand(wo.brand_id)
+  )
+);
+
+CREATE POLICY "work_order_phases_brand_access"
+ON work_order_phases FOR SELECT
+USING (
+  current_app_role() <> 'cliente'
+  AND EXISTS (
+    SELECT 1 FROM work_orders wo
+    WHERE wo.id = work_order_phases.work_order_id
+    AND can_access_brand(wo.brand_id)
+  )
+);
+
+CREATE POLICY "work_order_phases_internal_manage"
+ON work_order_phases FOR ALL
+USING (
+  current_app_role() <> 'cliente'
+  AND EXISTS (
+    SELECT 1 FROM work_orders wo
+    WHERE wo.id = work_order_phases.work_order_id
+    AND can_access_brand(wo.brand_id)
+  )
+)
+WITH CHECK (
+  current_app_role() <> 'cliente'
+  AND EXISTS (
+    SELECT 1 FROM work_orders wo
+    WHERE wo.id = work_order_phases.work_order_id
     AND can_access_brand(wo.brand_id)
   )
 );

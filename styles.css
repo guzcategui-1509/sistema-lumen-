@@ -3247,6 +3247,142 @@ tr:last-child td {
   overflow-wrap: normal;
 }
 
+.phase-editor-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.phase-editor-list {
+  display: grid;
+  gap: 12px;
+}
+
+.phase-editor-row {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(16, 35, 26, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.phase-editor-topline,
+.phase-editor-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.phase-editor-topline {
+  grid-template-columns: auto minmax(150px, 0.5fr) minmax(220px, 1fr) auto;
+  align-items: center;
+}
+
+.phase-editor-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.phase-editor-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.phase-editor-grid span,
+.phase-editor-header label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.phase-index,
+.phase-dot {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: #eef2ef;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.phase-progress-track {
+  display: grid;
+  gap: 10px;
+}
+
+.phase-progress-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(16, 35, 26, 0.1);
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.phase-progress-step.done {
+  background: #f6fff8;
+  border-color: rgba(73, 238, 140, 0.32);
+}
+
+.phase-progress-step.active {
+  border-color: rgba(21, 122, 68, 0.36);
+  box-shadow: inset 4px 0 0 var(--green);
+}
+
+.phase-progress-step.blocked {
+  background: #fff8f4;
+  border-color: rgba(196, 78, 72, 0.24);
+}
+
+.phase-progress-step.cancelled {
+  opacity: 0.62;
+}
+
+.phase-progress-step.done .phase-dot,
+.phase-progress-step.active .phase-dot {
+  background: var(--navy);
+  color: #ffffff;
+}
+
+.phase-progress-step strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.phase-progress-step p {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.phase-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.phase-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #f0f1ee;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .detail-block,
 .detail-readable-block {
   display: grid;
@@ -4062,10 +4198,16 @@ tr:last-child td {
   .workflow-steps,
   .compact-filter-grid,
   .work-order-filter-grid,
+  .phase-editor-topline,
+  .phase-editor-grid,
   .operation-order-row.compact-order-row,
   .deadline-week-grid,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .phase-editor-header {
+    display: grid;
   }
 
   .dashboard-command-actions,

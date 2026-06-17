@@ -488,6 +488,34 @@ const workOrderManagerRoles = ["admin", "directora", "cuentas"];
 const workOrderCreatorRoles = ["admin", "directora", "cuentas", "generador", "creativo"];
 const workOrderMaterialRoles = ["admin", "directora", "cuentas", "generador", "creativo", "disenador", "editor"];
 
+const workOrderPhaseCatalog = [
+  { key: "brief", title: "Brief" },
+  { key: "creatividad", title: "Creatividad" },
+  { key: "produccion", title: "Producción" },
+  { key: "revision", title: "Revisión" },
+  { key: "ajustes", title: "Ajustes" },
+  { key: "entrega", title: "Entrega" },
+];
+
+const workOrderPhaseStatusLabels = {
+  pending: "Pendiente",
+  in_progress: "En proceso",
+  blocked: "Bloqueada",
+  in_review: "En revisión",
+  changes_requested: "Con cambios",
+  completed: "Completada",
+  cancelled: "Cancelada",
+};
+
+const defaultWorkOrderPhaseDescriptions = {
+  brief: "Contexto, objetivo, prioridades y entregables claros.",
+  creatividad: "Concepto, enfoque creativo, copy o estructura.",
+  produccion: "Diseño, edición, producción o desarrollo del material.",
+  revision: "Validación interna de calidad, enfoque y entregables.",
+  ajustes: "Cambios solicitados y afinación final.",
+  entrega: "Entrega final, archivo o cierre operativo.",
+};
+
 const supervisorGateCategories = ["diseno", "arte_final", "edicion", "produccion"];
 
 const lumenProcessAreas = {
@@ -799,6 +827,7 @@ const state = {
   viewingWorkOrderId: "",
   focusedWorkOrderId: "",
   creatingWorkOrder: false,
+  workOrderDraftPhases: [],
   dashboardMonth: "",
   workOrderMonth: "",
   workOrderView: "priority",
@@ -995,14 +1024,33 @@ function mapDbWorkOrder(row) {
     updatedAt: row.updated_at,
     archivedAt: row.archived_at || null,
     notifyOnEmail: row.notify_on_email,
+    phases: (row.phases || []).map(mapDbWorkOrderPhase).sort((a, b) => a.sortOrder - b.sortOrder),
     linkedContentId: null,
+  };
+}
+
+function mapDbWorkOrderPhase(row) {
+  return {
+    id: row.id || `phase-${Date.now()}`,
+    dbId: row.id || null,
+    workOrderId: row.work_order_id || "",
+    phaseKey: row.phase_key || "custom",
+    title: row.title || workOrderPhaseTitle(row.phase_key || "custom"),
+    description: row.description || "",
+    assignedTo: row.assigned_to || "",
+    status: row.status || "pending",
+    dueDate: row.due_date || "",
+    completedAt: row.completed_at || "",
+    sortOrder: Number(row.sort_order || 0),
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
   };
 }
 
 async function loadSupabaseData() {
   if (!isSupabaseMode() || !dataState.session) return;
 
-  const [profileResult, clientsResult, brandsResult, membershipsResult, profilesResult, ordersResult, notificationRecipientsResult] = await Promise.all([
+  const [profileResult, clientsResult, brandsResult, membershipsResult, profilesResult, ordersResult, notificationRecipientsResult, phasesResult] = await Promise.all([
     supabaseClient.from("profiles").select("*").eq("id", dataState.session.user.id).maybeSingle(),
     supabaseClient.from("clients").select("*").order("name"),
     supabaseClient.from("brands").select("*").eq("is_active", true).order("name"),
@@ -1019,6 +1067,7 @@ async function loadSupabaseData() {
       )
       .order("due_date", { ascending: true }),
     supabaseClient.from("brand_notification_recipients").select("brand_id,user_id"),
+    supabaseClient.from("work_order_phases").select("*").order("sort_order", { ascending: true }),
   ]);
 
   const error =
@@ -1050,7 +1099,20 @@ async function loadSupabaseData() {
       userId: recipient.user_id,
     })),
   );
-  workOrders = (ordersResult.data || []).map(mapDbWorkOrder);
+  const phasesByOrderId = new Map();
+  if (!phasesResult.error) {
+    (phasesResult.data || []).forEach((phase) => {
+      const list = phasesByOrderId.get(phase.work_order_id) || [];
+      list.push(phase);
+      phasesByOrderId.set(phase.work_order_id, list);
+    });
+  }
+  workOrders = (ordersResult.data || []).map((row) =>
+    mapDbWorkOrder({
+      ...row,
+      phases: phasesByOrderId.get(row.id) || [],
+    }),
+  );
 
   if (!isAllBrandsScope() && !brands.some((brand) => brand.id === state.currentBrandId)) {
     state.currentBrandId = ALL_BRANDS_ID;
@@ -1688,6 +1750,58 @@ function workOrderProcessArea(category = "diseno") {
     otro: "diseno",
   };
   return lumenProcessAreas[category] || lumenProcessAreas[aliases[category]] || lumenProcessAreas.diseno;
+}
+
+function workOrderPhaseTitle(phaseKey = "custom") {
+  return workOrderPhaseCatalog.find((phase) => phase.key === phaseKey)?.title || "Fase personalizada";
+}
+
+function defaultWorkOrderPhases({ dueDate = "", assignee = "" } = {}) {
+  return workOrderPhaseCatalog.map((phase, index) => ({
+    id: `draft-phase-${phase.key}-${index}`,
+    phaseKey: phase.key,
+    title: phase.title,
+    description: defaultWorkOrderPhaseDescriptions[phase.key] || "",
+    assignedTo: assignee,
+    status: index === 0 ? "in_progress" : "pending",
+    dueDate,
+    completedAt: "",
+    sortOrder: index,
+  }));
+}
+
+function workOrderPhases(order) {
+  return (order?.phases || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+function normalizedPhaseFromValues(phase, index) {
+  const phaseKey = phase.phaseKey || "custom";
+  const status = phase.status || "pending";
+  const completedAt = status === "completed" ? phase.completedAt || new Date().toISOString() : "";
+  return {
+    id: phase.id || `draft-phase-${Date.now()}-${index}`,
+    dbId: phase.dbId || null,
+    phaseKey,
+    title: phase.title || workOrderPhaseTitle(phaseKey),
+    description: phase.description || "",
+    assignedTo: phase.assignedTo || "",
+    status,
+    dueDate: phase.dueDate || "",
+    completedAt,
+    sortOrder: Number.isFinite(Number(phase.sortOrder)) ? Number(phase.sortOrder) : index,
+  };
+}
+
+function normalizeWorkOrderPhases(phases = []) {
+  return phases.map(normalizedPhaseFromValues).sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+function phaseStatusClass(status = "pending") {
+  if (status === "completed") return "done";
+  if (["in_progress", "in_review"].includes(status)) return "active";
+  if (["blocked", "changes_requested"].includes(status)) return "blocked";
+  if (status === "cancelled") return "cancelled";
+  return "";
 }
 
 function requiresSupervisorGate(category = "diseno") {
@@ -3148,6 +3262,136 @@ function renderWorkOrderSelectOption(value, label, activeValue) {
   return `<option value="${value}" ${value === activeValue ? "selected" : ""}>${label}</option>`;
 }
 
+function renderPhaseKeyOptions(activeKey = "custom") {
+  const options = [
+    ...workOrderPhaseCatalog.map((phase) => [phase.key, phase.title]),
+    ["custom", "Personalizada"],
+  ];
+  return options.map(([value, label]) => renderWorkOrderSelectOption(value, label, activeKey)).join("");
+}
+
+function renderPhaseStatusOptions(activeStatus = "pending") {
+  return Object.entries(workOrderPhaseStatusLabels)
+    .map(([value, label]) => renderWorkOrderSelectOption(value, label, activeStatus))
+    .join("");
+}
+
+function renderPhaseAssigneeOptions(activeUserId = "") {
+  return `
+    <option value="">Sin responsable</option>
+    ${activeUsers()
+      .filter((user) => user.role !== "cliente" && canUserAccessBrand(user, state.currentBrandId))
+      .map((user) => `<option value="${escapeHtml(user.id)}" ${activeUserId === user.id ? "selected" : ""}>${escapeHtml(user.name)} · ${escapeHtml(roleLabels[user.role] || user.role)}</option>`)
+      .join("")}
+  `;
+}
+
+function renderWorkOrderPhaseEditorRow(phase, index) {
+  return `
+    <div class="phase-editor-row" data-phase-row="${index}">
+      <div class="phase-editor-topline">
+        <span class="phase-index">${index + 1}</span>
+        <select class="input" data-phase-field="phaseKey" data-phase-index="${index}">
+          ${renderPhaseKeyOptions(phase.phaseKey)}
+        </select>
+        <input class="input" data-phase-field="title" data-phase-index="${index}" value="${escapeHtml(phase.title)}" placeholder="Nombre de fase" />
+        <button class="button-ghost small" type="button" data-action="remove-work-order-phase" data-id="${index}">Quitar</button>
+      </div>
+      <textarea class="textarea compact-textarea" data-phase-field="description" data-phase-index="${index}" placeholder="Qué debe pasar en esta fase">${escapeHtml(phase.description || "")}</textarea>
+      <div class="phase-editor-grid">
+        <label>
+          <span>Responsable</span>
+          <select class="input" data-phase-field="assignedTo" data-phase-index="${index}">
+            ${renderPhaseAssigneeOptions(phase.assignedTo)}
+          </select>
+        </label>
+        <label>
+          <span>Deadline</span>
+          <input class="input" type="date" data-phase-field="dueDate" data-phase-index="${index}" value="${escapeHtml(phase.dueDate || "")}" />
+        </label>
+        <label>
+          <span>Estado</span>
+          <select class="input" data-phase-field="status" data-phase-index="${index}">
+            ${renderPhaseStatusOptions(phase.status)}
+          </select>
+        </label>
+      </div>
+    </div>
+  `;
+}
+
+function renderWorkOrderPhasesEditor(phases = []) {
+  const normalized = normalizeWorkOrderPhases(phases);
+  return `
+    <div class="field full">
+      <div class="phase-editor-header">
+        <div>
+          <label>Fases internas</label>
+          <div class="field-help">La OT sigue siendo una sola solicitud. Usa fases solo para responsable, deadline y estado interno.</div>
+        </div>
+        <button class="button-ghost small" type="button" data-action="add-work-order-phase">Agregar fase</button>
+      </div>
+      <div class="phase-editor-list">
+        ${
+          normalized.length
+            ? normalized.map(renderWorkOrderPhaseEditorRow).join("")
+            : `<div class="empty compact-empty">Sin fases internas. Puedes agregar solo las fases que esta OT necesita.</div>`
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderWorkOrderPhaseProgress(order) {
+  const phases = workOrderPhases(order);
+  if (!phases.length) {
+    return `
+      <div class="process-timeline-card">
+        <div class="section-header compact">
+          <div>
+            <h3 class="section-title">Fases internas</h3>
+            <div class="small-muted">Esta OT aún no tiene fases configuradas. Edita la orden para agregar Brief, Creatividad, Producción u otras fases necesarias.</div>
+          </div>
+          <span class="badge">Sin fases</span>
+        </div>
+      </div>
+    `;
+  }
+  const completedCount = phases.filter((phase) => phase.status === "completed").length;
+  return `
+    <div class="process-timeline-card">
+      <div class="section-header compact">
+        <div>
+          <h3 class="section-title">Fases internas</h3>
+          <div class="small-muted">Seguimiento por fase sin dividir la OT en piezas individuales.</div>
+        </div>
+        <span class="badge blue">${completedCount}/${phases.length} completadas</span>
+      </div>
+      <div class="phase-progress-track" aria-label="Progreso de fases de la orden">
+        ${phases
+          .map(
+            (phase, index) => `
+              <div class="phase-progress-step ${phaseStatusClass(phase.status)}">
+                <span class="phase-dot">${index + 1}</span>
+                <div>
+                  <strong>${escapeHtml(phase.title)}</strong>
+                  <p>${escapeHtml(phase.description || "Sin descripción")}</p>
+                  <div class="phase-meta">
+                    <span>${escapeHtml(phase.assignedTo ? userName(phase.assignedTo) : "Sin responsable")}</span>
+                    <span>${phase.dueDate ? escapeHtml(formatDate(phase.dueDate)) : "Sin deadline"}</span>
+                    <span>${escapeHtml(workOrderPhaseStatusLabels[phase.status] || phase.status)}</span>
+                    ${phase.completedAt ? `<span>Completada ${escapeHtml(formatDate(phase.completedAt))}</span>` : ""}
+                  </div>
+                </div>
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
 function renderWorkOrderStatusOptions(activeValue) {
   const options = Object.entries(workOrderEditableStatusLabels);
   if (activeValue && !workOrderEditableStatusLabels[activeValue] && workOrderStatusLabels[activeValue]) {
@@ -3557,6 +3801,11 @@ function renderWorkOrderForm(order = null) {
   const availableUsers = availableWorkOrderAssigneeUsers(selectedAssignees);
   const selectedUsers = availableUsers.filter((user) => selectedAssignees.has(user.id));
   const files = isEditing ? orderFiles(order) : [];
+  const formPhases = state.workOrderDraftPhases.length
+    ? normalizeWorkOrderPhases(state.workOrderDraftPhases)
+    : isEditing
+      ? workOrderPhases(order)
+      : defaultWorkOrderPhases();
   const titleValue = isEditing ? order.title : `Nueva solicitud para ${getBrand().shortName}`;
   const descriptionValue = isEditing
     ? parsedDescription.description || ""
@@ -3674,6 +3923,7 @@ function renderWorkOrderForm(order = null) {
           <textarea class="textarea compact-textarea" id="ot-material-changes" placeholder="Una solicitud o cambio por linea">${escapeHtml(materialChangesValue)}</textarea>
           <div class="field-help">Usalo para ajustes de arte, copy, formatos o piezas faltantes.</div>
         </div>
+        ${renderWorkOrderPhasesEditor(formPhases)}
         ${
           files.length
             ? `
@@ -3750,7 +4000,7 @@ function renderWorkOrderDetailPanel(order) {
       </div>
       ${renderUrgentOrderBanner(order)}
       ${canManage && !archived ? renderWorkOrderStageControl(order) : ""}
-      ${renderWorkOrderProcessTimeline(order)}
+      ${renderWorkOrderPhaseProgress(order)}
       <div class="work-order-detail-grid">
         <div class="detail-block">
           <span>Estado</span>
@@ -6017,6 +6267,7 @@ function bindEvents() {
         state.editingWorkOrderId = "";
         state.viewingWorkOrderId = "";
         state.focusedWorkOrderId = "";
+        state.workOrderDraftPhases = [];
       }
       render();
     });
@@ -6028,6 +6279,7 @@ function bindEvents() {
       state.editingWorkOrderId = "";
       state.viewingWorkOrderId = "";
       state.focusedWorkOrderId = "";
+      state.workOrderDraftPhases = [];
       const firstContent = brandItems(event.target.value)[0];
       state.selectedContentId = firstContent?.id || null;
       render();
@@ -6124,6 +6376,17 @@ function bindEvents() {
 
   ["ot-category", "ot-priority"].forEach((fieldId) => {
     document.getElementById(fieldId)?.addEventListener("change", refreshWorkOrderGuidancePanels);
+  });
+
+  document.querySelectorAll("[data-phase-field=\"phaseKey\"]").forEach((select) => {
+    select.addEventListener("change", () => {
+      const row = select.closest("[data-phase-row]");
+      const titleInput = row?.querySelector("[data-phase-field=\"title\"]");
+      const descriptionInput = row?.querySelector("[data-phase-field=\"description\"]");
+      const nextTitle = workOrderPhaseTitle(select.value);
+      if (titleInput && (!titleInput.value || titleInput.value === "Nueva fase")) titleInput.value = nextTitle;
+      if (descriptionInput && !descriptionInput.value) descriptionInput.value = defaultWorkOrderPhaseDescriptions[select.value] || "";
+    });
   });
 
   document.querySelectorAll("[data-work-order-month]").forEach((input) => {
@@ -6267,6 +6530,7 @@ function openCreateWorkOrder() {
   state.editingWorkOrderId = "";
   state.viewingWorkOrderId = "";
   state.focusedWorkOrderId = "";
+  state.workOrderDraftPhases = defaultWorkOrderPhases();
   state.creatingWorkOrder = true;
   render();
   window.setTimeout(() => focusWorkOrderAi(), 0);
@@ -6275,6 +6539,39 @@ function openCreateWorkOrder() {
 function clearWorkOrderFilters() {
   state.workOrderFilters = { search: "", assignee: "", status: "", priority: "", due: "", quick: "" };
   state.showArchivedWorkOrders = false;
+  render();
+}
+
+function syncDraftPhasesFromForm() {
+  state.workOrderDraftPhases = getWorkOrderPhaseFormValues();
+}
+
+function addWorkOrderPhase() {
+  syncDraftPhasesFromForm();
+  state.workOrderDraftPhases.push(
+    normalizedPhaseFromValues(
+      {
+        phaseKey: "custom",
+        title: "Nueva fase",
+        description: "",
+        assignedTo: "",
+        status: "pending",
+        dueDate: document.getElementById("ot-due-date")?.value || "",
+        sortOrder: state.workOrderDraftPhases.length,
+      },
+      state.workOrderDraftPhases.length,
+    ),
+  );
+  render();
+}
+
+function removeWorkOrderPhase(index) {
+  syncDraftPhasesFromForm();
+  state.workOrderDraftPhases.splice(Number(index), 1);
+  state.workOrderDraftPhases = normalizeWorkOrderPhases(state.workOrderDraftPhases).map((phase, phaseIndex) => ({
+    ...phase,
+    sortOrder: phaseIndex,
+  }));
   render();
 }
 
@@ -6364,6 +6661,8 @@ async function handleAction(action, id) {
     "focus-work-order-ai": () => focusWorkOrderAi(),
     "open-create-work-order": () => openCreateWorkOrder(),
     "clear-work-order-filters": () => clearWorkOrderFilters(),
+    "add-work-order-phase": () => addWorkOrderPhase(),
+    "remove-work-order-phase": () => removeWorkOrderPhase(id),
     "focus-urgent-orders": () => focusUrgentOrders(),
     "optimize-work-order-urgency": () => optimizeWorkOrderUrgency(),
     "create-work-order": () => createWorkOrderFromForm(),
@@ -6720,6 +7019,7 @@ function getWorkOrderFormValues() {
     size: file.size,
     type: file.type || "application/octet-stream",
   }));
+  const phases = getWorkOrderPhaseFormValues();
   return {
     title,
     assignees,
@@ -6733,7 +7033,32 @@ function getWorkOrderFormValues() {
     notifyOnEmail,
     fileUploads,
     files,
+    phases,
   };
+}
+
+function getWorkOrderPhaseFormValues() {
+  const rows = Array.from(document.querySelectorAll("[data-phase-row]"));
+  return rows
+    .map((row, index) => {
+      const fieldValue = (field) => row.querySelector(`[data-phase-field="${field}"]`)?.value?.trim() || "";
+      const phaseKey = fieldValue("phaseKey") || "custom";
+      const status = fieldValue("status") || "pending";
+      return normalizedPhaseFromValues(
+        {
+          phaseKey,
+          title: fieldValue("title") || workOrderPhaseTitle(phaseKey),
+          description: fieldValue("description"),
+          assignedTo: fieldValue("assignedTo"),
+          status,
+          dueDate: fieldValue("dueDate"),
+          completedAt: status === "completed" ? new Date().toISOString() : "",
+          sortOrder: index,
+        },
+        index,
+      );
+    })
+    .filter((phase) => phase.title);
 }
 
 function validateWorkOrderValues(values) {
@@ -6876,6 +7201,28 @@ async function uploadWorkOrderFiles(orderDbId, brandId, fileUploads) {
     uploadedCount += 1;
   }
   return uploadedCount;
+}
+
+async function replaceSupabaseWorkOrderPhases(orderDbId, phases = []) {
+  if (!orderDbId) return { error: null };
+  const { error: deleteError } = await supabaseClient.from("work_order_phases").delete().eq("work_order_id", orderDbId);
+  if (deleteError) return { error: deleteError };
+  const normalized = normalizeWorkOrderPhases(phases);
+  if (!normalized.length) return { error: null };
+  const { error } = await supabaseClient.from("work_order_phases").insert(
+    normalized.map((phase, index) => ({
+      work_order_id: orderDbId,
+      phase_key: phase.phaseKey,
+      title: phase.title,
+      description: phase.description || null,
+      assigned_to: phase.assignedTo || null,
+      status: phase.status,
+      due_date: phase.dueDate || null,
+      completed_at: phase.status === "completed" ? phase.completedAt || new Date().toISOString() : null,
+      sort_order: index,
+    })),
+  );
+  return { error };
 }
 
 function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedCount }) {
@@ -7033,6 +7380,14 @@ function describeWorkOrderChanges(order, values = {}, uploadedCount = 0) {
     changes.push(...descriptionChanges);
     if (!descriptionChanges.length && plainText(previousDescription.description) === plainText(nextDescription.description)) {
       changes.push("Descripcion, subtareas o cambios de materiales actualizados");
+    }
+  }
+  if (Array.isArray(values.phases)) {
+    const previousPhases = workOrderPhases(order);
+    const previousSummary = previousPhases.map((phase) => `${phase.title}:${phase.status}:${phase.assignedTo}:${phase.dueDate}`).join("|");
+    const nextSummary = values.phases.map((phase) => `${phase.title}:${phase.status}:${phase.assignedTo}:${phase.dueDate}`).join("|");
+    if (previousSummary !== nextSummary) {
+      changes.push(`Fases internas actualizadas (${values.phases.length})`);
     }
   }
   if (uploadedCount) changes.push(`${uploadedCount} material${uploadedCount === 1 ? "" : "es"} agregado${uploadedCount === 1 ? "" : "s"}`);
@@ -7227,12 +7582,16 @@ async function createWorkOrderFromForm() {
     }
 
     const uploadedCount = await uploadWorkOrderFiles(insertedOrder.id, state.currentBrandId, values.fileUploads);
+    const { error: phasesError } = await replaceSupabaseWorkOrderPhases(insertedOrder.id, values.phases);
+    if (phasesError) {
+      showToast(`OT creada, pero falta activar fases en Supabase: ${phasesError.message}`);
+    }
 
     await supabaseClient.from("work_order_activity").insert({
       work_order_id: insertedOrder.id,
       actor_id: dataState.session?.user?.id,
       action: "created",
-      details: { title: values.title, assignees: values.assignees.length, files: uploadedCount },
+      details: { title: values.title, assignees: values.assignees.length, files: uploadedCount, phases: values.phases.length },
     });
 
     if (values.notifyOnEmail) {
@@ -7264,6 +7623,7 @@ async function createWorkOrderFromForm() {
 
     await loadSupabaseData();
     state.creatingWorkOrder = false;
+    state.workOrderDraftPhases = [];
     showToast(`OT creada en Supabase: ${code}`);
     render();
     return;
@@ -7285,10 +7645,12 @@ async function createWorkOrderFromForm() {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     notifyOnEmail: values.notifyOnEmail,
+    phases: values.phases,
     linkedContentId: state.selectedContentId,
   });
   saveWorkOrders();
   state.creatingWorkOrder = false;
+  state.workOrderDraftPhases = [];
   showToast(`OT creada y ${values.notifyOnEmail ? "email preparado" : "sin email"}`);
   render();
 }
@@ -7372,12 +7734,14 @@ function editWorkOrder(id) {
   state.editingWorkOrderId = id;
   state.viewingWorkOrderId = id;
   state.focusedWorkOrderId = id;
+  state.workOrderDraftPhases = workOrderPhases(order);
   showToast(`Editando ${id}`);
   render();
 }
 
 function cancelEditWorkOrder() {
   state.editingWorkOrderId = "";
+  state.workOrderDraftPhases = [];
   showToast("Edicion cancelada");
   render();
 }
@@ -7455,6 +7819,11 @@ async function updateWorkOrderFromForm() {
     }
 
     const uploadedCount = await uploadWorkOrderFiles(order.dbId, order.brandId, values.fileUploads);
+    const { error: phasesError } = await replaceSupabaseWorkOrderPhases(order.dbId, values.phases);
+    if (phasesError) {
+      showToast(`OT actualizada, pero no se guardaron fases: ${phasesError.message}`);
+      return;
+    }
     const changes = describeWorkOrderChanges(order, values, uploadedCount);
     const updatedOrderForEmail = {
       ...order,
@@ -7466,6 +7835,7 @@ async function updateWorkOrderFromForm() {
       description: values.description,
       assignees: values.assignees,
       notifyOnEmail: values.notifyOnEmail,
+      phases: values.phases,
     };
     await supabaseClient.from("work_order_activity").insert({
       work_order_id: order.dbId,
@@ -7477,6 +7847,7 @@ async function updateWorkOrderFromForm() {
         status_to: values.status,
         assignees: values.assignees.length,
         files_added: uploadedCount,
+        phases: values.phases.length,
         changes,
       },
     });
@@ -7484,6 +7855,7 @@ async function updateWorkOrderFromForm() {
 
     await loadSupabaseData();
     state.editingWorkOrderId = "";
+    state.workOrderDraftPhases = [];
     showToast(`${order.id} actualizada`);
     render();
     return;
@@ -7499,6 +7871,7 @@ async function updateWorkOrderFromForm() {
   order.description = values.description;
   order.files = [...orderFiles(order), ...values.files];
   order.notifyOnEmail = values.notifyOnEmail;
+  order.phases = values.phases;
   order.updatedAt = new Date().toISOString();
   if (order.linkedContentId && order.status === "completed") {
     const linked = contentItems.find((item) => item.id === order.linkedContentId);
@@ -7507,6 +7880,7 @@ async function updateWorkOrderFromForm() {
   }
   saveWorkOrders();
   state.editingWorkOrderId = "";
+  state.workOrderDraftPhases = [];
   showToast(`${order.id} actualizada`);
   render();
 }
