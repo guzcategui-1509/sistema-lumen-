@@ -12,8 +12,8 @@ Implementacion base del plan maestro para convertir Lumen Workspace en un sistem
 - Flujo de contenido operable en prototipo: pasar a final, programar, aprobar, pedir cambios y comentar.
 - OTs priorizadas con creador, responsable, deadline, email activo, vencimientos y avance de estado.
 - OTs con multiples responsables y adjuntos de archivo en prototipo.
-- Selector global con opcion "Todas las marcas" y dashboard visual cross-brand por cliente, marca, OTs, carga y aprobaciones.
-- Equipo con carga operativa por usuario, OTs vencidas/abiertas y digest semanal.
+- Selector global con opcion "Todas las marcas" y dashboard visual cross-brand por cliente, marca, OTs, tareas y aprobaciones.
+- Equipo con tareas operativas por usuario, OTs vencidas/abiertas y digest semanal.
 - Notificaciones de OTs con asignaciones y urgencias inmediatas, resumen diario de cambios y digest de lunes.
 - Checklist de lanzamiento MVP con modulos beta estacionados hasta despues del piloto.
 - Canva v1 como links + previews + version visual aprobable.

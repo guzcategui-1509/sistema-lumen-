@@ -1884,7 +1884,7 @@ function urgentWorkOrderPlan({ category = "diseno", brandId = state.currentBrand
     candidates: ranked.slice(0, 4),
     dueDate,
     reason: best
-      ? `${best.user.name} tiene ${best.workload.open.length} abiertas, ${best.workload.review.length} en revisión y ${best.workload.overdue.length} vencidas.`
+      ? `${best.user.name} tiene ${best.workload.open.length} tareas abiertas, ${best.workload.review.length} en revisión y ${best.workload.overdue.length} vencidas.`
       : "No hay responsables disponibles para esta marca; deja la OT en revisión de jefe.",
   };
 }
@@ -2172,7 +2172,7 @@ function renderAllBrandsHero() {
       <div class="all-hero-copy">
         <span class="eyebrow">Vista general</span>
         <h2>Todas las marcas</h2>
-        <p class="muted">Un tablero ejecutivo para ver carga, responsables, vencimientos y avance sin entrar marca por marca.</p>
+        <p class="muted">Un tablero ejecutivo para ver tareas, responsables, vencimientos y avance sin entrar marca por marca.</p>
         <div class="badge-row">
           <span class="badge blue">${clients.length} clientes</span>
           <span class="badge green">${activeBrands.length} marcas activas</span>
@@ -2299,7 +2299,7 @@ function renderDashboardHeader() {
       <div>
         <span class="eyebrow">Centro de mando</span>
         <h2>Dashboard operativo</h2>
-        <p>Resumen de carga, vencimientos y prioridades del equipo.</p>
+        <p>Resumen de tareas, vencimientos y prioridades del equipo.</p>
       </div>
       <div class="dashboard-command-actions">
         <select class="brand-select js-brand-select" aria-label="Marca o cliente">
@@ -2357,10 +2357,10 @@ function renderDashboardWorkloadTable(sourceOrders = dashboardScopedOrders()) {
     <section class="panel executive-panel">
       <div class="section-header">
         <div>
-          <h2 class="section-title">Carga por responsable</h2>
-          <div class="small-muted">Personas con trabajo activo o atrasos. Los detalles se abren solo cuando los necesitas.</div>
+          <h2 class="section-title">Tareas por responsable</h2>
+          <div class="small-muted">Personas con tareas activas o atrasos. Los detalles se abren solo cuando los necesitas.</div>
         </div>
-        ${quietCount ? `<span class="badge neutral">${quietCount} sin carga activa</span>` : ""}
+        ${quietCount ? `<span class="badge neutral">${quietCount} sin tareas activas</span>` : ""}
       </div>
       <div class="executive-accordion-list">
         ${
@@ -2391,7 +2391,7 @@ function renderDashboardWorkloadTable(sourceOrders = dashboardScopedOrders()) {
                 </details>
               `;
             })
-            .join("") || `<div class="empty compact-empty">No hay responsables con carga activa en este filtro.</div>`
+            .join("") || `<div class="empty compact-empty">No hay responsables con tareas activas en este filtro.</div>`
         }
       </div>
     </section>
@@ -2821,7 +2821,7 @@ function renderWeeklyDigestMini() {
     <div class="digest-mini">
       <div class="digest-mini-copy">
         <strong>${weeklyDigestConfig.day} ${weeklyDigestConfig.time}</strong>
-        <span>Resumen por correo para Dirección/Cuentas con la carga de trabajo del equipo.</span>
+        <span>Resumen por correo para Dirección/Cuentas con las tareas pendientes del equipo.</span>
       </div>
       <div class="digest-mini-metrics">
         <span><strong>${open}</strong> abiertas</span>
@@ -3677,8 +3677,8 @@ function renderUrgentPlannerPanel(category = "diseno", priority = "medium") {
     <div class="urgent-planner-panel">
       <div>
         <span class="badge red">Urgencias</span>
-        <h3>Planificador de carga</h3>
-        <p class="muted">Si esta solicitud entra urgente, Lumen compara carga abierta, vencidas y revisión para sugerir persona y deadline.</p>
+        <h3>Planificador de tareas</h3>
+        <p class="muted">Si esta solicitud entra urgente, Lumen compara tareas abiertas, vencidas y revisión para sugerir persona y deadline.</p>
       </div>
       <div class="urgent-plan-preview" id="urgent-plan-preview">
         <strong>${plan.candidate ? escapeHtml(plan.candidate.name) : "Pendiente de asignar"}</strong>
@@ -4490,7 +4490,7 @@ function renderWorkOrderOperationsPanel(orders, allBrands, archivedCount = 0) {
           <button class="button-ghost small" data-action="toggle-archived-work-orders">
             ${state.showArchivedWorkOrders ? "Ocultar archivadas" : `Ver archivadas (${archivedCount})`}
           </button>
-          <button class="button-ghost small" data-module="team">Ver carga equipo</button>
+          <button class="button-ghost small" data-module="team">Ver tareas del equipo</button>
         </div>
       </div>
       <div class="inbox-toolbar">
@@ -5378,7 +5378,7 @@ function reportInsights({ overdueOpen, lateCompleted, reviewOrders, teamRows, cl
   }
   if (overloaded.length) {
     insights.push({
-      title: `Carga alta: ${overloaded.map((row) => row.user.name.split(" ")[0]).join(", ")}`,
+      title: `Muchas tareas: ${overloaded.map((row) => row.user.name.split(" ")[0]).join(", ")}`,
       detail: "Revisa redistribución antes de asignar nuevas OTs urgentes.",
       cls: "purple",
     });
@@ -5573,7 +5573,7 @@ function downloadReportPdf() {
           <thead><tr><th>Cliente</th><th>Abiertas</th><th>Entregadas</th><th>Fuera de fecha</th><th>A tiempo</th></tr></thead>
           <tbody>${rows || `<tr><td colspan="5">Sin datos</td></tr>`}</tbody>
         </table>
-        <h2>Carga por responsable</h2>
+        <h2>Tareas por responsable</h2>
         <table>
           <thead><tr><th>Responsable</th><th>Rol</th><th>Abiertas</th><th>Revisión</th><th>Vencidas</th></tr></thead>
           <tbody>${teamRows || `<tr><td colspan="5">Sin equipo activo</td></tr>`}</tbody>
@@ -5726,7 +5726,7 @@ function renderReports() {
           <h2>Reportería operativa</h2>
             <span class="badge green">Agencia en tiempo real</span>
           </div>
-          <p class="muted">Panorama de carga, entregas, atrasos y trabajo activo por cliente, marca y responsable.</p>
+          <p class="muted">Panorama de tareas, entregas, atrasos y trabajo activo por cliente, marca y responsable.</p>
         </div>
         <div class="quick-links">
           <button class="button" data-action="download-report-pdf">Descargar informe PDF</button>
@@ -5741,7 +5741,7 @@ function renderReports() {
         <div class="section-header">
           <div>
             <h2 class="section-title">Filtros de periodo</h2>
-            <div class="small-muted">Analiza la carga y entregas por mes o por rango de fechas.</div>
+            <div class="small-muted">Analiza tareas y entregas por mes o por rango de fechas.</div>
           </div>
           <span class="badge blue">${scopedOrders.length} de ${rawScopedOrders.length} OTs</span>
         </div>
@@ -5810,16 +5810,16 @@ function renderReports() {
         <div class="panel section">
           <div class="section-header">
             <div>
-              <h2 class="section-title">Carga por responsable</h2>
-              <div class="small-muted">Solo personas con carga activa. El resto queda resumido para no hacer scroll innecesario.</div>
+              <h2 class="section-title">Tareas por responsable</h2>
+              <div class="small-muted">Solo personas con tareas activas. El resto queda resumido para no hacer scroll innecesario.</div>
             </div>
             <div class="row wrap">
               <span class="badge amber">${openOrders.length} abiertas</span>
-              ${quietTeamCount ? `<span class="badge neutral">${quietTeamCount} sin carga</span>` : ""}
+              ${quietTeamCount ? `<span class="badge neutral">${quietTeamCount} sin tareas</span>` : ""}
             </div>
           </div>
           <div class="report-accordion-list">
-            ${activeTeamRows.map(renderReportTeamDisclosure).join("") || `<div class="empty compact-empty">Sin equipo con carga activa en este periodo.</div>`}
+            ${activeTeamRows.map(renderReportTeamDisclosure).join("") || `<div class="empty compact-empty">Sin equipo con tareas activas en este periodo.</div>`}
           </div>
         </div>
 
@@ -5836,7 +5836,7 @@ function renderReports() {
               ${visibleBrandRows.map(renderReportBrandDisclosure).join("") || `<div class="empty compact-empty">Sin marcas para reportar</div>`}
             </div>
             <div class="category-chip-panel">
-              <strong>Carga por tipo de entregable</strong>
+              <strong>Tareas por tipo de entregable</strong>
               <div class="category-chip-cloud">
                 ${
                   categoryRows
@@ -5879,8 +5879,8 @@ function renderTeam() {
     <section class="section">
       <div class="section-header">
         <div>
-          <h2 class="section-title">Equipo, carga y alertas</h2>
-          <div class="small-muted">Responsables, marcas, carga de OTs y preferencias de email.</div>
+              <h2 class="section-title">Equipo, tareas y alertas</h2>
+              <div class="small-muted">Responsables, marcas, tareas activas y preferencias de email.</div>
         </div>
         <div class="row wrap">
           <button class="button-ghost" data-module="notifications">Configurar emails</button>
@@ -5912,7 +5912,7 @@ function renderTeam() {
                       </div>
                       <div class="team-load">
                         <div class="row between">
-                          <strong>Carga operativa</strong>
+                          <strong>Tareas activas</strong>
                           <span class="muted">${capacity}%</span>
                         </div>
                         <div class="bar-track"><div class="bar-fill" style="width:${capacity}%"></div></div>
@@ -6175,7 +6175,7 @@ function renderAdminUserManager(canManage) {
           <div class="field full">
             <label>Marcas asignadas</label>
             ${renderAdminBrandChecks(selectedUser?.brands || [], !canManage)}
-            <div class="field-help">Admin y Dirección pueden ver todo; las marcas ayudan a ordenar asignaciones y carga.</div>
+            <div class="field-help">Admin y Dirección pueden ver todo; las marcas ayudan a ordenar asignaciones y tareas.</div>
           </div>
           <div class="full row wrap">
             <button class="button" data-action="save-admin-user" ${canManage ? "" : "disabled"}>Guardar usuario</button>
@@ -7150,7 +7150,7 @@ function fillWorkOrderWithAi(promptOverride = "") {
 
 function optimizeWorkOrderUrgency() {
   if (isAllBrandsScope()) {
-    showToast("Selecciona una marca para calcular carga de urgencias");
+    showToast("Selecciona una marca para calcular prioridades urgentes");
     return;
   }
   const category = document.getElementById("ot-category")?.value || "diseno";
@@ -7159,7 +7159,7 @@ function optimizeWorkOrderUrgency() {
   const priorityInput = document.getElementById("ot-priority");
   const subtasksInput = document.getElementById("ot-subtasks");
   const existingTasks = parseListLines(subtasksInput?.value || "");
-  const urgentTask = "Confirmar prioridad urgente y fecha ideal segun carga del equipo";
+  const urgentTask = "Confirmar prioridad urgente y fecha ideal segun tareas del equipo";
 
   if (dueDateInput) dueDateInput.value = plan.dueDate;
   if (priorityInput) priorityInput.value = "high";
@@ -8126,10 +8126,10 @@ async function applyUrgentWorkloadPlan(id) {
     : currentAssignees;
   const changes = [
     `Prioridad marcada como Alta`,
-    `Deadline sugerido por carga: ${formatDate(order.dueDate)} -> ${formatDate(plan.dueDate)}`,
+    `Deadline sugerido segun tareas: ${formatDate(order.dueDate)} -> ${formatDate(plan.dueDate)}`,
   ];
   if (plan.candidate && !currentAssignees.includes(plan.candidate.id)) {
-    changes.push(`Responsable sugerido por carga: ${plan.candidate.name}`);
+    changes.push(`Responsable sugerido segun tareas: ${plan.candidate.name}`);
   }
 
   if (isSupabaseMode()) {

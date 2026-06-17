@@ -204,7 +204,7 @@ USING (
 
 INSERT INTO notification_rules (rule_key, title, channel, recipients, is_enabled)
 VALUES
-  ('weekly_digest_accounts', 'Digest semanal de carga laboral', 'email', 'direccion_cuentas_by_brand_scope', true),
+  ('weekly_digest_accounts', 'Digest semanal de tareas pendientes', 'email', 'direccion_cuentas_by_brand_scope', true),
   ('monthly_content_matrix', 'Matriz mensual de contenido', 'work_order_email', 'cuentas_generador_creativo_by_brand', true),
   ('monthly_paid_placement', 'Colocacion mensual de pauta', 'work_order_email', 'cuentas_medios_pauta_by_brand', true)
 ON CONFLICT (rule_key) DO UPDATE SET
