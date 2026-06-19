@@ -8183,12 +8183,18 @@ async function applyUrgentWorkloadPlan(id) {
 }
 
 function archiveMigrationMessage(message = "") {
+  if (message.includes("not_allowed_to_archive_work_order")) {
+    return "Tu usuario no tiene permiso para archivar esta OT o no tiene acceso a la marca.";
+  }
   return message.includes("archived_at") ||
     message.includes("archive_work_order") ||
+    message.includes("can_archive_work_orders") ||
     message.includes("Could not find the function") ||
     message.includes("schema cache") ||
+    message.includes("row-level security") ||
+    message.includes("permission denied") ||
     message.includes("column")
-    ? "Falta activar archivo de OTs en Supabase: ejecuta supabase/patch_work_order_archive.sql"
+    ? "Falta actualizar el archivo de OTs en Supabase: ejecuta supabase/patch_work_order_archive.sql"
     : "";
 }
 
@@ -8209,6 +8215,10 @@ async function setWorkOrderArchived(id, shouldArchive) {
   }
   const order = workOrders.find((candidate) => candidate.id === id);
   if (!order) return;
+  if (shouldArchive) {
+    const confirmed = window.confirm(`Archivar ${order.id}? La OT saldra del panel activo, pero no se borrara y podras restaurarla.`);
+    if (!confirmed) return;
+  }
   if (isArchivedWorkOrder(order) === shouldArchive) {
     showToast(shouldArchive ? "Esta OT ya esta archivada" : "Esta OT ya esta activa");
     return;
@@ -8216,6 +8226,10 @@ async function setWorkOrderArchived(id, shouldArchive) {
   const archivedAt = shouldArchive ? new Date().toISOString() : null;
 
   if (isSupabaseMode()) {
+    if (!order.dbId) {
+      showToast("No se pudo archivar: esta OT no tiene ID de Supabase.");
+      return;
+    }
     const { error } = await supabaseClient.rpc("archive_work_order", {
       target_work_order_id: order.dbId,
       should_archive: shouldArchive,
