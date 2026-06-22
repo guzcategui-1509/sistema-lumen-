@@ -28,6 +28,11 @@ type WorkOrderAssignee = {
   user_id: string;
 };
 
+type WorkOrderPhase = {
+  work_order_id: string;
+  assigned_to: string | null;
+};
+
 type RequestProfile = {
   role: string;
   is_active: boolean;
@@ -352,22 +357,25 @@ Deno.serve(async (request) => {
     "ejecutivo",
   ].join(",");
 
-  const [profilesResponse, ordersResponse, brandsResponse, assigneesResponse] = await Promise.all([
+  const [profilesResponse, ordersResponse, brandsResponse, assigneesResponse, phasesResponse] = await Promise.all([
     supabaseRequest(`profiles?is_active=eq.true&role=in.(${internalRoles})&select=id,full_name,email,role`),
     supabaseRequest("work_orders?select=*"),
     supabaseRequest("brands?is_active=eq.true&select=id,name"),
     supabaseRequest("work_order_assignees?select=work_order_id,user_id"),
+    supabaseRequest("work_order_phases?select=work_order_id,assigned_to"),
   ]);
 
   if (!profilesResponse.ok) return jsonResponse({ error: await profilesResponse.text() }, 500);
   if (!ordersResponse.ok) return jsonResponse({ error: await ordersResponse.text() }, 500);
   if (!brandsResponse.ok) return jsonResponse({ error: await brandsResponse.text() }, 500);
   if (!assigneesResponse.ok) return jsonResponse({ error: await assigneesResponse.text() }, 500);
+  if (!phasesResponse.ok) return jsonResponse({ error: await phasesResponse.text() }, 500);
 
   const profiles = ((await profilesResponse.json()) as Profile[]).filter((profile) => profile.email);
   const orders = (await ordersResponse.json()) as WorkOrder[];
   const brands = (await brandsResponse.json()) as Brand[];
   const assignees = (await assigneesResponse.json()) as WorkOrderAssignee[];
+  const phases = (await phasesResponse.json()) as WorkOrderPhase[];
   const openOrders = orders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.due_date) < 0);
   const subject = "Lumen Workspace - tus OTs de la semana";
@@ -379,6 +387,9 @@ Deno.serve(async (request) => {
         .filter((assignee) => assignee.user_id === profile.id)
         .map((assignee) => assignee.work_order_id),
     );
+    phases
+      .filter((phase) => phase.assigned_to === profile.id)
+      .forEach((phase) => orderIds.add(phase.work_order_id));
     return orders.filter((order) => orderIds.has(order.id));
   }
 
