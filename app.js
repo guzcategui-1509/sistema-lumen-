@@ -427,10 +427,10 @@ const notificationRules = [
     enabled: true,
   },
   {
-    id: "supervisor-gate",
-    title: "Revisión de jefe inmediato",
-    channel: "Correo inmediato",
-    recipients: "Dirección/Cuentas por marca",
+    id: "phase-assignment",
+    title: "Responsables por fase",
+    channel: "Correo + aviso dentro del sistema",
+    recipients: "Responsables asignados a cada fase",
     enabled: true,
   },
   {
@@ -516,16 +516,13 @@ const defaultWorkOrderPhaseDescriptions = {
   entrega: "Entrega final, archivo o cierre operativo.",
 };
 
-const supervisorGateCategories = ["diseno", "arte_final", "edicion", "produccion"];
-
 const lumenProcessAreas = {
   diseno: {
     label: "Diseño / Creatividad",
-    supervisorRoles: ["directora", "creativo", "cuentas"],
     executionRoles: ["disenador", "creativo", "editor"],
     steps: [
       ["Brief validado", "Cuentas confirma objetivo, target, entregables, fechas y presupuesto."],
-      ["Asignación de jefe", "Dirección/Creatividad revisa la OT, asigna responsable y ajusta deadline."],
+      ["Fases y responsables", "Se definen responsables y deadlines por fase dentro de la OT."],
       ["Concepto y diseño", "Creativo/Diseño desarrolla propuesta visual alineada al brief."],
       ["Revisión interna", "Director de Arte o responsable valida calidad antes de cliente."],
       ["Cliente / cambios", "Cuentas presenta, recibe feedback y centraliza ajustes."],
@@ -534,11 +531,10 @@ const lumenProcessAreas = {
   },
   arte_final: {
     label: "Arte final",
-    supervisorRoles: ["directora", "creativo", "cuentas"],
     executionRoles: ["disenador", "editor"],
     steps: [
       ["Brief y propuesta aprobada", "La solicitud entra con material o propuesta ya aprobada."],
-      ["Asignación de jefe", "Dirección/Creatividad confirma responsable y tiempo de entrega."],
+      ["Fases y responsables", "Se define quién toma cada fase y cuándo debe completarla."],
       ["Adaptaciones", "Arte final prepara formatos, resoluciones y versiones."],
       ["Revisión interna", "Se valida que el material esté listo para medios o cliente."],
       ["Ajustes finales", "Se corrigen observaciones puntuales antes de entrega."],
@@ -547,11 +543,10 @@ const lumenProcessAreas = {
   },
   edicion: {
     label: "Edición / Post",
-    supervisorRoles: ["directora", "operaciones", "creativo", "cuentas"],
     executionRoles: ["editor", "generador", "creativo"],
     steps: [
       ["Brief o matriz aprobada", "La edición parte de materiales e instrucciones aprobadas."],
-      ["Asignación de jefe", "Producción/Operación asigna editor y deadline realista."],
+      ["Fases y responsables", "Se asigna responsable y deadline a la fase de edición."],
       ["Primer corte", "Editor procesa materiales y arma versión inicial."],
       ["Revisión interna", "Responsable del proyecto revisa ritmo, copy, música y formatos."],
       ["Cambios", "Se aplica una ronda ordenada de ajustes."],
@@ -560,7 +555,6 @@ const lumenProcessAreas = {
   },
   produccion: {
     label: "Producción",
-    supervisorRoles: ["directora", "operaciones", "cuentas"],
     executionRoles: ["operaciones", "generador", "editor"],
     steps: [
       ["Solicitud de producción", "Cuentas, Creatividad o Digital registra necesidad y brief."],
@@ -573,7 +567,6 @@ const lumenProcessAreas = {
   },
   pauta: {
     label: "Pauta digital",
-    supervisorRoles: ["directora", "cuentas", "pauta"],
     executionRoles: ["pauta", "medios"],
     steps: [
       ["Brief de pauta", "Cuentas entrega objetivos, presupuesto, target, fechas y canales."],
@@ -586,7 +579,6 @@ const lumenProcessAreas = {
   },
   matriz: {
     label: "Matriz / Digital",
-    supervisorRoles: ["directora", "cuentas", "creativo"],
     executionRoles: ["generador", "creativo", "community"],
     steps: [
       ["Brief mensual", "Cuentas entrega información del mes y prioridades."],
@@ -1544,20 +1536,26 @@ function configuredBrandEmailRecipientUsers(brandId) {
   return internalUsers().filter((user) => recipientIds.includes(user.id) && user.email);
 }
 
-function brandEmailRecipientUsers(brandId, fallbackUserIds = []) {
-  const configuredRecipients = configuredBrandEmailRecipientUsers(brandId);
-  if (configuredRecipients.length) return configuredRecipients;
-  return internalUsers().filter((user) => fallbackUserIds.includes(user.id) && user.email);
+function uniqueUserIds(userIds = []) {
+  return Array.from(new Set((userIds || []).filter(Boolean)));
+}
+
+function brandEmailRecipientUsers(brandId, fallbackUserIds = [], options = {}) {
+  const configuredRecipients = options.includeConfigured ? configuredBrandEmailRecipientUsers(brandId) : [];
+  const fallbackRecipients = internalUsers().filter((user) => fallbackUserIds.includes(user.id) && user.email);
+  const recipients = new Map();
+  [...configuredRecipients, ...fallbackRecipients].forEach((user) => recipients.set(user.id, user));
+  return [...recipients.values()];
 }
 
 function brandEmailRecipientSummary(brandId, fallbackUserIds = []) {
   const configuredRecipients = configuredBrandEmailRecipientUsers(brandId);
-  if (configuredRecipients.length) {
-    return `Se enviara a ${configuredRecipients.map((user) => user.name).join(", ")}.`;
-  }
   const fallbackRecipients = brandEmailRecipientUsers(brandId, fallbackUserIds);
-  if (fallbackRecipients.length) return `Sin lista fija: se enviara a responsables seleccionados.`;
-  return "Sin lista fija: si no eliges responsables, no se preparara email.";
+  if (fallbackRecipients.length) return `Sin lista fija: se enviara a responsables seleccionados o asignados a fases.`;
+  if (configuredRecipients.length) {
+    return `La lista fija de marca se usa solo para alertas o automatizaciones configuradas; esta OT avisara a responsables seleccionados.`;
+  }
+  return "Sin lista fija: si no eliges responsables ni asignas fases, no se preparara email.";
 }
 
 function isSystemAdmin() {
@@ -1804,8 +1802,15 @@ function phaseStatusClass(status = "pending") {
   return "";
 }
 
-function requiresSupervisorGate(category = "diseno") {
-  return supervisorGateCategories.includes(category);
+function currentProfileId() {
+  return dataState.profile?.id || dataState.session?.user?.id || "";
+}
+
+function canCompleteWorkOrderPhase(phase) {
+  if (!phase || phase.status === "completed" || phase.status === "cancelled") return false;
+  if (canManageWorkOrders()) return true;
+  const currentId = currentProfileId();
+  return Boolean(currentId && phase.assignedTo === currentId);
 }
 
 function usersForBrandByRoles(roles = [], brandId = state.currentBrandId) {
@@ -1817,13 +1822,6 @@ function usersForBrandByRoles(roles = [], brandId = state.currentBrandId) {
       const bLoad = workloadScoreForUser(b.id);
       return aLoad - bLoad || a.name.localeCompare(b.name);
     });
-}
-
-function supervisorCandidates(category = "diseno", brandId = state.currentBrandId) {
-  const area = workOrderProcessArea(category);
-  const candidates = usersForBrandByRoles(area.supervisorRoles, brandId);
-  if (candidates.length) return candidates;
-  return usersForBrandByRoles(["admin", "directora", "cuentas"], brandId);
 }
 
 function executionCandidates(category = "diseno", brandId = state.currentBrandId) {
@@ -1885,7 +1883,7 @@ function urgentWorkOrderPlan({ category = "diseno", brandId = state.currentBrand
     dueDate,
     reason: best
       ? `${best.user.name} tiene ${best.workload.open.length} tareas abiertas, ${best.workload.review.length} en revisión y ${best.workload.overdue.length} vencidas.`
-      : "No hay responsables disponibles para esta marca; deja la OT en revisión de jefe.",
+      : "No hay responsables disponibles para esta marca; deja las fases sin asignar y complétalas manualmente.",
   };
 }
 
@@ -3382,6 +3380,11 @@ function renderWorkOrderPhaseProgress(order) {
                     <span>${escapeHtml(workOrderPhaseStatusLabels[phase.status] || phase.status)}</span>
                     ${phase.completedAt ? `<span>Completada ${escapeHtml(formatDate(phase.completedAt))}</span>` : ""}
                   </div>
+                  ${
+                    canCompleteWorkOrderPhase(phase)
+                      ? `<button class="button-ghost small" data-action="complete-work-order-phase" data-id="${escapeHtml(phase.id)}">Marcar mi fase realizada</button>`
+                      : ""
+                  }
                 </div>
               </div>
             `,
@@ -3607,9 +3610,8 @@ function buildWorkOrderAiDraft(prompt = "", availableUsers = [], brandOverride =
   const priority = inferWorkOrderPriority(cleanPrompt, dueDate);
   const categoryLabel = workOrderCategoryLabels[category] || "Solicitud";
   const mentionedAssignees = inferMentionedAssignees(cleanPrompt, availableUsers);
-  const title = cleanPrompt
-    ? `${categoryLabel} - ${brand.shortName}`
-    : `Nueva ${categoryLabel.toLowerCase()} para ${brand.shortName}`;
+  const firstLine = cleanPrompt.split(/\n|\.|;/).map((part) => part.trim()).find(Boolean) || "";
+  const title = firstLine ? firstLine.slice(0, 96) : `Nueva ${categoryLabel.toLowerCase()} para ${brand.shortName}`;
   return {
     title,
     category,
@@ -3618,7 +3620,7 @@ function buildWorkOrderAiDraft(prompt = "", availableUsers = [], brandOverride =
     description: cleanPrompt || `Solicitud de ${categoryLabel.toLowerCase()} para ${brand.shortName}.`,
     subtasks: workOrderAiSubtasks(category),
     materialChanges: workOrderAiMaterialChanges(category, cleanPrompt),
-    assignees: Array.from(new Set([...(mentionedAssignees.length ? mentionedAssignees : []), ...workOrderAiAssignees(category, availableUsers)])).slice(0, 4),
+    assignees: Array.from(new Set(mentionedAssignees)).slice(0, 4),
   };
 }
 
@@ -3628,7 +3630,7 @@ function renderWorkOrderAiAssistant(isEditing) {
       <div>
         <span class="badge green">IA de OTs</span>
         <h3>Asistente de creación</h3>
-        <p class="muted">Describe la orden y a quién va dirigida; el sistema arma título, categoría, deadline, subtareas y responsables sugeridos.</p>
+        <p class="muted">Describe la orden; el sistema sugiere categoría, deadline y subtareas. Solo marca responsables si los mencionas o seleccionas manualmente.</p>
       </div>
       <textarea class="textarea compact-textarea" id="ot-ai-brief" placeholder="Ej: matriz de contenido de julio para Danone, para generador y creativo, deadline 25/05/2026, incluir formatos para reels y carruseles"></textarea>
       <div class="row wrap">
@@ -3639,36 +3641,18 @@ function renderWorkOrderAiAssistant(isEditing) {
   `;
 }
 
-function renderSupervisorGatePanelContent(category = "diseno", brandId = state.currentBrandId) {
-  const area = workOrderProcessArea(category);
-  const needsGate = requiresSupervisorGate(category);
-  const supervisors = supervisorCandidates(category, brandId).slice(0, 4);
+function renderPhaseAssignmentPanel() {
   return `
-    <div class="gate-panel ${needsGate ? "active" : ""}">
-      <div class="gate-icon">${needsGate ? "JD" : "OK"}</div>
+    <div class="gate-panel">
+      <div class="gate-icon">FS</div>
       <div>
-        <strong>${needsGate ? "Primero revisa jefe inmediato" : "Flujo directo"}</strong>
+        <strong>Define responsables y deadlines por fase</strong>
         <p class="muted">
-          ${
-            needsGate
-              ? `${area.label}: la OT se manda primero a jefe/dirección para asignar responsable final y confirmar deadline.`
-              : `${area.label}: puede asignarse directo al equipo responsable.`
-          }
+          La OT sigue siendo una sola solicitud. Las fases permiten asignar responsables, fechas y estados independientes sin crear piezas separadas.
         </p>
-        <div class="badge-row">
-          ${
-            supervisors.length
-              ? supervisors.map((user) => `<span class="badge ${needsGate ? "amber" : "green"}">${escapeHtml(user.name)} · ${escapeHtml(roleLabels[user.role] || user.role)}</span>`).join("")
-              : `<span class="badge amber">Sin jefe configurado para esta marca</span>`
-          }
-        </div>
       </div>
     </div>
   `;
-}
-
-function renderSupervisorGatePanel(category = "diseno") {
-  return `<div id="supervisor-gate-panel">${renderSupervisorGatePanelContent(category)}</div>`;
 }
 
 function renderUrgentPlannerPanel(category = "diseno", priority = "medium") {
@@ -3749,7 +3733,7 @@ function renderUrgentOrderBanner(order) {
       <div class="row wrap">
         ${plan.candidate ? `<span class="badge">${escapeHtml(plan.candidate.name)} · ${escapeHtml(workloadLabelForUser(plan.candidate.id))}</span>` : ""}
         ${canManageWorkOrders() ? `<button class="button-danger small" data-action="apply-urgent-workload-plan" data-id="${order.id}">Aplicar plan sugerido</button>` : ""}
-        ${canManageWorkOrders() ? `<button class="button small" data-action="send-urgent-alert" data-id="${order.id}">Enviar alerta a jefes</button>` : ""}
+        ${canManageWorkOrders() ? `<button class="button small" data-action="send-urgent-alert" data-id="${order.id}">Enviar alerta urgente</button>` : ""}
       </div>
     </div>
   `;
@@ -3806,7 +3790,7 @@ function renderWorkOrderForm(order = null) {
     : isEditing
       ? workOrderPhases(order)
       : defaultWorkOrderPhases();
-  const titleValue = isEditing ? order.title : `Nueva solicitud para ${getBrand().shortName}`;
+  const titleValue = isEditing ? order.title : "";
   const descriptionValue = isEditing
     ? parsedDescription.description || ""
     : "Contexto, entregable esperado y criterios de aprobación.";
@@ -3831,12 +3815,12 @@ function renderWorkOrderForm(order = null) {
         <span class="badge blue">${isEditing ? "Edicion activa" : "Foco operativo"}</span>
       </div>
       ${renderWorkOrderAiAssistant(isEditing)}
-      ${renderSupervisorGatePanel(categoryValue)}
+      ${renderPhaseAssignmentPanel()}
       ${renderUrgentPlannerPanel(categoryValue, priorityValue)}
       <div class="form-grid">
         <div class="field full">
           <label>Titulo</label>
-          <input class="input" id="ot-title" value="${escapeHtml(titleValue)}" />
+          <input class="input" id="ot-title" value="${escapeHtml(titleValue)}" placeholder="Ej: Matriz de contenido julio para Silk" />
         </div>
         <div class="field">
           <label>Responsables</label>
@@ -3863,7 +3847,6 @@ function renderWorkOrderForm(order = null) {
                 .map(
                   (user) => {
                     const userLoad = workloadLabelForUser(user.id);
-                    const isSupervisor = supervisorCandidates(categoryValue, state.currentBrandId).some((candidate) => candidate.id === user.id);
                     return `
                     <label class="assignee-option" data-assignee-option="${escapeHtml(`${user.name} ${user.email} ${roleLabels[user.role] || user.role}`.toLowerCase())}">
                       <input type="checkbox" data-ot-assignee value="${user.id}" ${selectedAssignees.has(user.id) ? "checked" : ""} />
@@ -3872,7 +3855,6 @@ function renderWorkOrderForm(order = null) {
                         <small>${escapeHtml(roleLabels[user.role] || user.role)} · ${escapeHtml(userLoad)}</small>
                         <em>${escapeHtml(user.email)}</em>
                       </span>
-                      ${isSupervisor ? `<small class="assignee-tag">Jefe</small>` : ""}
                     </label>
                   `;
                   },
@@ -6498,9 +6480,7 @@ function refreshAssigneeSelectedList() {
 function refreshWorkOrderGuidancePanels() {
   const category = document.getElementById("ot-category")?.value || "diseno";
   const priority = document.getElementById("ot-priority")?.value || "medium";
-  const gate = document.getElementById("supervisor-gate-panel");
   const planner = document.querySelector(".urgent-planner-panel");
-  if (gate) gate.innerHTML = renderSupervisorGatePanelContent(category);
   if (planner) {
     const next = document.createElement("div");
     next.innerHTML = renderUrgentPlannerPanel(category, priority);
@@ -6663,6 +6643,7 @@ async function handleAction(action, id) {
     "clear-work-order-filters": () => clearWorkOrderFilters(),
     "add-work-order-phase": () => addWorkOrderPhase(),
     "remove-work-order-phase": () => removeWorkOrderPhase(id),
+    "complete-work-order-phase": () => completeWorkOrderPhase(id),
     "focus-urgent-orders": () => focusUrgentOrders(),
     "optimize-work-order-urgency": () => optimizeWorkOrderUrgency(),
     "create-work-order": () => createWorkOrderFromForm(),
@@ -7066,35 +7047,7 @@ function validateWorkOrderValues(values) {
     showToast("Agrega un título para crear la OT");
     return false;
   }
-  if (!values.assignees.length) {
-    showToast("Selecciona al menos un responsable");
-    return false;
-  }
   return true;
-}
-
-function applySupervisorGateToValues(values, brandId = state.currentBrandId) {
-  if (!requiresSupervisorGate(values.category)) {
-    values.supervisorGate = { required: false, supervisors: [] };
-    return values;
-  }
-  const supervisors = supervisorCandidates(values.category, brandId);
-  const supervisorIds = supervisors.map((user) => user.id);
-  const nextAssignees = Array.from(new Set([...supervisorIds, ...values.assignees]));
-  const gateTask = "Jefe inmediato revisa la OT, asigna responsable final y confirma deadline";
-  const nextSubtasks = values.subtasks.some((task) => plainText(task).toLowerCase() === gateTask.toLowerCase())
-    ? values.subtasks
-    : [gateTask, ...values.subtasks];
-
-  values.assignees = nextAssignees;
-  values.subtasks = nextSubtasks;
-  values.description = composeWorkOrderDescription(
-    splitWorkOrderDescription(values.description).description,
-    nextSubtasks,
-    values.materialChanges,
-  );
-  values.supervisorGate = { required: true, supervisors };
-  return values;
 }
 
 function fillWorkOrderWithAi(promptOverride = "") {
@@ -7129,7 +7082,7 @@ function fillWorkOrderWithAi(promptOverride = "") {
   const subtasksInput = document.getElementById("ot-subtasks");
   const materialChangesInput = document.getElementById("ot-material-changes");
 
-  if (titleInput) titleInput.value = draft.title;
+  if (titleInput && !titleInput.value.trim()) titleInput.value = draft.title;
   if (dueDateInput) dueDateInput.value = draft.dueDate;
   if (priorityInput) priorityInput.value = draft.priority;
   if (categoryInput) categoryInput.value = draft.category;
@@ -7205,23 +7158,22 @@ async function uploadWorkOrderFiles(orderDbId, brandId, fileUploads) {
 
 async function replaceSupabaseWorkOrderPhases(orderDbId, phases = []) {
   if (!orderDbId) return { error: null };
-  const { error: deleteError } = await supabaseClient.from("work_order_phases").delete().eq("work_order_id", orderDbId);
-  if (deleteError) return { error: deleteError };
   const normalized = normalizeWorkOrderPhases(phases);
-  if (!normalized.length) return { error: null };
-  const { error } = await supabaseClient.from("work_order_phases").insert(
-    normalized.map((phase, index) => ({
-      work_order_id: orderDbId,
-      phase_key: phase.phaseKey,
-      title: phase.title,
-      description: phase.description || null,
-      assigned_to: phase.assignedTo || null,
-      status: phase.status,
-      due_date: phase.dueDate || null,
-      completed_at: phase.status === "completed" ? phase.completedAt || new Date().toISOString() : null,
-      sort_order: index,
-    })),
-  );
+  const phasesPayload = normalized.map((phase, index) => ({
+    id: phase.dbId || null,
+    phase_key: phase.phaseKey,
+    title: phase.title,
+    description: phase.description || null,
+    assigned_to: phase.assignedTo || null,
+    status: phase.status,
+    due_date: phase.dueDate || null,
+    completed_at: phase.status === "completed" ? phase.completedAt || null : null,
+    sort_order: index,
+  }));
+  const { error } = await supabaseClient.rpc("save_work_order_phases", {
+    target_work_order_id: orderDbId,
+    phases_payload: phasesPayload,
+  });
   return { error };
 }
 
@@ -7233,8 +7185,7 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
   const creatorName = dataState.profile?.full_name || "Lumen Workspace";
   const parsedDescription = splitWorkOrderDescription(values.description);
   const description = plainText(parsedDescription.description);
-  const supervisorGate = values.supervisorGate?.required;
-  const supervisorNames = values.supervisorGate?.supervisors?.map((user) => user.name).join(", ") || "";
+  const phaseAssigneeNames = phaseAssigneeIds(values.phases).map((userId) => userName(userId)).join(", ");
   const fileLabel =
     uploadedCount === 0 ? "Sin archivos adjuntos" : uploadedCount === 1 ? "1 archivo adjunto" : `${uploadedCount} archivos adjuntos`;
 
@@ -7250,18 +7201,6 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
         </div>
 
         <div style="padding:0 28px 24px;">
-          ${
-            supervisorGate
-              ? `
-                <div style="margin:16px 0 8px;border:1px solid #f3d59e;border-radius:12px;background:#fff7e5;padding:14px 16px;">
-                  <div style="font-size:13px;font-weight:800;text-transform:uppercase;color:#8a5a12;margin-bottom:6px;">Requiere asignacion de jefe inmediato</div>
-                  <div style="font-size:15px;line-height:1.5;color:#4b4232;">
-                    Esta OT entra primero a ${escapeHtml(supervisorNames || "Dirección/Cuentas")} para confirmar responsable final y deadline antes de ejecutar.
-                  </div>
-                </div>
-              `
-              : ""
-          }
           <table role="presentation" style="width:100%;border-collapse:collapse;margin:10px 0 22px;">
             <tr>
               <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Cliente / marca</td>
@@ -7288,6 +7227,11 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
           <div style="margin-bottom:18px;">
             <div style="font-size:13px;font-weight:700;text-transform:uppercase;color:#6b726c;margin-bottom:6px;">Responsables</div>
             <div style="font-size:16px;line-height:1.45;">${escapeHtml(assigneeNames || "Sin responsables")}</div>
+          </div>
+
+          <div style="margin-bottom:18px;">
+            <div style="font-size:13px;font-weight:700;text-transform:uppercase;color:#6b726c;margin-bottom:6px;">Responsables por fase</div>
+            <div style="font-size:16px;line-height:1.45;">${escapeHtml(phaseAssigneeNames || "Fases sin responsables asignados")}</div>
           </div>
 
           <div style="margin-bottom:22px;">
@@ -7334,7 +7278,16 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
 }
 
 function workOrderRecipientUsers(order, assigneeIds = orderAssignees(order)) {
-  return brandEmailRecipientUsers(order.brandId, assigneeIds);
+  return brandEmailRecipientUsers(order.brandId, workOrderRelatedUserIds(order.brandId, assigneeIds, workOrderPhases(order)));
+}
+
+function phaseAssigneeIds(phases = []) {
+  return Array.from(new Set(phases.map((phase) => phase.assignedTo).filter(Boolean)));
+}
+
+function workOrderRelatedUserIds(orderOrBrandId, assigneeIds = [], phases = []) {
+  const related = new Set([...(assigneeIds || []), ...phaseAssigneeIds(phases || [])]);
+  return Array.from(related).filter(Boolean);
 }
 
 function describeListChanges(label, previousItems = [], nextItems = [], gender = "f") {
@@ -7466,12 +7419,8 @@ async function queueWorkOrderUpdateEmails(order, changes, uploadedCount = 0, ass
 }
 
 function urgentAlertRecipients(order) {
-  return activeUsers().filter(
-    (user) =>
-      ["admin", "directora", "cuentas"].includes(user.role) &&
-      user.email &&
-      canUserAccessBrand(user, order.brandId),
-  );
+  const relatedUserIds = uniqueUserIds([order.createdBy, ...workOrderRelatedUserIds(order.brandId, orderAssignees(order), workOrderPhases(order))]);
+  return brandEmailRecipientUsers(order.brandId, relatedUserIds, { includeConfigured: true });
 }
 
 function buildUrgentWorkOrderEmail(order) {
@@ -7536,7 +7485,7 @@ async function createWorkOrderFromForm() {
     showToast("Selecciona una marca antes de crear una OT");
     return;
   }
-  const values = applySupervisorGateToValues(getWorkOrderFormValues(), state.currentBrandId);
+  const values = getWorkOrderFormValues();
   if (!validateWorkOrderValues(values)) return;
   const code = `OT-${getBrand().shortName.toUpperCase().replaceAll(" ", "-")}-${String(workOrders.length + 1).padStart(3, "0")}`;
 
@@ -7584,7 +7533,7 @@ async function createWorkOrderFromForm() {
     const uploadedCount = await uploadWorkOrderFiles(insertedOrder.id, state.currentBrandId, values.fileUploads);
     const { error: phasesError } = await replaceSupabaseWorkOrderPhases(insertedOrder.id, values.phases);
     if (phasesError) {
-      showToast(`OT creada, pero falta activar fases en Supabase: ${phasesError.message}`);
+      showToast(`OT creada, pero falta activar guardado seguro de fases: ejecuta supabase/patch_work_order_phase_safe_save.sql`);
     }
 
     await supabaseClient.from("work_order_activity").insert({
@@ -7595,7 +7544,11 @@ async function createWorkOrderFromForm() {
     });
 
     if (values.notifyOnEmail) {
-      const recipients = brandEmailRecipientUsers(state.currentBrandId, values.assignees);
+      const relatedUserIds = uniqueUserIds([
+        dataState.session?.user?.id,
+        ...workOrderRelatedUserIds(state.currentBrandId, values.assignees, values.phases),
+      ]);
+      const recipients = brandEmailRecipientUsers(state.currentBrandId, relatedUserIds);
       if (recipients.length) {
         const htmlBody = buildWorkOrderAssignmentEmail({
           code,
@@ -7611,7 +7564,7 @@ async function createWorkOrderFromForm() {
             recipient_user_id: user.id,
             recipient_email: user.email,
             notification_type: "assignment",
-            subject: `${values.supervisorGate?.required ? "Requiere asignacion de jefe: " : "Nueva OT creada: "}${code} - ${values.title}`,
+            subject: `Nueva OT creada: ${code} - ${values.title}`,
             html_body: htmlBody,
             status: "queued",
           })),
@@ -7664,12 +7617,12 @@ async function sendUrgentWorkOrderAlert(id) {
   if (!order) return;
   const recipients = urgentAlertRecipients(order);
   if (!recipients.length) {
-    showToast("No hay Dirección/Cuentas asignados a esta marca");
+    showToast("No hay responsables o destinatarios configurados para esta alerta");
     return;
   }
 
   const confirmed = window.confirm(
-    `Esto enviará una alerta urgente de ${order.id} a ${recipients.length} persona(s) de Dirección/Cuentas. ¿Enviar ahora?`,
+    `Esto enviará una alerta urgente de ${order.id} a ${recipients.length} persona(s) relacionada(s) o configurada(s) para la marca. ¿Enviar ahora?`,
   );
   if (!confirmed) return;
 
@@ -7821,7 +7774,7 @@ async function updateWorkOrderFromForm() {
     const uploadedCount = await uploadWorkOrderFiles(order.dbId, order.brandId, values.fileUploads);
     const { error: phasesError } = await replaceSupabaseWorkOrderPhases(order.dbId, values.phases);
     if (phasesError) {
-      showToast(`OT actualizada, pero no se guardaron fases: ${phasesError.message}`);
+      showToast(`OT actualizada, pero no se guardaron fases: ejecuta supabase/patch_work_order_phase_safe_save.sql`);
       return;
     }
     const changes = describeWorkOrderChanges(order, values, uploadedCount);
@@ -8086,6 +8039,67 @@ async function updateOrderStatusFromSelect(id) {
   if (!order) return;
   const select = document.querySelector(`[data-status-select="${id}"]`);
   await setWorkOrderStatus(order, select?.value);
+}
+
+function findWorkOrderPhaseById(phaseId) {
+  for (const order of workOrders) {
+    const phase = workOrderPhases(order).find((candidate) => candidate.id === phaseId || candidate.dbId === phaseId);
+    if (phase) return { order, phase };
+  }
+  return null;
+}
+
+function phasePermissionMessage(errorMessage = "") {
+  if (
+    errorMessage.includes("complete_work_order_phase") ||
+    errorMessage.includes("not_allowed_to_complete_phase") ||
+    errorMessage.includes("Could not find the function") ||
+    errorMessage.includes("schema cache") ||
+    errorMessage.includes("permission denied") ||
+    errorMessage.includes("row-level security")
+  ) {
+    return "Falta activar permisos de fases en Supabase: ejecuta supabase/patch_work_order_phase_completion.sql";
+  }
+  return "";
+}
+
+async function completeWorkOrderPhase(phaseId) {
+  const found = findWorkOrderPhaseById(phaseId);
+  if (!found) {
+    showToast("No encontré esa fase");
+    return;
+  }
+  const { order, phase } = found;
+  if (!canCompleteWorkOrderPhase(phase)) {
+    showToast("Solo puedes completar fases asignadas a ti.");
+    return;
+  }
+  const completedAt = new Date().toISOString();
+
+  if (isSupabaseMode()) {
+    const targetId = phase.dbId || phase.id;
+    const { error } = await supabaseClient.rpc("complete_work_order_phase", {
+      target_phase_id: targetId,
+    });
+    if (error) {
+      showToast(phasePermissionMessage(error.message || "") || `No se pudo completar la fase: ${error.message}`);
+      return;
+    }
+    await loadSupabaseData();
+  } else {
+    order.phases = workOrderPhases(order).map((candidate) =>
+      candidate.id === phase.id
+        ? { ...candidate, status: "completed", completedAt, updatedAt: completedAt }
+        : candidate,
+    );
+    order.updatedAt = completedAt;
+    saveWorkOrders();
+  }
+
+  state.viewingWorkOrderId = order.id;
+  state.focusedWorkOrderId = order.id;
+  showToast(`Fase completada: ${phase.title}`);
+  render();
 }
 
 async function setOrderStatusFromButton(payload = "") {

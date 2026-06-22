@@ -25,9 +25,9 @@ type WorkOrderAssignee = {
   user_id: string;
 };
 
-type BrandNotificationRecipient = {
-  brand_id: string;
-  user_id: string;
+type WorkOrderPhase = {
+  work_order_id: string;
+  assigned_to: string | null;
 };
 
 type Activity = {
@@ -267,7 +267,15 @@ Deno.serve(async (request) => {
     "ejecutivo",
   ].join(",");
 
-  const [profilesResponse, activitiesResponse, ordersResponse, brandsResponse, assigneesResponse, existingResponse, brandRecipientsResponse] =
+  const [
+    profilesResponse,
+    activitiesResponse,
+    ordersResponse,
+    brandsResponse,
+    assigneesResponse,
+    phasesResponse,
+    existingResponse,
+  ] =
     await Promise.all([
       supabaseRequest(`profiles?is_active=eq.true&role=in.(${internalRoles})&select=id,full_name,email,role,is_active`),
       supabaseRequest(
@@ -276,13 +284,13 @@ Deno.serve(async (request) => {
       supabaseRequest("work_orders?select=id,code,title,brand_id,created_by,status"),
       supabaseRequest("brands?select=id,name"),
       supabaseRequest("work_order_assignees?select=work_order_id,user_id"),
+      supabaseRequest("work_order_phases?select=work_order_id,assigned_to"),
       supabaseRequest(
         `email_notifications?notification_type=eq.daily_digest&created_at=gte.${encodedStart}&select=recipient_user_id`,
       ),
-      supabaseRequest("brand_notification_recipients?select=brand_id,user_id"),
     ]);
 
-  for (const response of [profilesResponse, activitiesResponse, ordersResponse, brandsResponse, assigneesResponse, existingResponse]) {
+  for (const response of [profilesResponse, activitiesResponse, ordersResponse, brandsResponse, assigneesResponse, phasesResponse, existingResponse]) {
     if (!response.ok) return jsonResponse({ error: await response.text() }, 500);
   }
 
@@ -291,9 +299,7 @@ Deno.serve(async (request) => {
   const orders = (await ordersResponse.json()) as WorkOrder[];
   const brands = (await brandsResponse.json()) as Brand[];
   const assignees = (await assigneesResponse.json()) as WorkOrderAssignee[];
-  const brandRecipients = brandRecipientsResponse.ok
-    ? ((await brandRecipientsResponse.json()) as BrandNotificationRecipient[])
-    : [];
+  const phases = (await phasesResponse.json()) as WorkOrderPhase[];
   const existingRecipients = new Set(
     ((await existingResponse.json()) as { recipient_user_id: string | null }[])
       .map((item) => item.recipient_user_id)
@@ -304,21 +310,14 @@ Deno.serve(async (request) => {
   const brandMap = new Map(brands.map((brand) => [brand.id, brand.name]));
   const profileMap = new Map(profiles.map((profile) => [profile.id, profile]));
   const recipientIdsByOrder = new Map<string, Set<string>>();
-  const recipientIdsByBrand = new Map<string, Set<string>>();
-
-  brandRecipients.forEach((recipient) => {
-    const recipients = recipientIdsByBrand.get(recipient.brand_id) ?? new Set<string>();
-    recipients.add(recipient.user_id);
-    recipientIdsByBrand.set(recipient.brand_id, recipients);
-  });
 
   orders.forEach((order) => {
-    const configuredRecipientIds = recipientIdsByBrand.get(order.brand_id);
-    const recipientIds = configuredRecipientIds?.size ? new Set(configuredRecipientIds) : new Set<string>();
-    if (!configuredRecipientIds?.size) {
-      if (order.created_by) recipientIds.add(order.created_by);
-      assignees.filter((assignee) => assignee.work_order_id === order.id).forEach((assignee) => recipientIds.add(assignee.user_id));
-    }
+    const recipientIds = new Set<string>();
+    if (order.created_by) recipientIds.add(order.created_by);
+    assignees.filter((assignee) => assignee.work_order_id === order.id).forEach((assignee) => recipientIds.add(assignee.user_id));
+    phases
+      .filter((phase) => phase.work_order_id === order.id && phase.assigned_to)
+      .forEach((phase) => recipientIds.add(phase.assigned_to as string));
     recipientIdsByOrder.set(order.id, recipientIds);
   });
 
@@ -356,6 +355,6 @@ Deno.serve(async (request) => {
     activities: activities.length,
     orders: new Set(activities.map((activity) => activity.work_order_id)).size,
     skipped_existing: existingRecipients.size,
-    configured_brands: recipientIdsByBrand.size,
+    recipient_scope: "creator_assignees_and_phase_assignees",
   });
 });

@@ -27,14 +27,16 @@ type BrandResponsibility = {
   is_active?: boolean;
 };
 
-type BrandNotificationRecipient = {
-  brand_id: string;
-  user_id: string;
-};
-
 type WorkOrder = {
   id: string;
   code: string;
+};
+
+type WorkOrderPhaseSeed = {
+  phase_key: string;
+  title: string;
+  description: string;
+  sort_order: number;
 };
 
 type RequestProfile = {
@@ -241,6 +243,47 @@ function buildEmailHtml({
   `;
 }
 
+function defaultWorkOrderPhases(): WorkOrderPhaseSeed[] {
+  return [
+    {
+      phase_key: "brief",
+      title: "Brief",
+      description: "Contexto, objetivo, prioridades y entregables claros.",
+      sort_order: 0,
+    },
+    {
+      phase_key: "creatividad",
+      title: "Creatividad",
+      description: "Concepto, enfoque creativo, copy o estructura.",
+      sort_order: 1,
+    },
+    {
+      phase_key: "produccion",
+      title: "Producción",
+      description: "Diseño, edición, producción o desarrollo del material.",
+      sort_order: 2,
+    },
+    {
+      phase_key: "revision",
+      title: "Revisión",
+      description: "Validación interna de calidad, enfoque y entregables.",
+      sort_order: 3,
+    },
+    {
+      phase_key: "ajustes",
+      title: "Ajustes",
+      description: "Cambios solicitados y afinación final.",
+      sort_order: 4,
+    },
+    {
+      phase_key: "entrega",
+      title: "Entrega",
+      description: "Entrega final, archivo o cierre operativo.",
+      sort_order: 5,
+    },
+  ];
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return jsonResponse({ error: "Missing environment variables" }, 500);
@@ -262,13 +305,12 @@ Deno.serve(async (request) => {
   const targetLabel = monthLabel(targetDate);
   const appUrl = getAppUrl(request);
 
-  const [brandsResponse, profilesResponse, membershipsResponse, responsibilitiesResponse, notificationRecipientsResponse] =
+  const [brandsResponse, profilesResponse, membershipsResponse, responsibilitiesResponse] =
     await Promise.all([
       supabaseRequest("brands?is_active=eq.true&select=id,name,slug,client_id,clients(slug,name)"),
       supabaseRequest("profiles?is_active=eq.true&role=neq.cliente&select=id,full_name,email,role,is_active"),
       supabaseRequest("brand_memberships?select=brand_id,user_id,role"),
       supabaseRequest("brand_responsibilities?select=brand_id,user_id,responsibility_role,is_active"),
-      supabaseRequest("brand_notification_recipients?select=brand_id,user_id"),
     ]);
 
   if (!brandsResponse.ok) return jsonResponse({ error: await brandsResponse.text() }, 500);
@@ -280,9 +322,6 @@ Deno.serve(async (request) => {
   const memberships = (await membershipsResponse.json()) as BrandMembership[];
   const responsibilities = responsibilitiesResponse.ok
     ? ((await responsibilitiesResponse.json()) as BrandResponsibility[])
-    : [];
-  const notificationRecipients = notificationRecipientsResponse.ok
-    ? ((await notificationRecipientsResponse.json()) as BrandNotificationRecipient[])
     : [];
   const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
 
@@ -339,6 +378,24 @@ Deno.serve(async (request) => {
       });
     }
 
+    const phasesResponse = await supabaseRequest("work_order_phases", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify(
+        defaultWorkOrderPhases().map((phase) => ({
+          work_order_id: order.id,
+          phase_key: phase.phase_key,
+          title: phase.title,
+          description: phase.description,
+          assigned_to: null,
+          status: "pending",
+          due_date: null,
+          sort_order: phase.sort_order,
+        })),
+      ),
+    });
+    if (!phasesResponse.ok) return jsonResponse({ error: await phasesResponse.text() }, 500);
+
     await supabaseRequest("work_order_activity", {
       method: "POST",
       headers: { Prefer: "return=minimal" },
@@ -349,14 +406,8 @@ Deno.serve(async (request) => {
       }),
     });
 
-    const configuredRecipients = notificationRecipients
-      .filter((row) => row.brand_id === brand.id)
-      .map((row) => profilesById.get(row.user_id))
-      .filter((profile): profile is Profile => Boolean(profile?.email));
     const recipients = new Map<string, Profile>();
-    (configuredRecipients.length ? configuredRecipients : [...accounts, ...finalAssignees]).forEach((profile) =>
-      recipients.set(profile.id, profile)
-    );
+    [...accounts, ...finalAssignees].forEach((profile) => recipients.set(profile.id, profile));
     if (recipients.size) {
       const notifications = [...recipients.values()].map((profile) => ({
         brand_id: brand.id,

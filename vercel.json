@@ -20,9 +20,46 @@
       ]
     }
   ],
+  "redirects": [
+    {
+      "source": "/README.md",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/DEPLOY.md",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/EMAIL_SETUP.md",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/STATE.md",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/config.example.js",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/package.json",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/supabase/:path*",
+      "destination": "/",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     {
-      "source": "/((?!app.js|styles.css|README.md|supabase/.*).*)",
+      "source": "/((?!app.js|styles.css|config.js|assets/.*).*)",
       "destination": "/index.html"
     }
   ]
