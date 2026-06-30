@@ -68,6 +68,7 @@ BEGIN
     'assignment',
     'comment',
     'status_change',
+    'phase_completed',
     'deadline_24h',
     'overdue',
     'weekly_digest',
@@ -139,6 +140,7 @@ CREATE TABLE IF NOT EXISTS work_orders (
   status work_order_status NOT NULL DEFAULT 'new',
   category TEXT NOT NULL DEFAULT 'diseno',
   due_date DATE,
+  art_count INTEGER CHECK (art_count IS NULL OR art_count >= 0),
   created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
   notify_on_email BOOLEAN DEFAULT true,
   archived_at TIMESTAMPTZ,
@@ -169,7 +171,7 @@ CREATE TABLE IF NOT EXISTS work_order_phases (
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now(),
   CONSTRAINT work_order_phases_phase_key_check CHECK (
-    phase_key IN ('brief', 'creatividad', 'produccion', 'revision', 'ajustes', 'entrega', 'custom')
+    phase_key IN ('brief', 'creatividad', 'diseno', 'produccion', 'revision', 'ajustes', 'entrega', 'custom')
     OR phase_key ~ '^[a-z0-9_-]+$'
   )
 );

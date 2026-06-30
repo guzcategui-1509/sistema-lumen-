@@ -390,6 +390,44 @@ const brands = [
   },
 ];
 
+const officialBrandAbbreviations = {
+  "volkswagen-gt": "VW",
+  volkswagen: "VW",
+  "camiones-vw-gt": "CVW",
+  "volkswagen-camiones": "CVW",
+  bestune: "BTN",
+  "bestune-gt": "BTN",
+  jim: "JIM",
+  "jim-gt": "JIM",
+  leap: "LPM",
+  "leap-gt": "LPM",
+  "leap-motors": "LPM",
+  "talleres-continental": "TCM",
+  talleres: "TCM",
+  "repuestos-continental": "RCM",
+  repuestos: "RCM",
+  "usados-continental": "USM",
+  usados: "USM",
+  "seguros-continental": "SCM",
+  seguros: "SCM",
+  "danone-gt": "DNE",
+  danone: "DNE",
+  "danonino-gt": "DNO",
+  danonino: "DNO",
+  "silk-gt": "SLK",
+  silk: "SLK",
+  "bonafont-gt": "BNF",
+  bonafont: "BNF",
+  "fundacion-listo": "LST",
+  "solarsa-gt": "SLS",
+  solarsa: "SLS",
+  "wash-and-go-gt": "WNG",
+  "wash-go": "WNG",
+  "wash-and-go": "WNG",
+  "rijk-zwaan": "RJZ",
+  constructivos: "CST",
+};
+
 const users = loadStoredCollection("lumen_users_v1", []);
 const brandNotificationRecipients = loadStoredCollection("lumen_brand_notification_recipients_v1", []);
 
@@ -491,6 +529,7 @@ const workOrderMaterialRoles = ["admin", "directora", "cuentas", "generador", "c
 const workOrderPhaseCatalog = [
   { key: "brief", title: "Brief" },
   { key: "creatividad", title: "Creatividad" },
+  { key: "diseno", title: "Diseño" },
   { key: "produccion", title: "Producción" },
   { key: "revision", title: "Revisión" },
   { key: "ajustes", title: "Ajustes" },
@@ -510,7 +549,8 @@ const workOrderPhaseStatusLabels = {
 const defaultWorkOrderPhaseDescriptions = {
   brief: "Contexto, objetivo, prioridades y entregables claros.",
   creatividad: "Concepto, enfoque creativo, copy o estructura.",
-  produccion: "Diseño, edición, producción o desarrollo del material.",
+  diseno: "Diseño visual, layout, adaptación gráfica o arte base.",
+  produccion: "Producción, edición o desarrollo operativo del material.",
   revision: "Validación interna de calidad, enfoque y entregables.",
   ajustes: "Cambios solicitados y afinación final.",
   entrega: "Entrega final, archivo o cierre operativo.",
@@ -966,6 +1006,7 @@ function mapDbBrand(row) {
     clientId: row.client_id,
     name: row.name,
     shortName: row.name,
+    abbreviation: row.abbreviation || "",
     slug: row.slug,
     color: row.color_primary || "#2d2d2d",
     platforms: row.platforms || [],
@@ -974,6 +1015,50 @@ function mapDbBrand(row) {
     canvaFolder: row.canva_folder_url || "",
     isActive: row.is_active,
   };
+}
+
+function normalizeBrandCodePrefix(value) {
+  const cleaned = String(value || "")
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+  return cleaned || "GEN";
+}
+
+function fallbackBrandAbbreviation(brand) {
+  if (!brand) return "GEN";
+  const explicit = brand.abbreviation || officialBrandAbbreviations[brand.slug] || officialBrandAbbreviations[brand.id];
+  if (explicit) return normalizeBrandCodePrefix(explicit).slice(0, 4);
+
+  const initials = String(brand.shortName || brand.name || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9 ]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("");
+
+  return normalizeBrandCodePrefix(initials).slice(0, 3) || "GEN";
+}
+
+async function generateWorkOrderCodeForBrand(brandId) {
+  if (isSupabaseMode()) {
+    const { data, error } = await supabaseClient.rpc("generate_work_order_code_for_brand", {
+      target_brand_id: brandId,
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  const brand = getBrand(brandId);
+  const prefix = fallbackBrandAbbreviation(brand);
+  const counterKey = `lumen_work_order_counter_${brandId}`;
+  const nextNumber = Number(localStorage.getItem(counterKey) || "0") + 1;
+  localStorage.setItem(counterKey, String(nextNumber));
+  return `${prefix}-${String(nextNumber).padStart(3, "0")}`;
 }
 
 function mapDbUser(row, memberships = []) {
@@ -1016,6 +1101,7 @@ function mapDbWorkOrder(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at || null,
+    artCount: row.art_count ?? null,
     notifyOnEmail: row.notify_on_email,
     phases: (row.phases || []).map(mapDbWorkOrderPhase).sort((a, b) => a.sortOrder - b.sortOrder),
     linkedContentId: null,
@@ -4017,6 +4103,7 @@ function renderWorkOrderForm(order = null) {
   const priorityValue = isEditing ? order.priority : "medium";
   const statusValue = isEditing ? order.status : "new";
   const categoryValue = isEditing ? order.category : "diseno";
+  const artCountValue = isEditing && order.artCount !== null && order.artCount !== undefined ? String(order.artCount) : "";
   const notifyOnEmail = isEditing ? order.notifyOnEmail !== false : true;
   const emailRecipientSummary = brandEmailRecipientSummary(state.currentBrandId, Array.from(selectedAssignees));
 
@@ -4107,6 +4194,11 @@ function renderWorkOrderForm(order = null) {
               .join("")}
             ${!workOrderCategoryOptions[categoryValue] && workOrderCategoryLabels[categoryValue] ? renderWorkOrderSelectOption(categoryValue, `${workOrderCategoryLabels[categoryValue]} (anterior)`, categoryValue) : ""}
           </select>
+        </div>
+        <div class="field">
+          <label>Cantidad de artes</label>
+          <input class="input" id="ot-art-count" type="number" min="0" step="1" value="${escapeHtml(artCountValue)}" placeholder="Opcional" />
+          <div class="field-help">Dato informativo; no crea subtareas ni fases.</div>
         </div>
         <div class="field full">
           <label>Descripcion</label>
@@ -4208,6 +4300,10 @@ function renderWorkOrderDetailPanel(order) {
         <div class="detail-block">
           <span>Categoria</span>
           <strong>${escapeHtml(workOrderCategoryLabels[order.category] || order.category)}</strong>
+        </div>
+        <div class="detail-block">
+          <span>Cantidad de artes</span>
+          <strong>${order.artCount !== null && order.artCount !== undefined ? escapeHtml(String(order.artCount)) : "No especificada"}</strong>
         </div>
         <div class="detail-block">
           <span>Responsables</span>
@@ -7213,6 +7309,8 @@ function getWorkOrderFormValues() {
   const priority = document.getElementById("ot-priority")?.value || "medium";
   const status = document.getElementById("ot-status")?.value || "new";
   const category = document.getElementById("ot-category")?.value || "diseno";
+  const artCountRaw = document.getElementById("ot-art-count")?.value?.trim() || "";
+  const artCount = artCountRaw === "" ? null : Number(artCountRaw);
   const descriptionBase = document.getElementById("ot-description")?.value.trim() || "";
   const subtasks = parseListLines(document.getElementById("ot-subtasks")?.value || "");
   const materialChanges = parseListLines(document.getElementById("ot-material-changes")?.value || "");
@@ -7233,6 +7331,7 @@ function getWorkOrderFormValues() {
     priority,
     status,
     category,
+    artCount,
     description,
     subtasks,
     materialChanges,
@@ -7270,6 +7369,10 @@ function getWorkOrderPhaseFormValues() {
 function validateWorkOrderValues(values) {
   if (!values.title) {
     showToast("Agrega un título para crear la OT");
+    return false;
+  }
+  if (values.artCount !== null && (!Number.isInteger(values.artCount) || values.artCount < 0)) {
+    showToast("La cantidad de artes debe ser un número entero igual o mayor a 0");
     return false;
   }
   return true;
@@ -7447,6 +7550,16 @@ function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedC
               <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Categoria</td>
               <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(workOrderCategoryLabels[values.category] || values.category)}</td>
             </tr>
+            ${
+              values.artCount !== null && values.artCount !== undefined
+                ? `
+                  <tr>
+                    <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Cantidad de artes</td>
+                    <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(String(values.artCount))}</td>
+                  </tr>
+                `
+                : ""
+            }
           </table>
 
           <div style="margin-bottom:18px;">
@@ -7506,6 +7619,92 @@ function workOrderRecipientUsers(order, assigneeIds = orderAssignees(order)) {
   return brandEmailRecipientUsers(order.brandId, workOrderRelatedUserIds(order.brandId, assigneeIds, workOrderPhases(order)));
 }
 
+function nextWorkOrderPhase(order, currentPhase) {
+  const phases = workOrderPhases(order);
+  const currentIndex = phases.findIndex((phase) => phase.id === currentPhase.id || phase.dbId === currentPhase.dbId);
+  return currentIndex >= 0 ? phases[currentIndex + 1] || null : null;
+}
+
+function buildPhaseCompletedEmail({ order, phase, nextPhase, completedBy }) {
+  const brand = getBrand(order.brandId);
+  const client = getClient(brand.clientId);
+  const workOrderUrl = buildWorkOrderUrl(order.id, order.brandId);
+  return `
+    <div style="margin:0;background:#f6f6f3;padding:28px 16px;font-family:Arial,Helvetica,sans-serif;color:#2d2d2d;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #deded8;border-radius:14px;overflow:hidden;">
+        <div style="padding:26px 28px 20px;border-left:7px solid #49ee8c;">
+          <div style="font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#176339;margin-bottom:10px;">
+            Fase completada
+          </div>
+          <h1 style="margin:0 0 8px;font-size:28px;line-height:1.15;color:#2d2d2d;">${escapeHtml(phase.title)}</h1>
+          <p style="margin:0;color:#5f6760;font-size:17px;line-height:1.45;">${escapeHtml(order.id)} · ${escapeHtml(order.title)}</p>
+        </div>
+        <div style="padding:0 28px 26px;">
+          <table role="presentation" style="width:100%;border-collapse:collapse;margin:10px 0 22px;">
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Cliente / marca</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(client?.name || "Cliente")} / ${escapeHtml(brand.name)}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Completada por</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(completedBy || "Equipo Lumen")}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Siguiente fase</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(nextPhase?.title || "Sin siguiente fase")}</td>
+            </tr>
+            <tr>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Responsable siguiente</td>
+              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(nextPhase?.assignedTo ? userName(nextPhase.assignedTo) : "Sin asignar")}</td>
+            </tr>
+          </table>
+          <a href="${escapeHtml(workOrderUrl)}" style="display:inline-block;background:#2d2d2d;color:#ffffff;text-decoration:none;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:800;">
+            Ver orden en Lumen
+          </a>
+          <p style="margin:20px 0 0;color:#7a817b;font-size:13px;line-height:1.45;">
+            Si el boton no abre, copia este link en tu navegador:<br/>
+            <a href="${escapeHtml(workOrderUrl)}" style="color:#2d2d2d;">${escapeHtml(workOrderUrl)}</a>
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function queuePhaseCompletedEmail(order, phase) {
+  if (!isSupabaseMode() || !order?.dbId || order.notifyOnEmail === false) return { count: 0, error: null };
+  const currentUserId = dataState.session?.user?.id || "";
+  const nextPhase = nextWorkOrderPhase(order, phase);
+  const recipientIds = uniqueUserIds([
+    order.createdBy,
+    ...orderAssignees(order),
+    nextPhase?.assignedTo,
+  ]).filter((userId) => userId && userId !== currentUserId);
+  const recipients = brandEmailRecipientUsers(order.brandId, recipientIds);
+  if (!recipients.length) return { count: 0, error: null };
+
+  const htmlBody = buildPhaseCompletedEmail({
+    order,
+    phase,
+    nextPhase,
+    completedBy: dataState.profile?.full_name || userName(currentUserId),
+  });
+  const { error } = await supabaseClient.from("email_notifications").insert(
+    recipients.map((user) => ({
+      brand_id: order.brandId,
+      work_order_id: order.dbId,
+      recipient_user_id: user.id,
+      recipient_email: user.email,
+      notification_type: "phase_completed",
+      subject: `Fase completada: ${phase.title} · ${order.id}`,
+      html_body: htmlBody,
+      status: "queued",
+      scheduled_for: new Date().toISOString(),
+    })),
+  );
+  return { count: recipients.length, error };
+}
+
 function phaseAssigneeIds(phases = []) {
   return Array.from(new Set(phases.map((phase) => phase.assignedTo).filter(Boolean)));
 }
@@ -7538,6 +7737,9 @@ function describeWorkOrderChanges(order, values = {}, uploadedCount = 0) {
     changes.push(`Prioridad: ${workOrderPriorityLabels[order.priority] || order.priority} -> ${workOrderPriorityLabels[values.priority] || values.priority}`);
   }
   if (values.dueDate && values.dueDate !== order.dueDate) changes.push(`Deadline: ${formatDate(order.dueDate)} -> ${formatDate(values.dueDate)}`);
+  if (Object.prototype.hasOwnProperty.call(values, "artCount") && values.artCount !== (order.artCount ?? null)) {
+    changes.push(`Cantidad de artes: ${order.artCount ?? "sin especificar"} -> ${values.artCount ?? "sin especificar"}`);
+  }
   if (Array.isArray(values.assignees)) {
     const previousAssignees = orderAssignees(order);
     const addedAssignees = values.assignees.filter((userId) => !previousAssignees.includes(userId));
@@ -7712,23 +7914,32 @@ async function createWorkOrderFromForm() {
   }
   const values = getWorkOrderFormValues();
   if (!validateWorkOrderValues(values)) return;
-  const code = `OT-${getBrand().shortName.toUpperCase().replaceAll(" ", "-")}-${String(workOrders.length + 1).padStart(3, "0")}`;
+  let code = "";
+  try {
+    code = await generateWorkOrderCodeForBrand(state.currentBrandId);
+  } catch (error) {
+    showToast(`No se pudo generar el código de la OT: ${error.message || "ejecuta supabase/patch_work_order_brand_codes.sql"}`);
+    return;
+  }
 
   if (isSupabaseMode()) {
+    const orderPayload = {
+      code,
+      brand_id: state.currentBrandId,
+      title: values.title,
+      status: values.status,
+      priority: values.priority,
+      category: values.category,
+      due_date: values.dueDate || null,
+      description: values.description,
+      created_by: dataState.session?.user?.id,
+      notify_on_email: values.notifyOnEmail,
+    };
+    if (values.artCount !== null) orderPayload.art_count = values.artCount;
+
     const { data: insertedOrder, error: orderError } = await supabaseClient
       .from("work_orders")
-      .insert({
-        code,
-        brand_id: state.currentBrandId,
-        title: values.title,
-        status: values.status,
-        priority: values.priority,
-        category: values.category,
-        due_date: values.dueDate || null,
-        description: values.description,
-        created_by: dataState.session?.user?.id,
-        notify_on_email: values.notifyOnEmail,
-      })
+      .insert(orderPayload)
       .select()
       .single();
 
@@ -7736,6 +7947,8 @@ async function createWorkOrderFromForm() {
       const message = orderError.message || "";
       if (message.includes("work_order_status") || message.includes("client_approved") || message.includes("scheduled")) {
         showToast("Supabase no aceptó ese estado. Usa Nueva, En proceso, En revisión, Entregada o Cancelada.");
+      } else if (message.includes("art_count")) {
+        showToast("Falta activar cantidad de artes en Supabase: ejecuta supabase/patch_work_order_art_count.sql");
       } else {
         showToast(`No se pudo crear la OT: ${message}`);
       }
@@ -7822,6 +8035,7 @@ async function createWorkOrderFromForm() {
     createdBy: "giu",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    artCount: values.artCount,
     notifyOnEmail: values.notifyOnEmail,
     phases: values.phases,
     linkedContentId: state.selectedContentId,
@@ -7943,23 +8157,27 @@ async function updateWorkOrderFromForm() {
       return;
     }
 
-    const { error: orderError } = await supabaseClient
-      .from("work_orders")
-      .update({
-        title: values.title,
-        status: values.status,
-        priority: values.priority,
-        category: values.category,
-        due_date: values.dueDate || null,
-        description: values.description,
-        notify_on_email: values.notifyOnEmail,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", order.dbId);
+    const updatePayload = {
+      title: values.title,
+      status: values.status,
+      priority: values.priority,
+      category: values.category,
+      due_date: values.dueDate || null,
+      description: values.description,
+      notify_on_email: values.notifyOnEmail,
+      updated_at: new Date().toISOString(),
+    };
+    if (values.artCount !== null || (order.artCount !== null && order.artCount !== undefined)) {
+      updatePayload.art_count = values.artCount;
+    }
+
+    const { error: orderError } = await supabaseClient.from("work_orders").update(updatePayload).eq("id", order.dbId);
     if (orderError) {
       const message = orderError.message || "";
       if (message.includes("work_order_status") || message.includes("client_approved") || message.includes("scheduled")) {
         showToast("Supabase no aceptó ese estado. Usa Nueva, En proceso, En revisión, Entregada o Cancelada.");
+      } else if (message.includes("art_count")) {
+        showToast("Falta activar cantidad de artes en Supabase: ejecuta supabase/patch_work_order_art_count.sql");
       } else {
         showToast(`No se pudo actualizar la OT: ${message}`);
       }
@@ -8012,6 +8230,7 @@ async function updateWorkOrderFromForm() {
       dueDate: values.dueDate || order.dueDate,
       description: values.description,
       assignees: values.assignees,
+      artCount: values.artCount,
       notifyOnEmail: values.notifyOnEmail,
       phases: values.phases,
     };
@@ -8048,6 +8267,7 @@ async function updateWorkOrderFromForm() {
   order.assignees = values.assignees;
   order.description = values.description;
   order.files = [...orderFiles(order), ...values.files];
+  order.artCount = values.artCount;
   order.notifyOnEmail = values.notifyOnEmail;
   order.phases = values.phases;
   order.updatedAt = new Date().toISOString();
@@ -8309,6 +8529,10 @@ async function completeWorkOrderPhase(phaseId) {
     if (error) {
       showToast(phasePermissionMessage(error.message || "") || `No se pudo completar la fase: ${error.message}`);
       return;
+    }
+    const emailResult = await queuePhaseCompletedEmail(order, phase);
+    if (emailResult.error) {
+      showToast(`Fase completada, pero no se pudo preparar email: ${emailResult.error.message}`);
     }
     await loadSupabaseData();
   } else {

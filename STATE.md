@@ -1,5 +1,72 @@
 # Lumen Workspace State
 
+## 2026-06-30
+
+### Cambio: nomenclatura de OTs por marca
+- Se implementó la nomenclatura oficial para órdenes nuevas: `[ABREVIACION]-[CORRELATIVO]`, sin prefijo `OT`.
+- El correlativo es por marca, no global. Ejemplos esperados: `VW-001`, `VW-002`, `SLK-001`, `DNE-001`.
+- Se creó `supabase/patch_work_order_brand_codes.sql` para agregar `brands.abbreviation`, `work_order_brand_counters` y la RPC transaccional `generate_work_order_code_for_brand(uuid)`.
+- El frontend dejó de usar `workOrders.length + 1` cuando crea órdenes conectadas a Supabase; ahora llama la RPC y bloquea la creación si el patch no está aplicado.
+- La automatización `monthly-work-orders` dejó de generar códigos `AUTO-MATRIZ-*` / `AUTO-PAUTA-*`; ahora solicita código por marca con la misma RPC.
+- No se cambian códigos históricos ni títulos existentes.
+- Fallback documentado: si una marca no tiene abreviación, Supabase usa iniciales limpias del nombre; si no puede generarlas usa `GEN`.
+
+### Pendiente para activar en producción
+1. Ejecutar `supabase/patch_work_order_brand_codes.sql` en Supabase.
+2. Ejecutar `supabase/patch_work_order_design_phase.sql` para reconocer `diseno` como fase oficial.
+3. Ejecutar `supabase/patch_work_order_art_count.sql` si se usará cantidad de artes en piloto.
+4. Ejecutar `supabase/patch_phase_completed_notifications.sql` para permitir correos `phase_completed`.
+5. Redeploy de `monthly-work-orders` después de ejecutar el patch de códigos por marca.
+6. Crear dos órdenes seguidas para la misma marca y confirmar incremento por marca.
+7. Crear una orden para otra marca y confirmar que empieza/continúa su propio correlativo.
+
+### Cambio: bloqueantes pre-piloto de fases, artes y notificaciones
+- Se agregó la fase oficial `Diseño` (`diseno`) al catálogo principal del frontend.
+- Las órdenes nuevas y la inicialización de fases usan ahora: Brief, Creatividad, Diseño, Producción, Revisión, Ajustes y Entrega.
+- La Edge Function `monthly-work-orders` también crea `diseno` dentro de sus fases base.
+- Se creó `supabase/patch_work_order_design_phase.sql`; no inserta fases masivamente en órdenes existentes.
+- Se agregó `art_count` como dato informativo opcional en creación, edición y detalle de OT.
+- Se creó `supabase/patch_work_order_art_count.sql`; la columna queda nullable, entera y no negativa.
+- Al completar una fase en Supabase, la app encola emails `phase_completed` para creador, participantes explícitos y responsable de la siguiente fase, deduplicados y sin incluir al usuario que completó la fase.
+- Se creó `supabase/patch_phase_completed_notifications.sql` para permitir el tipo/política de correo de fase completada.
+
+### Auditoría final de pre-piloto
+- Estado recomendado: casi listo para piloto interno controlado, pero no listo para salir a todo el equipo.
+- Nivel de riesgo: medio.
+- `npm run check` pasó.
+- `git diff --check` pasó.
+- En la auditoría inicial no se hicieron cambios funcionales ni SQL; después se agregó el ajuste de nomenclatura por marca documentado arriba.
+
+### Hallazgos principales
+- Bloqueante funcional corregido en repo: la fase oficial `Diseño` ya está en `workOrderPhaseCatalog`, creación manual y `monthly-work-orders`. Pendiente ejecutar `supabase/patch_work_order_design_phase.sql`.
+- Bloqueante funcional corregido en repo: `art_count` ya está en formulario, detalle y patches SQL. Pendiente ejecutar `supabase/patch_work_order_art_count.sql`.
+- Riesgo de datos corregido en código: la creación conectada a Supabase ahora depende de `generate_work_order_code_for_brand(uuid)`. Sigue pendiente ejecutar el patch SQL en Supabase producción.
+- Notificaciones: completar una fase encola email `phase_completed` si el patch de notificación está aplicado; el envio real sigue dependiendo de `email-worker`.
+- Digest diario/semanal y automatizaciones existen en código y SQL, pero siguen requiriendo confirmación en Supabase: functions desplegadas, secrets correctos y cron aplicado.
+- No se encontró `work_order_items`; se mantiene la OT como unidad principal.
+- `config.js` solo contiene Supabase URL + anon key pública; no contiene service role ni Brevo.
+- `vercel.json` bloquea/redirige docs, SQL y carpeta `supabase/*` para reducir exposición pública.
+
+### Pendientes bloqueantes antes de piloto
+1. Ejecutar los patches nuevos: `patch_work_order_brand_codes.sql`, `patch_work_order_design_phase.sql`, `patch_work_order_art_count.sql`, `patch_phase_completed_notifications.sql`.
+2. Confirmar en Supabase producción que los patches críticos están aplicados: fases, completar fase, guardado seguro, archivado, destinatarios por marca y digest diario.
+3. Redeploy de `monthly-work-orders` para que incluya Diseño y códigos por marca.
+4. Confirmar que `daily-activity-digest`, `weekly-digest`, `email-worker` y `monthly-work-orders` están desplegadas con secrets.
+5. Probar manualmente con usuario admin/cuentas y dos usuarios operativos antes de invitar a más personas.
+
+### Checklist de piloto recomendado
+1. Login admin/cuentas y confirmar dashboard de gestión.
+2. Login operativo y confirmar dashboard personal.
+3. Crear OT con título personalizado.
+4. Confirmar que no se asignan usuarios no seleccionados.
+5. Confirmar fases oficiales y que `Diseño` aparece.
+6. Usuario A completa solo su fase; Usuario B no puede completar la fase de A.
+7. Confirmar que completar fase no cambia `work_orders.status`.
+8. Archivar una OT y confirmar que conserva fases, archivos, comentarios y actividad.
+9. Crear una OT con cantidad de artes y confirmar que `art_count` se guarda.
+10. Completar una fase y revisar `email_notifications` con tipo `phase_completed`, sin duplicados.
+11. Ejecutar digest diario manualmente solo con usuarios controlados antes de activar cron.
+
 ## 2026-06-25
 
 ### Cambio realizado

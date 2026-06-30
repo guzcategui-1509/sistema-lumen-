@@ -71,6 +71,17 @@ async function supabaseRequest(path: string, init: RequestInit = {}) {
   });
 }
 
+async function generateWorkOrderCodeForBrand(brandId: string) {
+  const response = await supabaseRequest("rpc/generate_work_order_code_for_brand", {
+    method: "POST",
+    body: JSON.stringify({ target_brand_id: brandId }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return (await response.json()) as string;
+}
+
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return Response.json(body, { status, headers: corsHeaders });
 }
@@ -141,7 +152,6 @@ function defaultDueDate(kind: string, targetDate: Date) {
 function automationConfig(kind: string) {
   if (kind === "paid_placement") {
     return {
-      codePrefix: "AUTO-PAUTA",
       titlePrefix: "Colocacion de pauta",
       category: "pauta",
       assigneeRoles: ["medios", "pauta"],
@@ -153,7 +163,6 @@ function automationConfig(kind: string) {
   }
 
   return {
-    codePrefix: "AUTO-MATRIZ",
     titlePrefix: "Matriz de contenido",
     category: "matriz",
     assigneeRoles: ["generador", "creativo"],
@@ -258,28 +267,34 @@ function defaultWorkOrderPhases(): WorkOrderPhaseSeed[] {
       sort_order: 1,
     },
     {
+      phase_key: "diseno",
+      title: "Diseño",
+      description: "Diseño visual, layout, adaptación gráfica o arte base.",
+      sort_order: 2,
+    },
+    {
       phase_key: "produccion",
       title: "Producción",
-      description: "Diseño, edición, producción o desarrollo del material.",
-      sort_order: 2,
+      description: "Producción, edición o desarrollo operativo del material.",
+      sort_order: 3,
     },
     {
       phase_key: "revision",
       title: "Revisión",
       description: "Validación interna de calidad, enfoque y entregables.",
-      sort_order: 3,
+      sort_order: 4,
     },
     {
       phase_key: "ajustes",
       title: "Ajustes",
       description: "Cambios solicitados y afinación final.",
-      sort_order: 4,
+      sort_order: 5,
     },
     {
       phase_key: "entrega",
       title: "Entrega",
       description: "Entrega final, archivo o cierre operativo.",
-      sort_order: 5,
+      sort_order: 6,
     },
   ];
 }
@@ -330,8 +345,10 @@ Deno.serve(async (request) => {
   let emailsQueued = 0;
 
   for (const brand of brands) {
-    const code = `${config.codePrefix}-${brand.slug.toUpperCase().replaceAll("-", "-")}-${targetKey}`;
-    const existsResponse = await supabaseRequest(`work_orders?code=eq.${encodeURIComponent(code)}&select=id,code&limit=1`);
+    const title = `${config.titlePrefix} ${targetLabel} - ${brand.name}`;
+    const existsResponse = await supabaseRequest(
+      `work_orders?brand_id=eq.${encodeURIComponent(brand.id)}&category=eq.${encodeURIComponent(config.category)}&title=eq.${encodeURIComponent(title)}&select=id,code&limit=1`,
+    );
     if (!existsResponse.ok) return jsonResponse({ error: await existsResponse.text() }, 500);
     const existing = (await existsResponse.json()) as WorkOrder[];
     if (existing.length) {
@@ -339,7 +356,7 @@ Deno.serve(async (request) => {
       continue;
     }
 
-    const title = `${config.titlePrefix} ${targetLabel} - ${brand.name}`;
+    const code = await generateWorkOrderCodeForBrand(brand.id);
     const accounts = usersForBrandRole(brand.id, ["cuentas"], responsibilities, memberships, profilesById);
     const assignees = usersForBrandRole(brand.id, config.assigneeRoles, responsibilities, memberships, profilesById);
     const finalAssignees = assignees.length ? assignees : accounts;

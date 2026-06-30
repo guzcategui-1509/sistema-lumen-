@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS public.work_order_phases (
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now(),
   CONSTRAINT work_order_phases_phase_key_check CHECK (
-    phase_key IN ('brief', 'creatividad', 'produccion', 'revision', 'ajustes', 'entrega', 'custom')
+    phase_key IN ('brief', 'creatividad', 'diseno', 'produccion', 'revision', 'ajustes', 'entrega', 'custom')
     OR phase_key ~ '^[a-z0-9_-]+$'
   )
 );

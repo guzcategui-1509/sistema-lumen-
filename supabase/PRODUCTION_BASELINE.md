@@ -25,8 +25,12 @@ Después aplicar estos patches en orden:
 11. `supabase/patch_brand_notification_recipients.sql`
 12. `supabase/patch_daily_activity_digest.sql`
 13. `supabase/patch_monthly_matrix_automation_rules.sql`
-14. `supabase/patch_add_brand_212.sql`, si la marca 212 debe estar activa.
-15. `supabase/patch_remove_laura_lopez.sql`, si Laura Lopez debe quedar inactiva/removida del acceso operativo.
+14. `supabase/patch_work_order_brand_codes.sql`
+15. `supabase/patch_work_order_design_phase.sql`
+16. `supabase/patch_work_order_art_count.sql`
+17. `supabase/patch_phase_completed_notifications.sql`
+18. `supabase/patch_add_brand_212.sql`, si la marca 212 debe estar activa.
+19. `supabase/patch_remove_laura_lopez.sql`, si Laura Lopez debe quedar inactiva/removida del acceso operativo.
 
 ## Tablas que deben existir para el piloto
 
@@ -46,6 +50,25 @@ Después aplicar estos patches en orden:
 - `weekly_digest_runs`
 - `brand_notification_recipients`
 
+## Requisitos especificos de `work_orders`
+
+Columnas clave para piloto:
+
+- `code text unique not null`
+- `brand_id uuid references brands(id)`
+- `title text not null`
+- `description text`
+- `priority`
+- `status`
+- `category`
+- `due_date date`
+- `art_count integer null check (art_count is null or art_count >= 0)`
+- `created_by uuid references profiles(id)`
+- `notify_on_email boolean`
+- `archived_at timestamptz`
+
+`art_count` es solo informativo. No crea subtareas, piezas, formatos ni fases adicionales.
+
 ## Requisitos especificos de `work_order_phases`
 
 Columnas requeridas:
@@ -63,6 +86,16 @@ Columnas requeridas:
 - `created_at timestamptz`
 - `updated_at timestamptz`
 
+Fases base oficiales:
+
+1. `brief` — Brief
+2. `creatividad` — Creatividad
+3. `diseno` — Diseño
+4. `produccion` — Producción
+5. `revision` — Revisión
+6. `ajustes` — Ajustes
+7. `entrega` — Entrega
+
 Indices requeridos:
 
 - `idx_work_order_phases_order` en `(work_order_id, sort_order)`
@@ -73,6 +106,7 @@ Funciones/RPC requeridas:
 
 - `complete_work_order_phase(uuid)`: permite que una persona complete solo su fase asignada.
 - `save_work_order_phases(uuid, jsonb)`: guarda fases de forma transaccional sin usar DELETE + INSERT desde el navegador.
+- `generate_work_order_code_for_brand(uuid)`: genera codigos nuevos por marca con formato `[ABREVIACION]-[CORRELATIVO]`, por ejemplo `VW-001` o `SLK-001`.
 
 RLS esperado:
 
@@ -123,13 +157,37 @@ Para programar crons, usar uno de estos archivos:
 
 No activar envios recurrentes al equipo completo sin probar primero con usuarios controlados.
 
+## Nomenclatura de ordenes
+
+Las ordenes nuevas deben usar codigo corto por marca, sin prefijo `OT`:
+
+- Formato: `[ABREVIACION]-[CORRELATIVO]`.
+- El correlativo es independiente por marca.
+- Ejemplos: `VW-001`, `SLK-002`, `DNE-003`, `USM-004`.
+- El codigo se genera en Supabase mediante `generate_work_order_code_for_brand(uuid)`.
+- El frontend no debe usar `workOrders.length + 1` ni conteos locales cuando esta conectado a Supabase.
+- Los codigos historicos no se recalculan.
+- Si una marca no tiene abreviacion, la RPC usa iniciales limpias de la marca; si no puede generarlas usa `GEN`.
+
 ## Notificaciones: regla de piloto
 
 - Creacion manual de OT: creador + participantes generales seleccionados + responsables de fases asignadas.
-- Cambio de fase: responsable de esa fase + creador, agrupado preferiblemente en digest diario.
+- Fase completada: creador + participantes generales seleccionados + responsable de la siguiente fase, deduplicados y sin incluir al usuario que completo la fase.
+- Cambio rutinario de OT: agrupado preferiblemente en digest diario.
 - Urgencia: responsables involucrados + destinatarios fijos de marca si existen.
 - Resumen diario: cada usuario recibe solo actividad de OTs donde sea creador, responsable general o responsable de fase.
 - No enviar a usuarios no relacionados por defecto.
+
+Tipos de email esperados:
+
+- `assignment`
+- `comment`
+- `status_change`
+- `phase_completed`
+- `deadline_24h`
+- `overdue`
+- `weekly_digest`
+- `daily_digest`
 
 ## Config publica
 
