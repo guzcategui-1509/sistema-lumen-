@@ -587,6 +587,96 @@ button:disabled,
   gap: 14px;
 }
 
+.operational-command {
+  border-color: rgba(16, 35, 26, 0.14);
+}
+
+.operational-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.operational-section {
+  display: grid;
+  gap: 12px;
+}
+
+.operational-section.overdue {
+  border-left: 4px solid var(--red);
+}
+
+.phase-task-list,
+.operational-order-list {
+  display: grid;
+  gap: 9px;
+}
+
+.phase-task-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 12px;
+  border: 1px solid rgba(16, 35, 26, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.phase-task-row.red {
+  border-color: rgba(200, 78, 72, 0.24);
+  background: #fff8f7;
+}
+
+.phase-task-main,
+.operational-order-link {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.phase-task-main {
+  display: grid;
+  gap: 5px;
+}
+
+.phase-task-main strong,
+.phase-task-main small,
+.operational-order-link strong,
+.operational-order-link small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase-task-main small,
+.operational-order-link small {
+  color: var(--muted);
+}
+
+.phase-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 230px;
+}
+
+.operational-order-link {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid rgba(16, 35, 26, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
 .executive-panel {
   overflow: hidden;
 }
@@ -4036,6 +4126,10 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 
+  .operational-grid {
+    grid-template-columns: 1fr;
+  }
+
   .brand-mini-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -4200,10 +4294,17 @@ tr:last-child td {
   .work-order-filter-grid,
   .phase-editor-topline,
   .phase-editor-grid,
+  .phase-task-row,
+  .operational-order-link,
   .operation-order-row.compact-order-row,
   .deadline-week-grid,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .phase-task-meta {
+    justify-content: flex-start;
+    min-width: 0;
   }
 
   .phase-editor-header {

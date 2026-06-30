@@ -1,5 +1,44 @@
 # Lumen Workspace State
 
+## 2026-06-25
+
+### Cambio realizado
+- Se agregó dashboard adaptado por rol sin cambiar RLS, correos, funciones Supabase ni modelo de datos.
+- Roles de gestión (`admin`, `directora`, `direccion`, `cuentas`, `coordinador`, `coordinacion`, `ejecutivo`) mantienen el dashboard ejecutivo de equipo.
+- Roles operativos (`creativo`, `disenador`, `editor`, `generador`, `community`, `pauta`, `operaciones`, `medios` y cualquier rol no clasificado como gestión) ven un dashboard personal centrado en sus fases.
+- El dashboard operativo muestra `Mis fases pendientes`, `Mis fases vencidas`, `Para hoy / próximos 7 días`, `En revisión`, `Terminadas recientemente` y búsqueda rápida por OT, título o marca.
+- Las fases terminadas/canceladas no aparecen como pendientes.
+- Las órdenes archivadas quedan excluidas de las listas activas del dashboard.
+- Cada fila de fase y resultado de búsqueda abre el detalle existente de la OT con `view-work-order`.
+
+### Estado de piloto
+- Estado actual: listo para piloto interno controlado si las pruebas manuales pasan en Supabase/Vercel.
+- Usuarios sugeridos para piloto:
+  - 1 admin/cuentas.
+  - 1 creativo.
+  - 1 diseñador/editor.
+  - 1 usuario operativo adicional.
+
+### Pendientes
+- Probar con sesiones reales de usuarios de distintos roles, porque el dashboard depende de `profiles.role` y de las fases visibles por RLS.
+- Confirmar que cada fase relevante tiene `assigned_to` correcto en `work_order_phases`.
+- Confirmar en producción que órdenes archivadas usan `archived_at` y no aparecen como activas.
+- Mantener pendiente el refactor grande de `app.js`; esta fase solo agregó la bifurcación mínima del dashboard.
+
+### Checklist de pruebas del piloto
+1. Login como admin/cuentas.
+2. Confirmar que ve dashboard de gestión.
+3. Login como creativo/diseñador/editor.
+4. Confirmar que ve dashboard operativo.
+5. Confirmar que aparecen `Mis fases pendientes`.
+6. Confirmar que fases de otros usuarios no aparecen como propias.
+7. Confirmar que fases vencidas se destacan.
+8. Confirmar que fases terminadas no aparecen como pendientes.
+9. Confirmar que una orden archivada no aparece como activa.
+10. Confirmar que título/código abre detalle de orden.
+11. Confirmar que búsqueda funciona por título/código/marca.
+12. Ejecutar `npm run check`.
+
 ## 2026-06-22
 
 ### Cambio realizado

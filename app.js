@@ -498,12 +498,12 @@ const workOrderPhaseCatalog = [
 ];
 
 const workOrderPhaseStatusLabels = {
-  pending: "Pendiente",
+  pending: "Sin iniciar",
   in_progress: "En proceso",
-  blocked: "Bloqueada",
-  in_review: "En revisión",
+  blocked: "En pausa",
+  in_review: "Revisión",
   changes_requested: "Con cambios",
-  completed: "Completada",
+  completed: "Terminado",
   cancelled: "Cancelada",
 };
 
@@ -820,6 +820,7 @@ const state = {
   focusedWorkOrderId: "",
   creatingWorkOrder: false,
   workOrderDraftPhases: [],
+  dashboardSearch: "",
   dashboardMonth: "",
   workOrderMonth: "",
   workOrderView: "priority",
@@ -1567,6 +1568,10 @@ function canManageWorkOrders() {
   return workOrderManagerRoles.includes(dataState.profile?.role);
 }
 
+function isManagementDashboardRole(role = dataState.profile?.role) {
+  return ["admin", "directora", "direccion", "cuentas", "coordinador", "coordinacion", "ejecutivo"].includes(role);
+}
+
 function canCreateWorkOrders() {
   if (!isSupabaseMode()) return true;
   return workOrderCreatorRoles.includes(dataState.profile?.role);
@@ -2281,6 +2286,138 @@ function riskyBrandRows(sourceOrders = dashboardScopedOrders(), sourceBrands = d
     .sort((a, b) => b.overdue - a.overdue || b.urgent - a.urgent || b.review - a.review || b.open - a.open);
 }
 
+function isActivePhase(phase) {
+  return phase && !["completed", "cancelled"].includes(phase.status);
+}
+
+function phaseDueDays(phase) {
+  return daysUntil(phase?.dueDate);
+}
+
+function currentUserPhaseRows(sourceOrders = dashboardScopedOrders(), userId = currentProfileId()) {
+  if (!userId) return [];
+  return sourceOrders
+    .filter((order) => !isArchivedWorkOrder(order))
+    .flatMap((order) =>
+      workOrderPhases(order)
+        .filter((phase) => phase.assignedTo === userId)
+        .map((phase) => ({
+          order,
+          phase,
+          brand: getBrand(order.brandId),
+          dueDays: phaseDueDays(phase),
+        })),
+    )
+    .sort((a, b) => {
+      const aDate = a.phase.dueDate || "9999-12-31";
+      const bDate = b.phase.dueDate || "9999-12-31";
+      return aDate.localeCompare(bDate) || a.order.id.localeCompare(b.order.id);
+    });
+}
+
+function userParticipatingOrders(sourceOrders = dashboardScopedOrders(), userId = currentProfileId()) {
+  if (!userId) return [];
+  return sourceOrders
+    .filter((order) => !isArchivedWorkOrder(order))
+    .filter((order) => orderAssignees(order).includes(userId) || workOrderPhases(order).some((phase) => phase.assignedTo === userId))
+    .sort((a, b) => String(a.dueDate || "9999-12-31").localeCompare(String(b.dueDate || "9999-12-31")));
+}
+
+function phaseUrgencyBadge(phase) {
+  if (phase.status === "completed") return { label: "Terminada", cls: "green" };
+  if (phase.status === "cancelled") return { label: "Cancelada", cls: "neutral" };
+  const days = phaseDueDays(phase);
+  if (!phase.dueDate) return { label: "Sin deadline", cls: "neutral" };
+  if (days < 0) return { label: `Vencida hace ${Math.abs(days)}d`, cls: "red" };
+  if (days === 0) return { label: "Para hoy", cls: "red" };
+  if (days <= 2) return { label: `${days}d`, cls: "amber" };
+  return { label: `${days}d`, cls: "blue" };
+}
+
+function renderUserPhaseRow(row, options = {}) {
+  const { order, phase, brand } = row;
+  const client = getClient(brand.clientId);
+  const urgency = phaseUrgencyBadge(phase);
+  return `
+    <article class="phase-task-row ${urgency.cls}">
+      <button class="phase-task-main" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
+        <span class="badge">${escapeHtml(order.id)}</span>
+        <strong>${escapeHtml(order.title)}</strong>
+        <small>${escapeHtml(client?.name || "Cliente")} / ${escapeHtml(brand.shortName)} · ${escapeHtml(phase.title)}</small>
+      </button>
+      <div class="phase-task-meta">
+        <span class="badge blue">${escapeHtml(workOrderPhaseStatusLabels[phase.status] || phase.status)}</span>
+        <span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>
+        <span class="muted">${escapeHtml(phase.dueDate ? formatDate(phase.dueDate) : "Sin fecha")}</span>
+      </div>
+      <button class="button-ghost small" data-action="view-work-order" data-id="${escapeHtml(order.id)}">${options.cta || "Abrir"}</button>
+    </article>
+  `;
+}
+
+function renderOperationalPhaseSection(title, subtitle, rows, emptyText, options = {}) {
+  return `
+    <section class="panel operational-section ${options.emphasis || ""}">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">${escapeHtml(title)}</h2>
+          <div class="small-muted">${escapeHtml(subtitle)}</div>
+        </div>
+        <span class="badge ${options.badgeClass || "neutral"}">${rows.length}</span>
+      </div>
+      <div class="phase-task-list">
+        ${rows.slice(0, options.limit || 6).map((row) => renderUserPhaseRow(row, options)).join("") || `<div class="empty compact-empty">${escapeHtml(emptyText)}</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderOperationalOrderSearch(participatingOrders) {
+  const query = (state.dashboardSearch || "").trim().toLowerCase();
+  const matches = query
+    ? participatingOrders.filter((order) => {
+        const brand = getBrand(order.brandId);
+        return [order.id, order.title, brand.shortName, getClient(brand.clientId)?.name]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+      })
+    : participatingOrders.slice(0, 5);
+
+  return `
+    <section class="panel operational-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Acceso rápido</h2>
+          <div class="small-muted">Busca por código, título o marca dentro de tus órdenes.</div>
+        </div>
+      </div>
+      <input class="input" data-dashboard-search value="${escapeHtml(state.dashboardSearch || "")}" placeholder="Buscar OT, marca o título..." />
+      <div class="operational-order-list">
+        ${
+          matches.length
+            ? matches
+                .slice(0, 8)
+                .map((order) => {
+                  const brand = getBrand(order.brandId);
+                  const urgency = workOrderUrgency(order);
+                  return `
+                    <button class="operational-order-link" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
+                      <span class="status-dot ${urgency.cls}"></span>
+                      <strong>${escapeHtml(order.id)} · ${escapeHtml(order.title)}</strong>
+                      <small>${escapeHtml(brand.shortName)} / ${escapeHtml(formatDate(order.dueDate))}</small>
+                    </button>
+                  `;
+                })
+                .join("")
+            : `<div class="empty compact-empty">${query ? "No encontramos órdenes con esa búsqueda." : "No tienes órdenes asignadas todavía."}</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
 function renderKpiCard(label, value, detail, tone = "neutral") {
   return `
     <article class="kpi-card kpi-${tone}">
@@ -2440,6 +2577,86 @@ function renderRiskBrandsTable(sourceOrders = dashboardScopedOrders(), sourceBra
         }
       </div>
     </section>
+  `;
+}
+
+function renderOperationalDashboard() {
+  const sourceOrders = dashboardScopedOrders();
+  const phaseRows = currentUserPhaseRows(sourceOrders);
+  const activeRows = phaseRows.filter((row) => isActivePhase(row.phase));
+  const overdueRows = activeRows.filter((row) => row.phase.dueDate && row.dueDays < 0);
+  const weekRows = activeRows.filter((row) => row.phase.dueDate && row.dueDays >= 0 && row.dueDays <= 7);
+  const reviewRows = activeRows.filter((row) => row.phase.status === "in_review");
+  const completedRows = phaseRows
+    .filter((row) => row.phase.status === "completed")
+    .sort((a, b) => String(b.phase.completedAt || b.phase.updatedAt || "").localeCompare(String(a.phase.completedAt || a.phase.updatedAt || "")));
+  const participatingOrders = userParticipatingOrders(sourceOrders);
+
+  return `
+    <section class="dashboard-command operational-command">
+      <div>
+        <span class="eyebrow">Mi trabajo</span>
+        <h2>Dashboard personal</h2>
+        <p>Lo que tienes pendiente, vencido o por revisar según tus fases asignadas.</p>
+      </div>
+      <div class="dashboard-command-actions">
+        <select class="brand-select js-brand-select" aria-label="Marca o cliente">
+          ${renderBrandOptions(state.currentBrandId)}
+        </select>
+        <button class="button" data-module="work-orders">Ver mis OTs</button>
+      </div>
+    </section>
+    <section class="dashboard-status-line operational-status-line">
+      <strong>Tienes ${activeRows.length} fases pendientes, ${overdueRows.length} vencidas y ${weekRows.length} con deadline en los próximos 7 días.</strong>
+      <div class="row wrap">
+        <button class="button-ghost small" data-module="calendar">Ver calendario</button>
+        <button class="button-ghost small" data-module="work-orders">Abrir bandeja de OTs</button>
+      </div>
+    </section>
+    <section class="executive-kpis operational-kpis">
+      ${renderKpiCard("Mis fases pendientes", activeRows.length, "Asignadas a ti", "dark")}
+      ${renderKpiCard("Vencidas", overdueRows.length, "Necesitan atención", overdueRows.length ? "danger" : "neutral")}
+      ${renderKpiCard("Próximos 7 días", weekRows.length, "Para planificar", "warning")}
+      ${renderKpiCard("En revisión", reviewRows.length, "Esperando validación", reviewRows.length ? "warning" : "neutral")}
+    </section>
+    ${renderOperationalPhaseSection(
+      "Mis fases pendientes",
+      "Ordenadas por el deadline más cercano.",
+      activeRows,
+      "No tienes fases pendientes",
+      { limit: 8, cta: "Ver orden" },
+    )}
+    <section class="dashboard-executive-grid operational-grid">
+      ${renderOperationalPhaseSection(
+        "Mis fases vencidas",
+        "Fases asignadas a ti que ya pasaron su deadline.",
+        overdueRows,
+        "No tienes fases vencidas",
+        { limit: 5, badgeClass: overdueRows.length ? "red" : "green", emphasis: overdueRows.length ? "overdue" : "" },
+      )}
+      ${renderOperationalPhaseSection(
+        "Para hoy / próximos 7 días",
+        "Lo que viene pronto y conviene resolver primero.",
+        weekRows,
+        "No tienes fases para los próximos 7 días",
+        { limit: 5, badgeClass: weekRows.length ? "amber" : "neutral" },
+      )}
+      ${renderOperationalPhaseSection(
+        "En revisión",
+        "Fases tuyas que están en revisión.",
+        reviewRows,
+        "No tienes fases en revisión",
+        { limit: 5, badgeClass: reviewRows.length ? "blue" : "neutral" },
+      )}
+      ${renderOperationalPhaseSection(
+        "Terminadas recientemente",
+        "Últimas fases que marcaste como terminadas.",
+        completedRows,
+        "Aún no tienes fases terminadas recientemente",
+        { limit: 5, badgeClass: "green" },
+      )}
+    </section>
+    ${renderOperationalOrderSearch(participatingOrders)}
   `;
 }
 
@@ -2747,7 +2964,7 @@ function renderBrandsWorkspace() {
 }
 
 function renderDashboard() {
-  return renderExecutiveDashboard();
+  return isManagementDashboardRole() ? renderExecutiveDashboard() : renderOperationalDashboard();
 }
 
 function renderMetric(label, value, detail) {
@@ -6382,6 +6599,14 @@ function bindEvents() {
     input.addEventListener("change", () => {
       state.dashboardMonth = input.value;
       render();
+    });
+  });
+
+  document.querySelectorAll("[data-dashboard-search]").forEach((input) => {
+    input.addEventListener("input", () => {
+      state.dashboardSearch = input.value;
+      window.clearTimeout(input._lumenDashboardSearchTimer);
+      input._lumenDashboardSearchTimer = window.setTimeout(render, 180);
     });
   });
 
