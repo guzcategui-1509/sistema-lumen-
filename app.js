@@ -534,6 +534,7 @@ const weeklyDigestConfig = {
 const workOrderManagerRoles = ["admin", "directora", "direccion", "dirección", "jefe", "jefatura", "cuentas", "coordinador", "coordinacion", "coordinación", "ejecutivo"];
 const workOrderCreatorRoles = workOrderManagerRoles;
 const workOrderMaterialRoles = ["admin", "directora", "cuentas", "generador", "creativo", "disenador", "editor"];
+const urgencyManagerRoles = ["admin", "directora", "director", "direccion", "dirección", "jefe", "jefatura", "cuentas", "coordinador", "coordinadora", "coordinacion", "coordinación", "ejecutivo", "ejecutiva"];
 
 const workOrderPhaseCatalog = [
   { key: "brief", title: "Brief" },
@@ -1701,6 +1702,20 @@ function isSystemAdmin() {
 function canManageWorkOrders() {
   if (!isSupabaseMode()) return true;
   return workOrderManagerRoles.includes(dataState.profile?.role);
+}
+
+function normalizeRoleKey(role = "") {
+  return String(role)
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function canManageUrgency() {
+  if (!isSupabaseMode()) return true;
+  const role = normalizeRoleKey(dataState.profile?.role);
+  return urgencyManagerRoles.map(normalizeRoleKey).includes(role);
 }
 
 function isManagementDashboardRole(role = dataState.profile?.role) {
@@ -4400,7 +4415,7 @@ function renderUrgentOrderBanner(order) {
         ${plan.candidate ? `<span class="badge">${escapeHtml(plan.candidate.name)} · ${escapeHtml(workloadLabelForUser(plan.candidate.id))}</span>` : ""}
         ${canManageWorkOrders() ? `<button class="button-danger small" data-action="apply-urgent-workload-plan" data-id="${order.id}">Aplicar plan sugerido</button>` : ""}
         ${canManageWorkOrders() ? `<button class="button small" data-action="send-urgent-alert" data-id="${order.id}">Enviar alerta urgente</button>` : ""}
-        ${canManageWorkOrders() ? `<button class="button-ghost small" data-action="${isUrgentWorkOrder(order) ? "unmark-work-order-urgent" : "mark-work-order-urgent"}" data-id="${order.id}">${isUrgentWorkOrder(order) ? "Quitar urgencia" : "Marcar urgencia"}</button>` : ""}
+        ${canManageUrgency() ? `<button class="button-ghost small" data-action="${isUrgentWorkOrder(order) ? "unmark-work-order-urgent" : "mark-work-order-urgent"}" data-id="${order.id}">${isUrgentWorkOrder(order) ? "Quitar urgencia" : "Marcar urgencia"}</button>` : ""}
       </div>
     </div>
   `;
@@ -4665,6 +4680,7 @@ function renderWorkOrderDetailPanel(order) {
   const parsedDescription = splitWorkOrderDescription(order.description || "");
   const urgency = workOrderUrgency(order);
   const canManage = canManageWorkOrders();
+  const canManageUrgencyFlag = canManageUrgency();
   const canArchive = canArchiveWorkOrders();
   const canUploadMaterials = canUploadWorkOrderMaterials(order);
   const archived = isArchivedWorkOrder(order);
@@ -4687,7 +4703,7 @@ function renderWorkOrderDetailPanel(order) {
         </div>
         <div class="row wrap">
           ${canManage ? `<button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>` : ""}
-          ${canManage && !archived ? `<button class="${isUrgentWorkOrder(order) ? "button-ghost" : "button-danger"} small" data-action="${isUrgentWorkOrder(order) ? "unmark-work-order-urgent" : "mark-work-order-urgent"}" data-id="${order.id}">${isUrgentWorkOrder(order) ? "Quitar urgencia" : "Marcar urgencia"}</button>` : ""}
+          ${canManageUrgencyFlag && !archived ? `<button class="${isUrgentWorkOrder(order) ? "button-ghost" : "button-danger"} small" data-action="${isUrgentWorkOrder(order) ? "unmark-work-order-urgent" : "mark-work-order-urgent"}" data-id="${order.id}">${isUrgentWorkOrder(order) ? "Quitar urgencia" : "Marcar urgencia"}</button>` : ""}
           ${
             canArchive
               ? archived
@@ -5334,6 +5350,7 @@ function renderOrderCard(order) {
   const urgency = workOrderUrgency(order);
   const isFocused = order.id === state.focusedWorkOrderId;
   const canManage = canManageWorkOrders();
+  const canManageUrgencyFlag = canManageUrgency();
   const canArchive = canArchiveWorkOrders();
   const canUploadMaterials = canUploadWorkOrderMaterials(order);
   const archived = isArchivedWorkOrder(order);
@@ -5418,11 +5435,11 @@ function renderOrderCard(order) {
       <div class="row wrap">
         <button class="button small" data-action="view-work-order" data-id="${order.id}">Ver detalle</button>
         ${order.notifyOnEmail ? `<span class="badge blue">Email activo</span>` : `<span class="badge">Sin email</span>`}
+        ${canManageUrgencyFlag && !archived ? `<button class="${isUrgentWorkOrder(order) ? "button-ghost" : "button-danger"} small" data-action="${isUrgentWorkOrder(order) ? "unmark-work-order-urgent" : "mark-work-order-urgent"}" data-id="${order.id}">${isUrgentWorkOrder(order) ? "Quitar urgencia" : "Marcar urgencia"}</button>` : ""}
         ${
           canManage
             ? `
               <button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>
-              <button class="${isUrgentWorkOrder(order) ? "button-ghost" : "button-danger"} small" data-action="${isUrgentWorkOrder(order) ? "unmark-work-order-urgent" : "mark-work-order-urgent"}" data-id="${order.id}">${isUrgentWorkOrder(order) ? "Quitar urgencia" : "Marcar urgencia"}</button>
               ${
                 nextStatus
                   ? `<button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar a ${workOrderStatusLabels[nextStatus]}</button>`
@@ -8749,7 +8766,7 @@ async function toggleWorkOrderUrgency(id) {
   const currentUrgentValue = Boolean(order?.isUrgent ?? order?.is_urgent);
   const nextUrgentValue = !currentUrgentValue;
   debugInteraction("toggle-urgency-start", { id, currentUrgentValue, nextUrgentValue });
-  if (!canManageWorkOrders()) {
+  if (!canManageUrgency()) {
     debugInteraction("toggle-urgency-blocked", { reason: "not-management", id, currentUrgentValue, nextUrgentValue });
     showToast("Solo gestión puede marcar urgencias");
     return;
