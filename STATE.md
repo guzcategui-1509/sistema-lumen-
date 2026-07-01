@@ -21,6 +21,23 @@
 - `npm run check` pasó.
 - `git diff --check` pasó.
 
+## 2026-07-01
+
+### Cambio: navegación por rol y dashboard pre-piloto
+- Se desactivó el asistente IA en la experiencia visible del sistema mediante `ENABLE_AI_ASSISTANT = false`.
+- Los módulos IA (`Copywriting IA` y `Creatividad IA`) quedan bloqueados por navegación; las acciones internas de IA muestran aviso de piloto si se intentan disparar.
+- Usuarios operativos (`creativo`, `disenador`, `editor`, `generador`, `community`, `pauta`, `medios`, `operaciones` y roles no gestión) solo ven Dashboard y Mis órdenes.
+- Los operativos ya no ven `+ Crear OT`, Reportería, Notificaciones, Equipo ni Admin en navegación o header.
+- `+ Crear OT` queda visible solo para roles de gestión: admin, dirección/directora, cuentas, coordinación, jefe/jefatura y ejecutivo.
+- La sección Órdenes funciona como “Mis órdenes” para usuarios operativos, mostrando solo OTs donde participan, tienen fases asignadas o fueron creadores.
+- El dashboard de gestión ahora muestra KPIs clickeables, un listado filtrado por la card activa, “Mis órdenes pendientes” y “Órdenes por marca” con desplegable.
+- La carga global del equipo queda separada en el módulo Equipo, no como foco principal del dashboard inicial.
+
+### Pendiente de validación manual
+1. Login operativo: confirmar menú limitado, sin IA, sin crear OT y con Mis órdenes filtrado.
+2. Login cuentas/dirección/admin: confirmar KPIs clickeables, mis órdenes, marcas desplegables y acceso a Equipo.
+3. Confirmar que abrir una OT desde dashboard o Mis órdenes conserva permisos de fase existentes.
+
 ## 2026-06-30
 
 ### Cambio: nomenclatura de OTs por marca
