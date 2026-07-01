@@ -547,13 +547,22 @@ const workOrderPhaseCatalog = [
 
 const workOrderPhaseStatusLabels = {
   pending: "Sin iniciar",
+  not_started: "Sin iniciar",
   in_progress: "En proceso",
   blocked: "En pausa",
+  paused: "En pausa",
   in_review: "Revisión",
+  review: "Revisión",
   changes_requested: "Con cambios",
   completed: "Terminado",
+  done: "Terminado",
   cancelled: "Cancelada",
+  canceled: "Cancelada",
 };
+
+function phaseStatusLabel(status) {
+  return workOrderPhaseStatusLabels[status] || "Sin iniciar";
+}
 
 const defaultWorkOrderPhaseDescriptions = {
   brief: "Contexto, objetivo, prioridades y entregables claros.",
@@ -8736,16 +8745,20 @@ async function sendUrgentWorkOrderAlert(id) {
 }
 
 async function toggleWorkOrderUrgency(id, isUrgent) {
+  debugInteraction("toggle-urgency-start", { id, isUrgent });
   if (!canManageWorkOrders()) {
+    debugInteraction("toggle-urgency-blocked", { reason: "not-management", id, isUrgent });
     showToast("Solo gestión puede marcar urgencias");
     return;
   }
   const order = findWorkOrderByAnyId(id);
   if (!order) {
+    debugInteraction("toggle-urgency-blocked", { reason: "order-not-found", id, isUrgent });
     showToast("No encontre esa OT");
     return;
   }
   if (isArchivedWorkOrder(order)) {
+    debugInteraction("toggle-urgency-blocked", { reason: "archived", id: order.id, isUrgent });
     showToast("No se puede cambiar urgencia en una OT archivada");
     return;
   }
@@ -8760,6 +8773,7 @@ async function toggleWorkOrderUrgency(id, isUrgent) {
       .update({ is_urgent: isUrgent, updated_at: new Date().toISOString() })
       .eq("id", order.dbId);
     if (error) {
+      debugInteraction("toggle-urgency-error", { id: order.id, dbId: order.dbId, isUrgent, message: error.message || "" });
       const message = error.message || "";
       if (message.includes("is_urgent") || message.includes("schema cache")) {
         showToast("Falta activar urgencias en Supabase: ejecuta supabase/patch_work_order_urgency.sql");
@@ -8783,6 +8797,7 @@ async function toggleWorkOrderUrgency(id, isUrgent) {
 
   state.viewingWorkOrderId = order.id;
   state.focusedWorkOrderId = order.id;
+  debugInteraction("toggle-urgency-success", { id: order.id, dbId: order.dbId || "", isUrgent });
   showToast(isUrgent ? "OT marcada como urgencia" : "Urgencia quitada");
   render();
 }
