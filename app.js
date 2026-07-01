@@ -7589,8 +7589,8 @@ async function handleAction(action, id) {
     "open-work-order-file": () => openWorkOrderFile(id),
     "delete-work-order-file": () => deleteWorkOrderFile(id),
     "send-urgent-alert": () => sendUrgentWorkOrderAlert(id),
-    "mark-work-order-urgent": () => toggleWorkOrderUrgency(id, true),
-    "unmark-work-order-urgent": () => toggleWorkOrderUrgency(id, false),
+    "mark-work-order-urgent": () => toggleWorkOrderUrgency(id),
+    "unmark-work-order-urgent": () => toggleWorkOrderUrgency(id),
     "apply-urgent-workload-plan": () => applyUrgentWorkloadPlan(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
     "queue-daily-digest": () => queueDailyDigest(),
@@ -8744,21 +8744,23 @@ async function sendUrgentWorkOrderAlert(id) {
   showToast(`Alerta urgente lista para ${recipients.length} persona(s)`);
 }
 
-async function toggleWorkOrderUrgency(id, isUrgent) {
-  debugInteraction("toggle-urgency-start", { id, isUrgent });
+async function toggleWorkOrderUrgency(id) {
+  const order = findWorkOrderByAnyId(id);
+  const currentUrgentValue = Boolean(order?.isUrgent ?? order?.is_urgent);
+  const nextUrgentValue = !currentUrgentValue;
+  debugInteraction("toggle-urgency-start", { id, currentUrgentValue, nextUrgentValue });
   if (!canManageWorkOrders()) {
-    debugInteraction("toggle-urgency-blocked", { reason: "not-management", id, isUrgent });
+    debugInteraction("toggle-urgency-blocked", { reason: "not-management", id, currentUrgentValue, nextUrgentValue });
     showToast("Solo gestión puede marcar urgencias");
     return;
   }
-  const order = findWorkOrderByAnyId(id);
   if (!order) {
-    debugInteraction("toggle-urgency-blocked", { reason: "order-not-found", id, isUrgent });
+    debugInteraction("toggle-urgency-blocked", { reason: "order-not-found", id });
     showToast("No encontre esa OT");
     return;
   }
   if (isArchivedWorkOrder(order)) {
-    debugInteraction("toggle-urgency-blocked", { reason: "archived", id: order.id, isUrgent });
+    debugInteraction("toggle-urgency-blocked", { reason: "archived", id: order.id, nextUrgentValue });
     showToast("No se puede cambiar urgencia en una OT archivada");
     return;
   }
@@ -8768,12 +8770,14 @@ async function toggleWorkOrderUrgency(id, isUrgent) {
       showToast("Esta OT no tiene ID de Supabase");
       return;
     }
-    const { error } = await supabaseClient
+    const { data, error } = await supabaseClient
       .from("work_orders")
-      .update({ is_urgent: isUrgent, updated_at: new Date().toISOString() })
-      .eq("id", order.dbId);
+      .update({ is_urgent: nextUrgentValue, updated_at: new Date().toISOString() })
+      .eq("id", order.dbId)
+      .select("id,is_urgent,updated_at")
+      .single();
     if (error) {
-      debugInteraction("toggle-urgency-error", { id: order.id, dbId: order.dbId, isUrgent, message: error.message || "" });
+      debugInteraction("toggle-urgency-error", { id: order.id, dbId: order.dbId, nextUrgentValue, message: error.message || "" });
       const message = error.message || "";
       if (message.includes("is_urgent") || message.includes("schema cache")) {
         showToast("Falta activar urgencias en Supabase: ejecuta supabase/patch_work_order_urgency.sql");
@@ -8782,23 +8786,32 @@ async function toggleWorkOrderUrgency(id, isUrgent) {
       }
       return;
     }
-    await supabaseClient.from("work_order_activity").insert({
+    order.isUrgent = Boolean(data?.is_urgent ?? nextUrgentValue);
+    order.updatedAt = data?.updated_at || new Date().toISOString();
+    const { error: activityError } = await supabaseClient.from("work_order_activity").insert({
       work_order_id: order.dbId,
       actor_id: dataState.session?.user?.id,
-      action: isUrgent ? "marked_urgent" : "unmarked_urgent",
-      details: { is_urgent: isUrgent },
+      action: order.isUrgent ? "marked_urgent" : "unmarked_urgent",
+      details: { is_urgent: order.isUrgent },
     });
-    await loadSupabaseData();
+    if (activityError) {
+      console.warn("[Lumen urgency] activity insert failed", activityError);
+    }
+    try {
+      await loadSupabaseData();
+    } catch (loadError) {
+      console.warn("[Lumen urgency] refresh after urgency update failed", loadError);
+    }
   } else {
-    order.isUrgent = isUrgent;
+    order.isUrgent = nextUrgentValue;
     order.updatedAt = new Date().toISOString();
     saveWorkOrders();
   }
 
   state.viewingWorkOrderId = order.id;
   state.focusedWorkOrderId = order.id;
-  debugInteraction("toggle-urgency-success", { id: order.id, dbId: order.dbId || "", isUrgent });
-  showToast(isUrgent ? "OT marcada como urgencia" : "Urgencia quitada");
+  debugInteraction("toggle-urgency-success", { id: order.id, dbId: order.dbId || "", isUrgent: order.isUrgent });
+  showToast(order.isUrgent ? "OT marcada como urgencia" : "Urgencia quitada");
   render();
 }
 
