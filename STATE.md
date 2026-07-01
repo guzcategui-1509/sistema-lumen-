@@ -2,6 +2,25 @@
 
 ## 2026-07-01
 
+### Cambio: estabilización bloqueante pre-piloto
+- Se robusteció la apertura de OTs desde roles operativos: la app ahora localiza órdenes por código visible o UUID interno y abre el detalle sin requerir rol de gestión.
+- El detalle conserva la acción `Marcar mi fase realizada` para fases asignadas al usuario actual; el flujo sigue usando la RPC `complete_work_order_phase`.
+- El login con Supabase ahora carga sesión, perfil y datos inmediatamente después de `signInWithPassword`, sin depender solo del listener de auth, para evitar quedarse en el logo hasta hacer refresh.
+- Al agregar o quitar fases en el modal de creación/edición se conserva el scroll del modal/página y no se manda al usuario al inicio.
+- La urgencia queda separada de prioridad: se agregó soporte visual y funcional para `is_urgent`, con botones `Marcar urgencia` / `Quitar urgencia`.
+- Se corrigió el label visual de fechas para que una OT sin deadline no muestre `999d restantes`; usa la próxima fecha real de fases o `Sin fecha`.
+- Se creó `supabase/patch_work_order_urgency.sql` para agregar `work_orders.is_urgent`. No fue ejecutado desde Codex.
+
+### Pendiente de validación manual
+1. Ejecutar `supabase/patch_work_order_urgency.sql` en Supabase antes de usar el botón de urgencia en producción.
+2. Login operativo: abrir una OT desde Dashboard/Mis órdenes y completar solo una fase propia.
+3. Login gestión: abrir Crear OT, bajar a fases, quitar una fase y confirmar que no vuelve al inicio.
+4. Marcar y quitar urgencia en una OT activa; confirmar badge `Urgente` y que prioridad baja/media/alta no cambia.
+5. Revisar una OT sin deadline general; debe mostrar `Sin fecha` o una fecha real de fase, nunca `999d restantes`.
+6. Abrir/cerrar modal y detalle; confirmar que ningún overlay/backdrop queda bloqueando clicks.
+
+## 2026-07-01
+
 ### Cambio: estabilización UX pre-piloto
 - Se eliminó el toast de navegación `Abriendo ...` al abrir una OT para evitar mensajes flotantes espontáneos y códigos antiguos visibles.
 - La navegación operativa ahora incluye `Dashboard`, `Mis órdenes`, `Calendario` y `Perfil`; `Admin`, Equipo, Reportería y Notificaciones siguen fuera para roles operativos.

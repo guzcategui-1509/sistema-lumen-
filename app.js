@@ -1119,6 +1119,7 @@ function mapDbWorkOrder(row) {
     updatedAt: row.updated_at,
     archivedAt: row.archived_at || null,
     artCount: row.art_count ?? null,
+    isUrgent: Boolean(row.is_urgent),
     notifyOnEmail: row.notify_on_email,
     phases: (row.phases || []).map(mapDbWorkOrderPhase).sort((a, b) => a.sortOrder - b.sortOrder),
     linkedContentId: null,
@@ -1834,11 +1835,26 @@ function workOrderUrgency(order) {
   if (order.status === "client_approved") return { label: "Aprobada por cliente", cls: "green" };
   if (order.status === "completed") return { label: "Entregada", cls: "blue" };
   if (order.status === "cancelled") return { label: "Cancelada", cls: "neutral" };
-  const days = daysUntil(order.dueDate);
+  const dueDate = workOrderEffectiveDueDate(order);
+  if (isUrgentWorkOrder(order) && !dueDate) return { label: "Urgente", cls: "red" };
+  if (!dueDate) return { label: "Sin fecha", cls: "neutral" };
+  const days = daysUntil(dueDate);
+  if (isUrgentWorkOrder(order) && days >= 0) return { label: days <= 1 ? "Urgente · inmediato" : "Urgente", cls: "red" };
   if (days < 0) return { label: `Vencida hace ${Math.abs(days)}d`, cls: "red" };
   if (days === 0) return { label: "Vence hoy", cls: "red" };
   if (days === 1) return { label: "Vence mañana", cls: "amber" };
   return { label: `${days}d restantes`, cls: "blue" };
+}
+
+function isUrgentWorkOrder(order) {
+  return Boolean(order?.isUrgent);
+}
+
+function workOrderEffectiveDueDate(order) {
+  if (order?.dueDate) return order.dueDate;
+  return workOrderPhases(order)
+    .filter((phase) => isActivePhase(phase) && phase.dueDate)
+    .sort((a, b) => daysUntil(a.dueDate) - daysUntil(b.dueDate))[0]?.dueDate || "";
 }
 
 function nextWorkOrderStatus(order) {
@@ -1965,8 +1981,8 @@ function executionCandidates(category = "diseno", brandId = state.currentBrandId
 
 function workloadScoreForUser(userId, sourceOrders = workOrders) {
   const workload = teamWorkload(userId, sourceOrders);
-  const dueSoon = workload.open.filter((order) => daysUntil(order.dueDate) <= 2).length;
-  const urgent = workload.open.filter((order) => order.priority === "high").length;
+  const dueSoon = workload.open.filter((order) => daysUntil(workOrderEffectiveDueDate(order)) <= 2).length;
+  const urgent = workload.open.filter(isUrgentWorkOrder).length;
   return workload.open.length * 2 + workload.overdue.length * 5 + workload.review.length * 2 + dueSoon * 2 + urgent * 3;
 }
 
@@ -2366,9 +2382,9 @@ function dashboardScopedBrands() {
 }
 
 function workOrderCriticalScore(order) {
-  const days = daysUntil(order.dueDate);
+  const days = daysUntil(workOrderEffectiveDueDate(order));
   const overdueWeight = days < 0 ? Math.abs(days) * 12 : 0;
-  const priorityWeight = order.priority === "high" ? 28 : order.priority === "medium" ? 8 : 0;
+  const priorityWeight = isUrgentWorkOrder(order) ? 32 : order.priority === "high" ? 12 : order.priority === "medium" ? 8 : 0;
   const assigneeWeight = orderAssignees(order).length ? 0 : 24;
   const reviewWeight = order.status === "in_review" ? 18 : 0;
   return overdueWeight + priorityWeight + assigneeWeight + reviewWeight;
@@ -2378,9 +2394,9 @@ function criticalWorkOrders(sourceOrders = dashboardScopedOrders()) {
   return sourceOrders
     .filter((order) => {
       if (!isOpenWorkOrder(order)) return false;
-      return daysUntil(order.dueDate) < 0 || order.priority === "high" || !orderAssignees(order).length || order.status === "in_review";
+      return daysUntil(workOrderEffectiveDueDate(order)) < 0 || isUrgentWorkOrder(order) || !orderAssignees(order).length || order.status === "in_review";
     })
-    .sort((a, b) => workOrderCriticalScore(b) - workOrderCriticalScore(a) || daysUntil(a.dueDate) - daysUntil(b.dueDate));
+    .sort((a, b) => workOrderCriticalScore(b) - workOrderCriticalScore(a) || daysUntil(workOrderEffectiveDueDate(a)) - daysUntil(workOrderEffectiveDueDate(b)));
 }
 
 function loadLevel(row) {
@@ -2407,7 +2423,7 @@ function riskyBrandRows(sourceOrders = dashboardScopedOrders(), sourceBrands = d
       const overdue = brandOpen.filter((order) => daysUntil(order.dueDate) < 0).length;
       const review = brandOpen.filter((order) => order.status === "in_review").length;
       const unassigned = brandOpen.filter((order) => !orderAssignees(order).length).length;
-      const urgent = brandOpen.filter((order) => order.priority === "high").length;
+      const urgent = brandOpen.filter(isUrgentWorkOrder).length;
       return {
         brand,
         client: getClient(brand.clientId),
@@ -3455,8 +3471,8 @@ function renderCreateWorkOrderModal(allBrands) {
 
 function renderWorkOrderSmartPanel(orders, allBrands) {
   const urgentOrders = orders
-    .filter((order) => isOpenWorkOrder(order) && (order.priority === "high" || daysUntil(order.dueDate) <= 1))
-    .sort((a, b) => daysUntil(a.dueDate) - daysUntil(b.dueDate))
+    .filter((order) => isOpenWorkOrder(order) && (isUrgentWorkOrder(order) || daysUntil(workOrderEffectiveDueDate(order)) <= 1))
+    .sort((a, b) => daysUntil(workOrderEffectiveDueDate(a)) - daysUntil(workOrderEffectiveDueDate(b)))
     .slice(0, 4);
   const smartBrand = allBrands ? "" : getBrand().shortName;
 
@@ -3835,11 +3851,16 @@ function renderBrandConfig() {
 }
 
 function selectedEditingOrder() {
-  return workOrders.find((order) => order.id === state.editingWorkOrderId) || null;
+  return findWorkOrderByAnyId(state.editingWorkOrderId);
 }
 
 function selectedViewingOrder() {
-  return workOrders.find((order) => order.id === state.viewingWorkOrderId) || null;
+  return findWorkOrderByAnyId(state.viewingWorkOrderId);
+}
+
+function findWorkOrderByAnyId(id) {
+  if (!id) return null;
+  return workOrders.find((order) => order.id === id || order.dbId === id) || null;
 }
 
 function renderWorkOrderSelectOption(value, label, activeValue) {
@@ -4320,8 +4341,8 @@ function renderWorkOrderProcessTimeline(order) {
 }
 
 function renderUrgentOrderBanner(order) {
-  const days = daysUntil(order.dueDate);
-  const shouldShow = order.priority === "high" || days <= 1 || days < 0;
+  const days = daysUntil(workOrderEffectiveDueDate(order));
+  const shouldShow = isUrgentWorkOrder(order) || days <= 1 || days < 0;
   if (!shouldShow || isArchivedWorkOrder(order) || !isOpenWorkOrder(order)) return "";
   const plan = urgentWorkOrderPlan({ category: order.category, brandId: order.brandId, priority: "high" });
   return `
@@ -4338,6 +4359,7 @@ function renderUrgentOrderBanner(order) {
         ${plan.candidate ? `<span class="badge">${escapeHtml(plan.candidate.name)} · ${escapeHtml(workloadLabelForUser(plan.candidate.id))}</span>` : ""}
         ${canManageWorkOrders() ? `<button class="button-danger small" data-action="apply-urgent-workload-plan" data-id="${order.id}">Aplicar plan sugerido</button>` : ""}
         ${canManageWorkOrders() ? `<button class="button small" data-action="send-urgent-alert" data-id="${order.id}">Enviar alerta urgente</button>` : ""}
+        ${canManageWorkOrders() ? `<button class="button-ghost small" data-action="${isUrgentWorkOrder(order) ? "unmark-work-order-urgent" : "mark-work-order-urgent"}" data-id="${order.id}">${isUrgentWorkOrder(order) ? "Quitar urgencia" : "Marcar urgencia"}</button>` : ""}
       </div>
     </div>
   `;
@@ -4616,6 +4638,7 @@ function renderWorkOrderDetailPanel(order) {
           <div class="row wrap">
             <span class="badge">${escapeHtml(order.id)}</span>
             <span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>
+            ${isUrgentWorkOrder(order) ? `<span class="badge red">Urgente</span>` : ""}
             <span class="badge ${order.priority === "high" ? "red" : order.priority === "medium" ? "amber" : "green"}">${escapeHtml(workOrderPriorityLabels[order.priority] || order.priority)}</span>
           </div>
           <h2 class="section-title">${escapeHtml(order.title)}</h2>
@@ -4623,6 +4646,7 @@ function renderWorkOrderDetailPanel(order) {
         </div>
         <div class="row wrap">
           ${canManage ? `<button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>` : ""}
+          ${canManage && !archived ? `<button class="${isUrgentWorkOrder(order) ? "button-ghost" : "button-danger"} small" data-action="${isUrgentWorkOrder(order) ? "unmark-work-order-urgent" : "mark-work-order-urgent"}" data-id="${order.id}">${isUrgentWorkOrder(order) ? "Quitar urgencia" : "Marcar urgencia"}</button>` : ""}
           ${
             canArchive
               ? archived
@@ -4760,7 +4784,7 @@ function renderWorkOrderStatusSelect(order) {
 
 function workOrderMatchesQuickFilter(order, filter) {
   if (!filter) return true;
-  const dueDays = daysUntil(order.dueDate);
+  const dueDays = daysUntil(workOrderEffectiveDueDate(order));
   const hasAssignee = orderAssignees(order).length > 0;
   if (filter === "archived") return isArchivedWorkOrder(order);
   if (filter === "new") return order.status === "new";
@@ -4771,6 +4795,7 @@ function workOrderMatchesQuickFilter(order, filter) {
   if (filter === "unassigned") return isOpenWorkOrder(order) && !hasAssignee;
   if (filter === "review") return order.status === "in_review";
   if (filter === "high") return order.priority === "high";
+  if (filter === "urgent") return isOpenWorkOrder(order) && isUrgentWorkOrder(order);
   return true;
 }
 
@@ -4876,6 +4901,7 @@ function renderWorkOrderFilters(allBrands) {
       </div>
       <div class="quick-chip-row">
         ${renderQuickFilterChip("critical", "Críticas")}
+        ${renderQuickFilterChip("urgent", "Urgentes")}
         ${renderQuickFilterChip("overdue", "Vencidas")}
         ${renderQuickFilterChip("unassigned", "Sin responsable")}
         ${renderQuickFilterChip("review", "En revisión")}
@@ -4894,7 +4920,7 @@ function sortOperationalOrders(orders) {
     if (scoreDiff) return scoreDiff;
     const openDiff = Number(isOpenWorkOrder(b)) - Number(isOpenWorkOrder(a));
     if (openDiff) return openDiff;
-    return daysUntil(a.dueDate) - daysUntil(b.dueDate);
+    return daysUntil(workOrderEffectiveDueDate(a)) - daysUntil(workOrderEffectiveDueDate(b));
   });
 }
 
@@ -4908,8 +4934,8 @@ function buildPriorityWorkOrderGroups(orders) {
   const sorted = sortOperationalOrders(orders);
   const usedIds = new Set();
   const critical = takeWorkOrderGroup(sorted, usedIds, (order) => {
-    const dueDays = daysUntil(order.dueDate);
-    return isOpenWorkOrder(order) && (dueDays < 0 || dueDays <= 1 || order.priority === "high");
+    const dueDays = daysUntil(workOrderEffectiveDueDate(order));
+    return isOpenWorkOrder(order) && (dueDays < 0 || dueDays <= 1 || isUrgentWorkOrder(order));
   });
   const unassigned = takeWorkOrderGroup(sorted, usedIds, (order) => isOpenWorkOrder(order) && !orderAssignees(order).length);
   const review = takeWorkOrderGroup(sorted, usedIds, (order) => order.status === "in_review");
@@ -5276,7 +5302,7 @@ function renderOrderCard(order) {
     <div class="mini-card ${isFocused ? "focused-card" : ""}" data-order-card="${escapeHtml(order.id)}">
       <div class="row between">
         <span class="badge">${order.id}</span>
-        <span class="badge ${order.priority === "high" ? "red" : order.priority === "medium" ? "amber" : "green"}">${workOrderPriorityLabels[order.priority] || order.priority}</span>
+        <span class="badge ${isUrgentWorkOrder(order) ? "red" : order.priority === "high" ? "red" : order.priority === "medium" ? "amber" : "green"}">${isUrgentWorkOrder(order) ? "Urgente" : workOrderPriorityLabels[order.priority] || order.priority}</span>
       </div>
       <strong>${order.title}</strong>
       <span class="muted">${assignees.map((userId) => userName(userId)).join(", ") || "Sin asignar"} / ${formatDate(order.dueDate)}</span>
@@ -5355,12 +5381,13 @@ function renderOrderCard(order) {
           canManage
             ? `
               <button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>
+              <button class="${isUrgentWorkOrder(order) ? "button-ghost" : "button-danger"} small" data-action="${isUrgentWorkOrder(order) ? "unmark-work-order-urgent" : "mark-work-order-urgent"}" data-id="${order.id}">${isUrgentWorkOrder(order) ? "Quitar urgencia" : "Marcar urgencia"}</button>
               ${
                 nextStatus
                   ? `<button class="button-ghost small" data-action="advance-order" data-id="${order.id}">Avanzar a ${workOrderStatusLabels[nextStatus]}</button>`
                   : ""
               }
-              <button class="button-danger small" data-action="send-urgent-alert" data-id="${order.id}">Alerta urgente</button>
+              <button class="button-danger small" data-action="send-urgent-alert" data-id="${order.id}">Enviar alerta</button>
             `
             : ""
         }
@@ -7325,6 +7352,25 @@ function closeCreateWorkOrder() {
   render();
 }
 
+function captureFormScrollPosition() {
+  const modal = document.querySelector(".work-order-create-modal");
+  return {
+    modalTop: modal ? modal.scrollTop : null,
+    windowTop: window.scrollY,
+  };
+}
+
+function restoreFormScrollPosition(position) {
+  window.requestAnimationFrame(() => {
+    const modal = document.querySelector(".work-order-create-modal");
+    if (modal && position?.modalTop !== null) {
+      modal.scrollTop = position.modalTop;
+      return;
+    }
+    if (position) window.scrollTo({ top: position.windowTop || 0, behavior: "auto" });
+  });
+}
+
 function clearWorkOrderFilters() {
   state.workOrderFilters = { search: "", assignee: "", status: "", priority: "", due: "", quick: "" };
   state.showArchivedWorkOrders = false;
@@ -7336,6 +7382,7 @@ function syncDraftPhasesFromForm() {
 }
 
 function addWorkOrderPhase() {
+  const scrollPosition = captureFormScrollPosition();
   syncWorkOrderFormDraftFromForm();
   state.workOrderUsesPhases = true;
   state.workOrderDraftPhases.push(
@@ -7353,9 +7400,11 @@ function addWorkOrderPhase() {
     ),
   );
   render();
+  restoreFormScrollPosition(scrollPosition);
 }
 
 function removeWorkOrderPhase(index) {
+  const scrollPosition = captureFormScrollPosition();
   syncWorkOrderFormDraftFromForm();
   state.workOrderDraftPhases.splice(Number(index), 1);
   state.workOrderDraftPhases = normalizeWorkOrderPhases(state.workOrderDraftPhases).map((phase, phaseIndex) => ({
@@ -7363,6 +7412,7 @@ function removeWorkOrderPhase(index) {
     sortOrder: phaseIndex,
   }));
   render();
+  restoreFormScrollPosition(scrollPosition);
 }
 
 function focusUrgentOrders() {
@@ -7481,6 +7531,8 @@ async function handleAction(action, id) {
     "open-work-order-file": () => openWorkOrderFile(id),
     "delete-work-order-file": () => deleteWorkOrderFile(id),
     "send-urgent-alert": () => sendUrgentWorkOrderAlert(id),
+    "mark-work-order-urgent": () => toggleWorkOrderUrgency(id, true),
+    "unmark-work-order-urgent": () => toggleWorkOrderUrgency(id, false),
     "apply-urgent-workload-plan": () => applyUrgentWorkloadPlan(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
     "queue-daily-digest": () => queueDailyDigest(),
@@ -7519,10 +7571,24 @@ async function loginWithPassword() {
   dataState.loading = true;
   dataState.error = "";
   render();
-  const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
   if (error) {
     dataState.loading = false;
     dataState.error = error.message;
+    render();
+    return;
+  }
+  try {
+    dataState.session = data?.session || (await supabaseClient.auth.getSession()).data?.session || null;
+    if (dataState.session) {
+      await loadSupabaseData();
+      applyInitialRouteParams();
+    }
+    dataState.error = "";
+  } catch (loadError) {
+    dataState.error = loadError.message || "No se pudo cargar tu perfil";
+  } finally {
+    dataState.loading = false;
     render();
   }
 }
@@ -8620,15 +8686,68 @@ async function sendUrgentWorkOrderAlert(id) {
   showToast(`Alerta urgente lista para ${recipients.length} persona(s)`);
 }
 
+async function toggleWorkOrderUrgency(id, isUrgent) {
+  if (!canManageWorkOrders()) {
+    showToast("Solo gestión puede marcar urgencias");
+    return;
+  }
+  const order = findWorkOrderByAnyId(id);
+  if (!order) {
+    showToast("No encontre esa OT");
+    return;
+  }
+  if (isArchivedWorkOrder(order)) {
+    showToast("No se puede cambiar urgencia en una OT archivada");
+    return;
+  }
+
+  if (isSupabaseMode()) {
+    if (!order.dbId) {
+      showToast("Esta OT no tiene ID de Supabase");
+      return;
+    }
+    const { error } = await supabaseClient
+      .from("work_orders")
+      .update({ is_urgent: isUrgent, updated_at: new Date().toISOString() })
+      .eq("id", order.dbId);
+    if (error) {
+      const message = error.message || "";
+      if (message.includes("is_urgent") || message.includes("schema cache")) {
+        showToast("Falta activar urgencias en Supabase: ejecuta supabase/patch_work_order_urgency.sql");
+      } else {
+        showToast(`No se pudo actualizar urgencia: ${message}`);
+      }
+      return;
+    }
+    await supabaseClient.from("work_order_activity").insert({
+      work_order_id: order.dbId,
+      actor_id: dataState.session?.user?.id,
+      action: isUrgent ? "marked_urgent" : "unmarked_urgent",
+      details: { is_urgent: isUrgent },
+    });
+    await loadSupabaseData();
+  } else {
+    order.isUrgent = isUrgent;
+    order.updatedAt = new Date().toISOString();
+    saveWorkOrders();
+  }
+
+  state.viewingWorkOrderId = order.id;
+  state.focusedWorkOrderId = order.id;
+  showToast(isUrgent ? "OT marcada como urgencia" : "Urgencia quitada");
+  render();
+}
+
 function viewWorkOrder(id) {
-  const order = workOrders.find((candidate) => candidate.id === id);
+  const order = findWorkOrderByAnyId(id);
   if (!order) {
     showToast("No encontre esa OT");
     return;
   }
   state.currentModule = "work-orders";
-  state.viewingWorkOrderId = id;
-  state.focusedWorkOrderId = id;
+  state.viewingWorkOrderId = order.id;
+  state.focusedWorkOrderId = order.id;
+  state.creatingWorkOrder = false;
   render();
 }
 
@@ -9118,7 +9237,7 @@ async function applyUrgentWorkloadPlan(id) {
     ? Array.from(new Set([...currentAssignees, plan.candidate.id]))
     : currentAssignees;
   const changes = [
-    `Prioridad marcada como Alta`,
+    `Urgencia marcada en la OT`,
     `Deadline sugerido segun tareas: ${formatDate(order.dueDate)} -> ${formatDate(plan.dueDate)}`,
   ];
   if (plan.candidate && !currentAssignees.includes(plan.candidate.id)) {
@@ -9132,10 +9251,15 @@ async function applyUrgentWorkloadPlan(id) {
     }
     const { error } = await supabaseClient
       .from("work_orders")
-      .update({ priority: "high", due_date: plan.dueDate, updated_at: new Date().toISOString() })
+      .update({ is_urgent: true, due_date: plan.dueDate, updated_at: new Date().toISOString() })
       .eq("id", order.dbId);
     if (error) {
-      showToast(`No se pudo aplicar plan urgente: ${error.message}`);
+      const message = error.message || "";
+      if (message.includes("is_urgent") || message.includes("schema cache")) {
+        showToast("Falta activar urgencias en Supabase: ejecuta supabase/patch_work_order_urgency.sql");
+      } else {
+        showToast(`No se pudo aplicar plan urgente: ${message}`);
+      }
       return;
     }
     const addedAssignees = nextAssignees.filter((userId) => !currentAssignees.includes(userId));
@@ -9151,7 +9275,7 @@ async function applyUrgentWorkloadPlan(id) {
         showToast(`Plan aplicado, pero fallo responsable sugerido: ${assigneeError.message}`);
       }
     }
-    const updatedOrderForEmail = { ...order, priority: "high", dueDate: plan.dueDate, assignees: nextAssignees };
+    const updatedOrderForEmail = { ...order, isUrgent: true, dueDate: plan.dueDate, assignees: nextAssignees };
     await supabaseClient.from("work_order_activity").insert({
       work_order_id: order.dbId,
       actor_id: dataState.session?.user?.id,
@@ -9161,7 +9285,7 @@ async function applyUrgentWorkloadPlan(id) {
     await queueWorkOrderUpdateEmails(updatedOrderForEmail, changes, 0, nextAssignees);
     await loadSupabaseData();
   } else {
-    order.priority = "high";
+    order.isUrgent = true;
     order.dueDate = plan.dueDate;
     order.assignees = nextAssignees;
     order.assignee = nextAssignees[0] || order.assignee;
