@@ -172,7 +172,7 @@ Las ordenes nuevas deben usar codigo corto por marca, sin prefijo `OT`:
 ## Notificaciones: regla de piloto
 
 - Creacion manual de OT: creador + participantes generales seleccionados + responsables de fases asignadas.
-- Fase completada: creador + participantes generales seleccionados + responsable de la siguiente fase, deduplicados y sin incluir al usuario que completo la fase.
+- Fase completada: creador + participantes generales seleccionados + responsable de la siguiente fase, deduplicados. Si no hay otros destinatarios relacionados, se usa como fallback al usuario que completo la fase para no perder trazabilidad.
 - Cambio rutinario de OT: agrupado preferiblemente en digest diario.
 - Urgencia: responsables involucrados + destinatarios fijos de marca si existen.
 - Resumen diario: cada usuario recibe solo actividad de OTs donde sea creador, responsable general o responsable de fase.

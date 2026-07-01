@@ -860,6 +860,8 @@ const state = {
   focusedWorkOrderId: "",
   creatingWorkOrder: false,
   workOrderDraftPhases: [],
+  workOrderFormDraft: null,
+  workOrderUsesPhases: true,
   dashboardSearch: "",
   dashboardMonth: "",
   workOrderMonth: "",
@@ -1632,6 +1634,15 @@ function brandEmailRecipientUsers(brandId, fallbackUserIds = [], options = {}) {
   const fallbackRecipients = internalUsers().filter((user) => fallbackUserIds.includes(user.id) && user.email);
   const recipients = new Map();
   [...configuredRecipients, ...fallbackRecipients].forEach((user) => recipients.set(user.id, user));
+  return [...recipients.values()];
+}
+
+function dedupeUsersByEmail(recipientUsers = []) {
+  const recipients = new Map();
+  recipientUsers.forEach((user) => {
+    const email = String(user.email || "").trim().toLowerCase();
+    if (email && !recipients.has(email)) recipients.set(email, user);
+  });
   return [...recipients.values()];
 }
 
@@ -3621,7 +3632,9 @@ function renderWorkOrderPhaseEditorRow(phase, index) {
   `;
 }
 
-function renderWorkOrderPhasesEditor(phases = []) {
+function renderWorkOrderPhasesEditor(phases = [], options = {}) {
+  const usesPhases = options.usesPhases !== false;
+  const allowDisable = options.allowDisable !== false;
   const normalized = normalizeWorkOrderPhases(phases);
   return `
     <div class="field full">
@@ -3630,15 +3643,31 @@ function renderWorkOrderPhasesEditor(phases = []) {
           <label>Fases internas</label>
           <div class="field-help">La OT sigue siendo una sola solicitud. Usa fases solo para responsable, deadline y estado interno.</div>
         </div>
-        <button class="button-ghost small" type="button" data-action="add-work-order-phase">Agregar fase</button>
+        ${usesPhases ? `<button class="button-ghost small" type="button" data-action="add-work-order-phase">Agregar fase</button>` : ""}
       </div>
-      <div class="phase-editor-list">
-        ${
-          normalized.length
-            ? normalized.map(renderWorkOrderPhaseEditorRow).join("")
-            : `<div class="empty compact-empty">Sin fases internas. Puedes agregar solo las fases que esta OT necesita.</div>`
-        }
-      </div>
+      ${
+        allowDisable
+          ? `
+            <label class="checkbox-line phase-toggle-line">
+              <input id="ot-use-phases" type="checkbox" ${usesPhases ? "checked" : ""} />
+              Usar fases en esta orden
+            </label>
+          `
+          : ""
+      }
+      ${
+        usesPhases
+          ? `
+            <div class="phase-editor-list">
+              ${
+                normalized.length
+                  ? normalized.map(renderWorkOrderPhaseEditorRow).join("")
+                  : `<div class="empty compact-empty">Sin fases internas. Puedes agregar solo las fases que esta OT necesita.</div>`
+              }
+            </div>
+          `
+          : `<div class="empty compact-empty">Puedes crear esta orden sin fases y agregarlas después si las necesitas.</div>`
+      }
     </div>
   `;
 }
@@ -3651,7 +3680,7 @@ function renderWorkOrderPhaseProgress(order) {
         <div class="section-header compact">
           <div>
             <h3 class="section-title">Fases internas</h3>
-            <div class="small-muted">Esta OT aún no tiene fases configuradas. Edita la orden para agregar Brief, Creatividad, Producción u otras fases necesarias.</div>
+            <div class="small-muted">Esta orden no tiene fases. Puedes agregarlas después si la solicitud lo necesita.</div>
           </div>
           <span class="badge">Sin fases</span>
         </div>
@@ -4064,6 +4093,46 @@ function renderWorkOrderStageControl(order) {
   `;
 }
 
+function selectedWorkOrderAssigneeIdsFromForm() {
+  const assigneeCheckboxes = Array.from(document.querySelectorAll("[data-ot-assignee]:checked"));
+  const assigneeSelect = document.getElementById("ot-assignees");
+  if (assigneeCheckboxes.length) return assigneeCheckboxes.map((input) => input.value);
+  if (assigneeSelect) return Array.from(assigneeSelect.selectedOptions).map((option) => option.value);
+  return [];
+}
+
+function readWorkOrderFormDraftFromDom() {
+  const usePhasesInput = document.getElementById("ot-use-phases");
+  const artCountInput = document.getElementById("ot-art-count");
+  return {
+    title: document.getElementById("ot-title")?.value || "",
+    assignees: selectedWorkOrderAssigneeIdsFromForm(),
+    dueDate: document.getElementById("ot-due-date")?.value || "",
+    priority: document.getElementById("ot-priority")?.value || "medium",
+    status: document.getElementById("ot-status")?.value || "new",
+    category: document.getElementById("ot-category")?.value || "diseno",
+    artCount: artCountInput ? artCountInput.value : "",
+    description: document.getElementById("ot-description")?.value || "",
+    subtasks: document.getElementById("ot-subtasks")?.value || "",
+    materialChanges: document.getElementById("ot-material-changes")?.value || "",
+    notifyOnEmail: document.getElementById("ot-email")?.checked ?? true,
+    usesPhases: usePhasesInput ? usePhasesInput.checked : state.workOrderUsesPhases !== false,
+  };
+}
+
+function syncWorkOrderFormDraftFromForm() {
+  if (!document.getElementById("ot-title")) return;
+  const draft = readWorkOrderFormDraftFromDom();
+  state.workOrderFormDraft = draft;
+  state.workOrderUsesPhases = draft.usesPhases;
+  state.workOrderDraftPhases = draft.usesPhases ? getWorkOrderPhaseFormValues() : [];
+}
+
+function resetWorkOrderFormDraft() {
+  state.workOrderFormDraft = null;
+  state.workOrderUsesPhases = true;
+}
+
 function renderWorkOrderForm(order = null) {
   const isEditing = Boolean(order);
   const canUseForm = isEditing ? canManageWorkOrders() : canCreateWorkOrders();
@@ -4083,28 +4152,31 @@ function renderWorkOrderForm(order = null) {
       </div>
     `;
   }
-  const selectedAssignees = new Set(isEditing ? orderAssignees(order) : []);
+  const draft = state.workOrderFormDraft;
+  const selectedAssignees = new Set(
+    Array.isArray(draft?.assignees) ? draft.assignees : isEditing ? orderAssignees(order) : [],
+  );
   const parsedDescription = splitWorkOrderDescription(order?.description || "");
   const availableUsers = availableWorkOrderAssigneeUsers(selectedAssignees);
   const selectedUsers = availableUsers.filter((user) => selectedAssignees.has(user.id));
   const files = isEditing ? orderFiles(order) : [];
-  const formPhases = state.workOrderDraftPhases.length
-    ? normalizeWorkOrderPhases(state.workOrderDraftPhases)
-    : isEditing
-      ? workOrderPhases(order)
-      : defaultWorkOrderPhases();
-  const titleValue = isEditing ? order.title : "";
-  const descriptionValue = isEditing
-    ? parsedDescription.description || ""
-    : "Contexto, entregable esperado y criterios de aprobación.";
-  const subtasksValue = parsedDescription.subtasks.join("\n");
-  const materialChangesValue = parsedDescription.materialChanges.join("\n");
-  const dueDateValue = isEditing ? order.dueDate || "" : "2026-05-08";
-  const priorityValue = isEditing ? order.priority : "medium";
-  const statusValue = isEditing ? order.status : "new";
-  const categoryValue = isEditing ? order.category : "diseno";
-  const artCountValue = isEditing && order.artCount !== null && order.artCount !== undefined ? String(order.artCount) : "";
-  const notifyOnEmail = isEditing ? order.notifyOnEmail !== false : true;
+  const usesPhases = isEditing ? true : state.workOrderUsesPhases !== false;
+  const fallbackPhases = isEditing ? workOrderPhases(order) : defaultWorkOrderPhases();
+  const formPhases = usesPhases
+    ? state.workOrderDraftPhases.length
+      ? normalizeWorkOrderPhases(state.workOrderDraftPhases)
+      : fallbackPhases
+    : [];
+  const titleValue = draft?.title ?? (isEditing ? order.title : "");
+  const descriptionValue = draft?.description ?? (isEditing ? parsedDescription.description || "" : "Contexto, entregable esperado y criterios de aprobación.");
+  const subtasksValue = draft?.subtasks ?? parsedDescription.subtasks.join("\n");
+  const materialChangesValue = draft?.materialChanges ?? parsedDescription.materialChanges.join("\n");
+  const dueDateValue = draft?.dueDate ?? (isEditing ? order.dueDate || "" : "");
+  const priorityValue = draft?.priority ?? (isEditing ? order.priority : "medium");
+  const statusValue = draft?.status ?? (isEditing ? order.status : "new");
+  const categoryValue = draft?.category ?? (isEditing ? order.category : "diseno");
+  const artCountValue = draft?.artCount ?? (isEditing && order.artCount !== null && order.artCount !== undefined ? String(order.artCount) : "");
+  const notifyOnEmail = draft?.notifyOnEmail ?? (isEditing ? order.notifyOnEmail !== false : true);
   const emailRecipientSummary = brandEmailRecipientSummary(state.currentBrandId, Array.from(selectedAssignees));
 
   return `
@@ -4214,7 +4286,7 @@ function renderWorkOrderForm(order = null) {
           <textarea class="textarea compact-textarea" id="ot-material-changes" placeholder="Una solicitud o cambio por linea">${escapeHtml(materialChangesValue)}</textarea>
           <div class="field-help">Usalo para ajustes de arte, copy, formatos o piezas faltantes.</div>
         </div>
-        ${renderWorkOrderPhasesEditor(formPhases)}
+        ${renderWorkOrderPhasesEditor(formPhases, { usesPhases, allowDisable: !isEditing })}
         ${
           files.length
             ? `
@@ -6563,6 +6635,7 @@ function bindEvents() {
         state.viewingWorkOrderId = "";
         state.focusedWorkOrderId = "";
         state.workOrderDraftPhases = [];
+        resetWorkOrderFormDraft();
       }
       render();
     });
@@ -6575,6 +6648,7 @@ function bindEvents() {
       state.viewingWorkOrderId = "";
       state.focusedWorkOrderId = "";
       state.workOrderDraftPhases = [];
+      resetWorkOrderFormDraft();
       const firstContent = brandItems(event.target.value)[0];
       state.selectedContentId = firstContent?.id || null;
       render();
@@ -6608,6 +6682,8 @@ function bindEvents() {
       state.currentBrandId = button.dataset.brandJump;
       state.editingWorkOrderId = "";
       state.viewingWorkOrderId = "";
+      state.workOrderDraftPhases = [];
+      resetWorkOrderFormDraft();
       const firstContent = brandItems(state.currentBrandId)[0];
       state.selectedContentId = firstContent?.id || null;
       render();
@@ -6667,6 +6743,15 @@ function bindEvents() {
 
   document.querySelectorAll("[data-ot-assignee]").forEach((input) => {
     input.addEventListener("change", refreshAssigneeSelectedList);
+  });
+
+  document.getElementById("ot-use-phases")?.addEventListener("change", (event) => {
+    syncWorkOrderFormDraftFromForm();
+    state.workOrderUsesPhases = event.target.checked;
+    if (state.workOrderUsesPhases && !state.workOrderDraftPhases.length) {
+      state.workOrderDraftPhases = defaultWorkOrderPhases({ dueDate: document.getElementById("ot-due-date")?.value || "" });
+    }
+    render();
   });
 
   ["ot-category", "ot-priority"].forEach((fieldId) => {
@@ -6831,7 +6916,9 @@ function openCreateWorkOrder() {
   state.editingWorkOrderId = "";
   state.viewingWorkOrderId = "";
   state.focusedWorkOrderId = "";
+  resetWorkOrderFormDraft();
   state.workOrderDraftPhases = defaultWorkOrderPhases();
+  state.workOrderUsesPhases = true;
   state.creatingWorkOrder = true;
   render();
   window.setTimeout(() => focusWorkOrderAi(), 0);
@@ -6844,11 +6931,12 @@ function clearWorkOrderFilters() {
 }
 
 function syncDraftPhasesFromForm() {
-  state.workOrderDraftPhases = getWorkOrderPhaseFormValues();
+  syncWorkOrderFormDraftFromForm();
 }
 
 function addWorkOrderPhase() {
-  syncDraftPhasesFromForm();
+  syncWorkOrderFormDraftFromForm();
+  state.workOrderUsesPhases = true;
   state.workOrderDraftPhases.push(
     normalizedPhaseFromValues(
       {
@@ -6867,7 +6955,7 @@ function addWorkOrderPhase() {
 }
 
 function removeWorkOrderPhase(index) {
-  syncDraftPhasesFromForm();
+  syncWorkOrderFormDraftFromForm();
   state.workOrderDraftPhases.splice(Number(index), 1);
   state.workOrderDraftPhases = normalizeWorkOrderPhases(state.workOrderDraftPhases).map((phase, phaseIndex) => ({
     ...phase,
@@ -7298,13 +7386,7 @@ function addContentComment(id) {
 
 function getWorkOrderFormValues() {
   const title = document.getElementById("ot-title")?.value.trim() || "";
-  const assigneeCheckboxes = Array.from(document.querySelectorAll("[data-ot-assignee]:checked"));
-  const assigneeSelect = document.getElementById("ot-assignees");
-  const assignees = assigneeCheckboxes.length
-    ? assigneeCheckboxes.map((input) => input.value)
-    : assigneeSelect
-      ? Array.from(assigneeSelect.selectedOptions).map((option) => option.value)
-      : [];
+  const assignees = selectedWorkOrderAssigneeIdsFromForm();
   const dueDate = document.getElementById("ot-due-date")?.value || "";
   const priority = document.getElementById("ot-priority")?.value || "medium";
   const status = document.getElementById("ot-status")?.value || "new";
@@ -7323,7 +7405,9 @@ function getWorkOrderFormValues() {
     size: file.size,
     type: file.type || "application/octet-stream",
   }));
-  const phases = getWorkOrderPhaseFormValues();
+  const usePhasesInput = document.getElementById("ot-use-phases");
+  const usesPhases = usePhasesInput ? usePhasesInput.checked : true;
+  const phases = usesPhases ? getWorkOrderPhaseFormValues() : [];
   return {
     title,
     assignees,
@@ -7338,6 +7422,7 @@ function getWorkOrderFormValues() {
     notifyOnEmail,
     fileUploads,
     files,
+    usesPhases,
     phases,
   };
 }
@@ -7675,13 +7760,27 @@ async function queuePhaseCompletedEmail(order, phase) {
   if (!isSupabaseMode() || !order?.dbId || order.notifyOnEmail === false) return { count: 0, error: null };
   const currentUserId = dataState.session?.user?.id || "";
   const nextPhase = nextWorkOrderPhase(order, phase);
-  const recipientIds = uniqueUserIds([
+  let recipientIds = uniqueUserIds([
     order.createdBy,
     ...orderAssignees(order),
     nextPhase?.assignedTo,
   ]).filter((userId) => userId && userId !== currentUserId);
-  const recipients = brandEmailRecipientUsers(order.brandId, recipientIds);
-  if (!recipients.length) return { count: 0, error: null };
+  if (!recipientIds.length && currentUserId) {
+    recipientIds = [currentUserId];
+    console.warn("phase_completed sin otros destinatarios relacionados; se encolara al usuario que completo la fase.", {
+      workOrderId: order.id,
+      phaseId: phase.id,
+    });
+  }
+  const recipients = dedupeUsersByEmail(brandEmailRecipientUsers(order.brandId, recipientIds));
+  if (!recipients.length) {
+    console.warn("phase_completed no se pudo encolar: no hay destinatarios con email.", {
+      workOrderId: order.id,
+      phaseId: phase.id,
+      recipientIds,
+    });
+    return { count: 0, error: null };
+  }
 
   const htmlBody = buildPhaseCompletedEmail({
     order,
@@ -7702,6 +7801,13 @@ async function queuePhaseCompletedEmail(order, phase) {
       scheduled_for: new Date().toISOString(),
     })),
   );
+  if (error) {
+    console.warn("No se pudo encolar email phase_completed.", {
+      workOrderId: order.id,
+      phaseId: phase.id,
+      message: error.message,
+    });
+  }
   return { count: recipients.length, error };
 }
 
@@ -7969,9 +8075,13 @@ async function createWorkOrderFromForm() {
     }
 
     const uploadedCount = await uploadWorkOrderFiles(insertedOrder.id, state.currentBrandId, values.fileUploads);
-    const { error: phasesError } = await replaceSupabaseWorkOrderPhases(insertedOrder.id, values.phases);
+    let phasesError = null;
+    if (values.phases.length) {
+      const result = await replaceSupabaseWorkOrderPhases(insertedOrder.id, values.phases);
+      phasesError = result.error;
+    }
     if (phasesError) {
-      showToast(`OT creada, pero falta activar guardado seguro de fases: ejecuta supabase/patch_work_order_phase_safe_save.sql`);
+      showToast("OT creada, pero falta activar guardado seguro de fases: ejecuta supabase/patch_work_order_phase_safe_save.sql");
     }
 
     await supabaseClient.from("work_order_activity").insert({
@@ -8015,6 +8125,7 @@ async function createWorkOrderFromForm() {
     await loadSupabaseData();
     state.creatingWorkOrder = false;
     state.workOrderDraftPhases = [];
+    resetWorkOrderFormDraft();
     showToast(`OT creada en Supabase: ${code}`);
     render();
     return;
@@ -8027,7 +8138,7 @@ async function createWorkOrderFromForm() {
     status: values.status,
     priority: values.priority,
     category: values.category,
-    dueDate: values.dueDate || "2026-05-08",
+    dueDate: values.dueDate || "",
     assignee: values.assignees[0],
     assignees: values.assignees,
     description: values.description,
@@ -8043,6 +8154,7 @@ async function createWorkOrderFromForm() {
   saveWorkOrders();
   state.creatingWorkOrder = false;
   state.workOrderDraftPhases = [];
+  resetWorkOrderFormDraft();
   showToast(`OT creada y ${values.notifyOnEmail ? "email preparado" : "sin email"}`);
   render();
 }
@@ -8127,6 +8239,8 @@ function editWorkOrder(id) {
   state.viewingWorkOrderId = id;
   state.focusedWorkOrderId = id;
   state.workOrderDraftPhases = workOrderPhases(order);
+  state.workOrderUsesPhases = true;
+  state.workOrderFormDraft = null;
   showToast(`Editando ${id}`);
   render();
 }
@@ -8134,6 +8248,7 @@ function editWorkOrder(id) {
 function cancelEditWorkOrder() {
   state.editingWorkOrderId = "";
   state.workOrderDraftPhases = [];
+  resetWorkOrderFormDraft();
   showToast("Edicion cancelada");
   render();
 }
@@ -8253,6 +8368,7 @@ async function updateWorkOrderFromForm() {
     await loadSupabaseData();
     state.editingWorkOrderId = "";
     state.workOrderDraftPhases = [];
+    resetWorkOrderFormDraft();
     showToast(`${order.id} actualizada`);
     render();
     return;
@@ -8279,6 +8395,7 @@ async function updateWorkOrderFromForm() {
   saveWorkOrders();
   state.editingWorkOrderId = "";
   state.workOrderDraftPhases = [];
+  resetWorkOrderFormDraft();
   showToast(`${order.id} actualizada`);
   render();
 }

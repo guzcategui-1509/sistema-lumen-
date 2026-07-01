@@ -53,6 +53,8 @@ WITH CHECK (
         )
       )
       AND (
+        email_notifications.recipient_user_id = auth.uid()
+        OR
         email_notifications.recipient_user_id = wo.created_by
         OR EXISTS (
           SELECT 1

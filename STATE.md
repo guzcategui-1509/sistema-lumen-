@@ -1,5 +1,26 @@
 # Lumen Workspace State
 
+## 2026-07-01
+
+### Cambio: fixes puntuales pre-piloto en creación de OT y fases
+- Se corrigió el formulario de creación/edición para conservar título, marca, deadline, cantidad de artes, descripción, responsables y fases cuando se agrega/quita una fase o se re-renderiza la sección.
+- Se eliminó el default hardcodeado `2026-05-08` del formulario de creación; el deadline nuevo queda vacío hasta que el usuario lo elija.
+- Se agregó el control `Usar fases en esta orden` al crear OT. Si se desactiva, la orden se crea sin insertar filas en `work_order_phases`.
+- En el detalle, las órdenes sin fases muestran un estado vacío claro: `Esta orden no tiene fases`.
+- Al completar una fase, `phase_completed` ahora deja trazabilidad en consola si no encuentra destinatarios; si el usuario que completa la fase es el único relacionado, encola el email para ese usuario para no perder el evento.
+- `supabase/patch_phase_completed_notifications.sql` se ajustó para permitir ese fallback acotado con `recipient_user_id = auth.uid()` sin abrir permisos globales.
+
+### Pendiente para activar/probar en Supabase
+1. Ejecutar o re-ejecutar `supabase/patch_phase_completed_notifications.sql` para actualizar la policy de inserción de `phase_completed`.
+2. Crear una OT con fases activadas y confirmar que se insertan las fases oficiales.
+3. Crear una OT con `Usar fases en esta orden` apagado y confirmar que no hay filas en `work_order_phases`.
+4. Completar una fase y confirmar un registro en `email_notifications` con `notification_type = phase_completed`.
+5. Confirmar que no se notifica a dirección/jefatura por defecto y que no hay correos duplicados.
+
+### Checks
+- `npm run check` pasó.
+- `git diff --check` pasó.
+
 ## 2026-06-30
 
 ### Cambio: nomenclatura de OTs por marca
@@ -27,7 +48,7 @@
 - Se creó `supabase/patch_work_order_design_phase.sql`; no inserta fases masivamente en órdenes existentes.
 - Se agregó `art_count` como dato informativo opcional en creación, edición y detalle de OT.
 - Se creó `supabase/patch_work_order_art_count.sql`; la columna queda nullable, entera y no negativa.
-- Al completar una fase en Supabase, la app encola emails `phase_completed` para creador, participantes explícitos y responsable de la siguiente fase, deduplicados y sin incluir al usuario que completó la fase.
+- Al completar una fase en Supabase, la app encola emails `phase_completed` para creador, participantes explícitos y responsable de la siguiente fase, deduplicados; si no hay otros destinatarios relacionados, usa como fallback al usuario que completó la fase.
 - Se creó `supabase/patch_phase_completed_notifications.sql` para permitir el tipo/política de correo de fase completada.
 
 ### Auditoría final de pre-piloto
