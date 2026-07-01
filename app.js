@@ -4341,16 +4341,16 @@ function renderUrgentPlannerPanel(category = "diseno", priority = "medium") {
   return `
     <div class="urgent-planner-panel">
       <div>
-        <span class="badge red">Urgencias</span>
-        <h3>Planificador de tareas</h3>
-        <p class="muted">Si esta solicitud entra urgente, Lumen compara tareas abiertas, vencidas y revisión para sugerir persona y deadline.</p>
+        <span class="badge blue">Sugerencia de planificación</span>
+        <h3>Planificador de carga</h3>
+        <p class="muted">Lumen compara tareas abiertas, vencidas y en revisión para sugerir una persona y un deadline. Esto no marca la OT como urgente.</p>
       </div>
       <div class="urgent-plan-preview" id="urgent-plan-preview">
         <strong>${plan.candidate ? escapeHtml(plan.candidate.name) : "Pendiente de asignar"}</strong>
         <span>${escapeHtml(plan.reason)}</span>
-        <span class="badge ${priority === "high" ? "red" : "blue"}">Fecha sugerida: ${escapeHtml(formatDate(plan.dueDate))}</span>
+        <span class="badge blue">Fecha sugerida: ${escapeHtml(formatDate(plan.dueDate))}</span>
       </div>
-      <button class="button-ghost small" data-action="optimize-work-order-urgency">Aplicar sugerencia urgente</button>
+      <button class="button-ghost small" data-action="optimize-work-order-urgency">Aplicar sugerencia</button>
     </div>
   `;
 }
@@ -4684,6 +4684,13 @@ function renderWorkOrderDetailPanel(order) {
   const canArchive = canArchiveWorkOrders();
   const canUploadMaterials = canUploadWorkOrderMaterials(order);
   const archived = isArchivedWorkOrder(order);
+  debugInteraction("urgency-render", {
+    canManageUrgency: canManageUrgencyFlag,
+    archived,
+    isUrgent: isUrgentWorkOrder(order),
+    code: order.id,
+    id: order.dbId || order.id,
+  });
 
   return `
     <button class="drawer-backdrop" type="button" data-action="close-work-order-detail" aria-label="Cerrar detalle de OT"></button>
@@ -8071,7 +8078,7 @@ function fillWorkOrderWithAi(promptOverride = "") {
 
 function optimizeWorkOrderUrgency() {
   if (isAllBrandsScope()) {
-    showToast("Selecciona una marca para calcular prioridades urgentes");
+    showToast("Selecciona una marca para calcular la sugerencia de planificación");
     return;
   }
   const category = document.getElementById("ot-category")?.value || "diseno";
@@ -8080,7 +8087,7 @@ function optimizeWorkOrderUrgency() {
   const priorityInput = document.getElementById("ot-priority");
   const subtasksInput = document.getElementById("ot-subtasks");
   const existingTasks = parseListLines(subtasksInput?.value || "");
-  const urgentTask = "Confirmar prioridad urgente y fecha ideal segun tareas del equipo";
+  const urgentTask = "Confirmar fecha ideal segun tareas del equipo";
 
   if (dueDateInput) dueDateInput.value = plan.dueDate;
   if (priorityInput) priorityInput.value = "high";
@@ -8094,7 +8101,7 @@ function optimizeWorkOrderUrgency() {
     refreshAssigneeSelectedList();
   }
   refreshWorkOrderGuidancePanels();
-  showToast(plan.candidate ? `Sugerencia aplicada: ${plan.candidate.name} / ${formatDate(plan.dueDate)}` : "Fecha urgente sugerida; falta responsable disponible");
+  showToast(plan.candidate ? `Sugerencia aplicada: ${plan.candidate.name} / ${formatDate(plan.dueDate)}` : "Fecha sugerida; falta responsable disponible");
 }
 
 async function uploadWorkOrderFiles(orderDbId, brandId, fileUploads) {
