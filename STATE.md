@@ -2,6 +2,25 @@
 
 ## 2026-07-01
 
+### Cambio: estabilización UX pre-piloto
+- Se eliminó el toast de navegación `Abriendo ...` al abrir una OT para evitar mensajes flotantes espontáneos y códigos antiguos visibles.
+- La navegación operativa ahora incluye `Dashboard`, `Mis órdenes`, `Calendario` y `Perfil`; `Admin`, Equipo, Reportería y Notificaciones siguen fuera para roles operativos.
+- Se agregó una vista `Perfil` separada de `Admin`, con datos de sesión, rol, cambio de password, accesos básicos y cierre de sesión.
+- `Calendario` queda disponible para todos los roles. El botón `+ Crear OT` en calendario solo aparece para roles con permiso de creación.
+- `Crear OT` ahora abre un modal consistente desde todos los botones `+ Crear OT`; el formulario ya no queda incrustado en la página principal de OTs.
+- El modal tiene botón `×` y `Cancelar`, y al navegar fuera de OTs se cierra para evitar backdrops invisibles que bloqueen clicks.
+- Se creó `supabase/patch_archive_pre_pilot_test_orders.sql` con una consulta de revisión y un bloque de archivado comentado para OTs de prueba (`AUTO-%` o títulos con `prueba`). No se ejecutó ningún archivado.
+
+### Pendiente de validación manual
+1. Entrar como operativo y confirmar que puede hacer click en Dashboard, Mis órdenes, Calendario y Perfil.
+2. Confirmar que un operativo no ve Crear OT, IA, Equipo, Reportería, Notificaciones ni Admin.
+3. Entrar como cuentas/admin y confirmar que cualquier botón `+ Crear OT` abre el mismo modal.
+4. Cerrar el modal con `×` y `Cancelar`, y confirmar que no queda overlay bloqueando clicks.
+5. Abrir una OT desde Dashboard/Mis órdenes y confirmar que no aparece toast `Abriendo ...`.
+6. Ejecutar primero la consulta de revisión de `supabase/patch_archive_pre_pilot_test_orders.sql`; descomentar el archivado solo después de aprobar la lista.
+
+## 2026-07-01
+
 ### Cambio: fixes puntuales pre-piloto en creación de OT y fases
 - Se corrigió el formulario de creación/edición para conservar título, marca, deadline, cantidad de artes, descripción, responsables y fases cuando se agrega/quita una fase o se re-renderiza la sección.
 - Se eliminó el default hardcodeado `2026-05-08` del formulario de creación; el deadline nuevo queda vacío hasta que el usuario lo elija.

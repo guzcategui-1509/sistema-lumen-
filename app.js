@@ -13,6 +13,7 @@ const modules = [
   { key: "reports", label: "Reportería", icon: "RP" },
   { key: "team", label: "Equipo", icon: "EQ" },
   { key: "client-portal", label: "Portal cliente", icon: "CL" },
+  { key: "profile", label: "Perfil", icon: "PF" },
   { key: "settings", label: "Admin", icon: "AD" },
 ];
 
@@ -20,13 +21,13 @@ const ALL_BRANDS_ID = "all-brands";
 const OPERATIONS_MODE = true;
 const ENABLE_AI_ASSISTANT = false;
 const aiModuleKeys = ["copywriting", "creativity"];
-const managementModuleKeys = ["dashboard", "work-orders", "calendar", "brands", "team", "reports", "notifications", "settings"];
-const operationalUserModuleKeys = ["dashboard", "work-orders"];
+const managementModuleKeys = ["dashboard", "work-orders", "calendar", "brands", "team", "reports", "notifications", "profile", "settings"];
+const operationalUserModuleKeys = ["dashboard", "work-orders", "calendar", "profile"];
 const operationalModuleKeys = managementModuleKeys;
 const operationalNavGroups = [
   { label: "Operación", keys: ["dashboard", "work-orders", "calendar", "brands"] },
   { label: "Gestión", keys: ["team", "reports", "notifications"] },
-  { label: "Sistema", keys: ["settings"] },
+  { label: "Sistema", keys: ["profile", "settings"] },
 ];
 let supabaseClient = null;
 
@@ -38,6 +39,7 @@ function iconSvg(name, className = "ui-icon") {
     reports: '<svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><rect x="7" y="11" width="3" height="5" rx="1"/><rect x="12" y="7" width="3" height="9" rx="1"/><rect x="17" y="9" width="3" height="7" rx="1"/></svg>',
     calendar: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4"/><path d="M8 3v4"/><path d="M3 10h18"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/></svg>',
     team: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15 16.5a5 5 0 0 1 6 3.5"/></svg>',
+    profile: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
     settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.3 3.1a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 3.1h5l.3-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.5c.1-.3.1-.7.1-1z"/></svg>',
     ai: '<svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></svg>',
     alert: '<svg viewBox="0 0 24 24"><path d="M12 3l10 18H2L12 3z"/><path d="M12 9v5"/><path d="M12 18h.01"/></svg>',
@@ -1283,7 +1285,7 @@ function renderSidebarNav() {
         (module) => `
           <button class="nav-button ${module.key === state.currentModule ? "active" : ""}" data-module="${module.key}">
             <span class="nav-icon">${iconSvg(module.key)}</span>
-            <span>${module.label}</span>
+            <span>${moduleDisplayLabel(module)}</span>
           </button>
         `,
       )
@@ -1302,7 +1304,7 @@ function renderSidebarNav() {
               (module) => `
                 <button class="nav-button ${module.key === state.currentModule ? "active" : ""}" data-module="${module.key}">
                   <span class="nav-icon">${iconSvg(module.key)}</span>
-                  <span>${module.label}</span>
+                  <span>${moduleDisplayLabel(module)}</span>
                 </button>
               `,
             )
@@ -1315,6 +1317,11 @@ function renderSidebarNav() {
 
 function getModuleMeta(key = state.currentModule) {
   return modules.find((module) => module.key === key) || modules[0];
+}
+
+function moduleDisplayLabel(module) {
+  if (module?.key === "work-orders" && isOperationalUserRole()) return "Mis órdenes";
+  return module?.label || "";
 }
 
 function canOpenModule(key) {
@@ -2148,7 +2155,7 @@ function render() {
       <main class="main">
         <header class="topbar">
           <div class="topbar-title">
-            <h1>${getModuleMeta().label}</h1>
+            <h1>${moduleDisplayLabel(getModuleMeta())}</h1>
             <div class="topbar-subtitle">${getScopeSubtitle()}</div>
           </div>
           <div class="topbar-actions">
@@ -2245,6 +2252,7 @@ function renderModule() {
     reports: renderReports,
     team: renderTeam,
     "client-portal": renderClientPortal,
+    profile: renderProfile,
     settings: renderSettings,
   };
   return (views[state.currentModule] || renderDashboard)();
@@ -3227,6 +3235,7 @@ function renderCalendarWorkspace() {
   const orders = brandOrders();
   const openOrders = orders.filter(isOpenWorkOrder);
   const calendarView = state.calendarView || "month";
+  const canCreate = canCreateWorkOrders();
   return `
     <section class="section">
       <section class="panel brand-hero calendar-hero">
@@ -3238,7 +3247,7 @@ function renderCalendarWorkspace() {
           <p class="muted">Fechas de entrega y agenda mensual de OTs sin saturar el Dashboard ejecutivo.</p>
         </div>
         <div class="quick-links">
-          <button class="button" data-action="open-create-work-order">+ Crear OT</button>
+          ${canCreate ? `<button class="button" data-action="open-create-work-order">+ Crear OT</button>` : ""}
           <button class="button-ghost" data-module="work-orders">Ver lista de OTs</button>
         </div>
       </section>
@@ -3430,6 +3439,17 @@ function renderWorkOrderSetupSection(allBrands) {
         </div>
       </div>
     </section>
+  `;
+}
+
+function renderCreateWorkOrderModal(allBrands) {
+  if (!state.creatingWorkOrder || !canCreateWorkOrders()) return "";
+  return `
+    <div class="modal-backdrop" data-action="close-create-work-order" aria-hidden="true"></div>
+    <aside class="modal-panel work-order-create-modal" role="dialog" aria-modal="true" aria-label="Crear orden de trabajo">
+      <button class="modal-close-button" type="button" data-action="close-create-work-order" aria-label="Cerrar">×</button>
+      ${renderWorkOrderSetupSection(allBrands)}
+    </aside>
   `;
 }
 
@@ -4566,7 +4586,7 @@ function renderWorkOrderForm(order = null) {
           <button class="button" data-action="${isEditing ? "update-work-order" : "create-work-order"}">
             ${isEditing ? "Guardar cambios" : "Crear OT"}
           </button>
-          ${isEditing ? `<button class="button-ghost" data-action="cancel-edit-work-order">Cancelar</button>` : ""}
+          ${isEditing ? `<button class="button-ghost" data-action="cancel-edit-work-order">Cancelar</button>` : `<button class="button-ghost" data-action="close-create-work-order">Cancelar</button>`}
         </div>
       </div>
     </div>
@@ -4711,7 +4731,8 @@ function renderWorkOrders() {
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
   const allBrands = isAllBrandsScope();
   const detailPanel = state.editingWorkOrderId ? "" : renderWorkOrderDetailPanel(selectedViewingOrder());
-  const setupSection = state.creatingWorkOrder || state.editingWorkOrderId ? renderWorkOrderSetupSection(allBrands) : "";
+  const setupSection = state.editingWorkOrderId ? renderWorkOrderSetupSection(allBrands) : "";
+  const createModal = state.creatingWorkOrder ? renderCreateWorkOrderModal(allBrands) : "";
   const operationsPanel = renderWorkOrderOperationsPanel(orders, allBrands, archivedOrders.length);
   return `
     ${renderWorkOrdersHeader(allBrands)}
@@ -4725,6 +4746,7 @@ function renderWorkOrders() {
     ${setupSection}
     ${operationsPanel}
     ${detailPanel}
+    ${createModal}
   `;
 }
 
@@ -6894,25 +6916,16 @@ function renderAdminUserManager(canManage) {
   `;
 }
 
-function renderSettings() {
-  const openOrders = workOrders.filter(isOpenWorkOrder);
-  const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
+function renderProfile() {
   const profile = dataState.profile;
   const connectionLabel = isSupabaseMode() ? "Supabase" : "Demo local";
   const connectionDetail = isSupabaseMode() ? "Datos compartidos activos" : "Usando datos del navegador";
-  const canManage = isSystemAdmin() || !isSupabaseMode();
   return `
     <section class="section">
-      <section class="grid grid-4">
-        ${renderMetric("Conexion", connectionLabel, connectionDetail)}
-        ${renderMetric("Usuarios", users.length, `${internalUsers().length} internos activos`)}
-        ${renderMetric("Marcas", brands.length, `${clients.length} clientes`)}
-        ${renderMetric("OTs abiertas", openOrders.length, `${overdueOrders.length} vencidas`)}
-      </section>
       <section class="grid grid-2">
         <div class="panel section">
           <div class="section-header">
-            <h2 class="section-title">Sesion</h2>
+            <h2 class="section-title">Perfil</h2>
             <span class="badge ${isSupabaseMode() ? "green" : "amber"}">${connectionLabel}</span>
           </div>
           <div class="stack">
@@ -6926,7 +6939,7 @@ function renderSettings() {
             </div>
             <div class="mini-card">
               <strong>Permisos</strong>
-              <span class="muted">${canManage ? "Puede administrar usuarios y marcas" : "Puede consultar datos operativos"}</span>
+              <span class="muted">${isManagementDashboardRole() ? "Puede gestionar el workspace según su rol" : "Puede consultar y avanzar sus fases asignadas"}</span>
             </div>
             <div class="mini-card password-card">
               <strong>Cambiar password</strong>
@@ -6939,17 +6952,36 @@ function renderSettings() {
         </div>
         <div class="panel section">
           <div class="section-header">
-            <h2 class="section-title">Sistema</h2>
+            <h2 class="section-title">Accesos</h2>
             <span class="badge blue">Operativo</span>
           </div>
           <div class="quick-action-grid">
-            <button class="button" data-module="work-orders">Órdenes de trabajo</button>
-            <button class="button-ghost" data-module="team">Equipo</button>
-            <button class="button-ghost" data-module="notifications">Notificaciones</button>
+            <button class="button" data-module="dashboard">Dashboard</button>
+            <button class="button-ghost" data-module="work-orders">${isOperationalUserRole() ? "Mis órdenes" : "Órdenes de trabajo"}</button>
+            <button class="button-ghost" data-module="calendar">Calendario</button>
             <button class="button-danger" data-action="logout">Cerrar sesion</button>
           </div>
         </div>
       </section>
+    </section>
+  `;
+}
+
+function renderSettings() {
+  const openOrders = workOrders.filter(isOpenWorkOrder);
+  const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
+  const connectionLabel = isSupabaseMode() ? "Supabase" : "Demo local";
+  const connectionDetail = isSupabaseMode() ? "Datos compartidos activos" : "Usando datos del navegador";
+  const canManage = isSystemAdmin() || !isSupabaseMode();
+  return `
+    <section class="section">
+      <section class="grid grid-4">
+        ${renderMetric("Conexion", connectionLabel, connectionDetail)}
+        ${renderMetric("Usuarios", users.length, `${internalUsers().length} internos activos`)}
+        ${renderMetric("Marcas", brands.length, `${clients.length} clientes`)}
+        ${renderMetric("OTs abiertas", openOrders.length, `${overdueOrders.length} vencidas`)}
+      </section>
+      ${renderProfile()}
       ${renderAdminUserManager(canManage)}
     </section>
   `;
@@ -6964,6 +6996,7 @@ function bindEvents() {
       }
       state.currentModule = button.dataset.module;
       if (state.currentModule !== "work-orders") {
+        state.creatingWorkOrder = false;
         state.editingWorkOrderId = "";
         state.viewingWorkOrderId = "";
         state.focusedWorkOrderId = "";
@@ -7285,6 +7318,13 @@ function openCreateWorkOrder() {
   }
 }
 
+function closeCreateWorkOrder() {
+  state.creatingWorkOrder = false;
+  state.workOrderDraftPhases = [];
+  resetWorkOrderFormDraft();
+  render();
+}
+
 function clearWorkOrderFilters() {
   state.workOrderFilters = { search: "", assignee: "", status: "", priority: "", due: "", quick: "" };
   state.showArchivedWorkOrders = false;
@@ -7418,6 +7458,7 @@ async function handleAction(action, id) {
     "draft-work-order-ai": () => draftWorkOrderFromAiComposer(),
     "focus-work-order-ai": () => focusWorkOrderAi(),
     "open-create-work-order": () => openCreateWorkOrder(),
+    "close-create-work-order": () => closeCreateWorkOrder(),
     "clear-work-order-filters": () => clearWorkOrderFilters(),
     "add-work-order-phase": () => addWorkOrderPhase(),
     "remove-work-order-phase": () => removeWorkOrderPhase(id),
@@ -8588,7 +8629,6 @@ function viewWorkOrder(id) {
   state.currentModule = "work-orders";
   state.viewingWorkOrderId = id;
   state.focusedWorkOrderId = id;
-  showToast(`Abriendo ${id}`);
   render();
 }
 
