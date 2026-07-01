@@ -4045,6 +4045,11 @@ tr:last-child td {
   margin-top: 9px;
 }
 
+.phase-task-row[data-action],
+.my-order-row[data-action] {
+  cursor: pointer;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

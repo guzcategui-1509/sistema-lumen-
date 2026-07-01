@@ -20,6 +20,9 @@ const modules = [
 const ALL_BRANDS_ID = "all-brands";
 const OPERATIONS_MODE = true;
 const ENABLE_AI_ASSISTANT = false;
+const DEBUG_INTERACTIONS =
+  typeof window !== "undefined" &&
+  (new URLSearchParams(window.location.search).has("debugInteractions") || window.localStorage?.getItem("lumen_debug_interactions") === "1");
 const aiModuleKeys = ["copywriting", "creativity"];
 const managementModuleKeys = ["dashboard", "work-orders", "calendar", "brands", "team", "reports", "notifications", "profile", "settings"];
 const operationalUserModuleKeys = ["dashboard", "work-orders", "calendar", "profile"];
@@ -1954,11 +1957,40 @@ function currentProfileId() {
   return dataState.profile?.id || dataState.session?.user?.id || "";
 }
 
-function canCompleteWorkOrderPhase(phase) {
+function debugInteraction(eventName, details = {}) {
+  if (!DEBUG_INTERACTIONS) return;
+  console.debug(`[Lumen interaction] ${eventName}`, {
+    role: dataState.profile?.role || "sin-perfil",
+    module: state.currentModule,
+    profileId: currentProfileId(),
+    ...details,
+  });
+}
+
+function isCurrentUserRelatedToWorkOrder(order) {
+  if (!order) return false;
+  const currentId = currentProfileId();
+  if (!currentId) return false;
+  return (
+    order.createdBy === currentId ||
+    orderAssignees(order).includes(currentId) ||
+    workOrderPhases(order).some((phase) => phase.assignedTo === currentId || phase.assigned_to === currentId)
+  );
+}
+
+function canOpenWorkOrder(order) {
+  if (!order) return false;
+  if (!isSupabaseMode()) return true;
+  if (!isOperationalUserRole()) return true;
+  return isCurrentUserRelatedToWorkOrder(order);
+}
+
+function canCompleteWorkOrderPhase(phase, order = null) {
   if (!phase || phase.status === "completed" || phase.status === "cancelled") return false;
+  if (order && isArchivedWorkOrder(order)) return false;
   if (canManageWorkOrders()) return true;
   const currentId = currentProfileId();
-  return Boolean(currentId && phase.assignedTo === currentId);
+  return Boolean(currentId && (phase.assignedTo === currentId || phase.assigned_to === currentId));
 }
 
 function usersForBrandByRoles(roles = [], brandId = state.currentBrandId) {
@@ -2492,7 +2524,7 @@ function renderUserPhaseRow(row, options = {}) {
   const client = getClient(brand.clientId);
   const urgency = phaseUrgencyBadge(phase);
   return `
-    <article class="phase-task-row ${urgency.cls}">
+    <article class="phase-task-row ${urgency.cls}" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
       <button class="phase-task-main" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
         <span class="badge">${escapeHtml(order.id)}</span>
         <strong>${escapeHtml(order.title)}</strong>
@@ -4006,7 +4038,7 @@ function renderWorkOrderPhaseProgress(order) {
                     ${phase.completedAt ? `<span>Completada ${escapeHtml(formatDate(phase.completedAt))}</span>` : ""}
                   </div>
                   ${
-                    canCompleteWorkOrderPhase(phase)
+                    canCompleteWorkOrderPhase(phase, order)
                       ? `<button class="button-ghost small" data-action="complete-work-order-phase" data-id="${escapeHtml(phase.id)}">Marcar mi fase realizada</button>`
                       : ""
                   }
@@ -5221,7 +5253,7 @@ function renderMyWorkOrderRow(order) {
   const brand = getBrand(order.brandId);
   const urgency = workOrderUrgency(order);
   return `
-    <article class="operation-order-row compact-order-row my-order-row">
+    <article class="operation-order-row compact-order-row my-order-row" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
       <button class="operation-order-main compact-order-main" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
         <span class="status-dot ${urgency.cls}"></span>
         <span>
@@ -7015,6 +7047,7 @@ function renderSettings() {
 }
 
 function bindEvents() {
+  bindDelegatedActionEvents();
   document.querySelectorAll("[data-module]").forEach((button) => {
     button.addEventListener("click", () => {
       if (!canOpenModule(button.dataset.module)) {
@@ -7134,10 +7167,6 @@ function bindEvents() {
     field.addEventListener("change", () => {
       showToast("Auto-save guardo configuracion de marca");
     });
-  });
-
-  document.querySelectorAll("[data-action]").forEach((button) => {
-    button.addEventListener("click", () => handleAction(button.dataset.action, button.dataset.id));
   });
 
   document.querySelectorAll(".assignee-search").forEach((input) => {
@@ -7300,9 +7329,6 @@ function refreshWorkOrderGuidancePanels() {
     next.innerHTML = renderUrgentPlannerPanel(category, priority);
     const replacement = next.firstElementChild;
     planner.replaceWith(replacement);
-    replacement.querySelectorAll("[data-action]").forEach((button) => {
-      button.addEventListener("click", () => handleAction(button.dataset.action, button.dataset.id));
-    });
   }
 }
 
@@ -7462,8 +7488,31 @@ function draftWorkOrderFromAiComposer() {
 }
 
 function bindAuthEvents() {
-  document.querySelectorAll("[data-action]").forEach((button) => {
-    button.addEventListener("click", () => handleAction(button.dataset.action, button.dataset.id));
+  bindDelegatedActionEvents();
+}
+
+function bindDelegatedActionEvents() {
+  const app = document.getElementById("app");
+  if (!app || app.dataset.actionDelegateBound === "true") return;
+  app.dataset.actionDelegateBound = "true";
+  app.addEventListener("click", (event) => {
+    const actionTarget = event.target.closest("[data-action]");
+    if (!actionTarget || !app.contains(actionTarget)) return;
+    if (actionTarget.disabled || actionTarget.getAttribute("aria-disabled") === "true") return;
+    event.preventDefault();
+    const action = actionTarget.dataset.action;
+    const id = actionTarget.dataset.id || actionTarget.dataset.orderId || "";
+    debugInteraction("click-action", {
+      action,
+      id,
+      tag: actionTarget.tagName,
+      disabled: Boolean(actionTarget.disabled),
+      pointerEvents: window.getComputedStyle(actionTarget).pointerEvents,
+    });
+    handleAction(action, id).catch((error) => {
+      console.warn("[Lumen interaction] action failed", { action, id, error });
+      showToast(error.message || "No se pudo completar la acción");
+    });
   });
 }
 
@@ -8740,8 +8789,20 @@ async function toggleWorkOrderUrgency(id, isUrgent) {
 
 function viewWorkOrder(id) {
   const order = findWorkOrderByAnyId(id);
+  debugInteraction("view-work-order", {
+    receivedId: id,
+    found: Boolean(order),
+    foundId: order?.id || "",
+    foundDbId: order?.dbId || "",
+    canOpen: order ? canOpenWorkOrder(order) : false,
+    isRelated: order ? isCurrentUserRelatedToWorkOrder(order) : false,
+  });
   if (!order) {
     showToast("No encontre esa OT");
+    return;
+  }
+  if (!canOpenWorkOrder(order)) {
+    showToast("No tienes acceso a esta orden.");
     return;
   }
   state.currentModule = "work-orders";
@@ -9164,7 +9225,13 @@ async function completeWorkOrderPhase(phaseId) {
     return;
   }
   const { order, phase } = found;
-  if (!canCompleteWorkOrderPhase(phase)) {
+  if (!canCompleteWorkOrderPhase(phase, order)) {
+    debugInteraction("phase-complete-blocked", {
+      phaseId,
+      orderId: order.id,
+      phaseAssignedTo: phase.assignedTo || phase.assigned_to || "",
+      orderCanOpen: canOpenWorkOrder(order),
+    });
     showToast("Solo puedes completar fases asignadas a ti.");
     return;
   }

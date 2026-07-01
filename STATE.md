@@ -2,6 +2,23 @@
 
 ## 2026-07-01
 
+### Cambio: desbloqueo real de clicks para usuarios operativos
+- Se reemplazó el binding directo de acciones (`querySelectorAll("[data-action]")` después de cada render) por delegación estable en `#app`. Esto evita que botones/filas visibles queden sin handler después de re-renderizar secciones.
+- Se agregó logging controlado de interacciones con `?debugInteractions` o `localStorage.lumen_debug_interactions = "1"` para confirmar acción, ID recibido, rol, módulo y permiso.
+- Se creó `canOpenWorkOrder(order)` como guard único: gestión puede abrir según permisos actuales; operativos pueden abrir órdenes relacionadas por creador, responsables generales o fases asignadas.
+- Se reforzó `canCompleteWorkOrderPhase(phase, order)` para validar fase propia, orden no archivada y comparación contra `assignedTo` / `assigned_to`.
+- Las filas de Dashboard operativo y Mis órdenes ahora son clickeables completas, no solo el botón interno.
+
+### Pendiente de validación manual
+1. Login como creativo/diseñador/editor/generador.
+2. Abrir Dashboard y Mis órdenes.
+3. Hacer click en cualquier orden visible y confirmar que abre detalle.
+4. Activar `?debugInteractions` si algo falla y revisar consola: debe mostrar `click-action`, `view-work-order`, `found: true`, `canOpen: true`.
+5. Completar una fase propia y confirmar que no permite completar fases ajenas.
+6. Confirmar que sigue sin ver Crear OT, Equipo, Reportería, Notificaciones globales, Admin ni IA.
+
+## 2026-07-01
+
 ### Cambio: estabilización bloqueante pre-piloto
 - Se robusteció la apertura de OTs desde roles operativos: la app ahora localiza órdenes por código visible o UUID interno y abre el detalle sin requerir rol de gestión.
 - El detalle conserva la acción `Marcar mi fase realizada` para fases asignadas al usuario actual; el flujo sigue usando la RPC `complete_work_order_phase`.
