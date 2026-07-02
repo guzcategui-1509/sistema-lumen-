@@ -4,6 +4,7 @@ const modules = [
   { key: "brands", label: "Marcas", icon: "BR" },
   { key: "brand-config", label: "Config. de marca", icon: "BR" },
   { key: "work-orders", label: "Órdenes de trabajo", icon: "OT" },
+  { key: "production-planner", label: "Planificador de producción", icon: "PP" },
   { key: "notifications", label: "Notificaciones", icon: "NT" },
   { key: "productions", label: "Producciones", icon: "PR" },
   { key: "content", label: "Contenido", icon: "CO" },
@@ -24,12 +25,12 @@ const DEBUG_INTERACTIONS =
   typeof window !== "undefined" &&
   (new URLSearchParams(window.location.search).has("debugInteractions") || window.localStorage?.getItem("lumen_debug_interactions") === "1");
 const aiModuleKeys = ["copywriting", "creativity"];
-const managementModuleKeys = ["dashboard", "work-orders", "calendar", "brands", "team", "reports", "notifications", "profile", "settings"];
+const managementModuleKeys = ["dashboard", "work-orders", "calendar", "brands", "production-planner", "team", "reports", "notifications", "profile", "settings"];
 const operationalUserModuleKeys = ["dashboard", "work-orders", "calendar", "profile"];
 const operationalModuleKeys = managementModuleKeys;
 const operationalNavGroups = [
   { label: "Operación", keys: ["dashboard", "work-orders", "calendar", "brands"] },
-  { label: "Gestión", keys: ["team", "reports", "notifications"] },
+  { label: "Gestión", keys: ["production-planner", "team", "reports", "notifications"] },
   { label: "Sistema", keys: ["profile", "settings"] },
 ];
 let supabaseClient = null;
@@ -41,6 +42,7 @@ function iconSvg(name, className = "ui-icon") {
     notifications: '<svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>',
     reports: '<svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><rect x="7" y="11" width="3" height="5" rx="1"/><rect x="12" y="7" width="3" height="9" rx="1"/><rect x="17" y="9" width="3" height="7" rx="1"/></svg>',
     calendar: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4"/><path d="M8 3v4"/><path d="M3 10h18"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/></svg>',
+    "production-planner": '<svg viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/><path d="M8 3v18"/><path d="M16 3v18"/></svg>',
     team: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15 16.5a5 5 0 0 1 6 3.5"/></svg>',
     profile: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
     settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.3 3.1a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 3.1h5l.3-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.5c.1-.3.1-.7.1-1z"/></svg>',
@@ -61,6 +63,7 @@ const dataState = {
   session: null,
   profile: null,
   brandNotificationRecipientsReady: false,
+  productionPlannerReady: true,
 };
 
 const clients = [
@@ -535,6 +538,29 @@ const workOrderManagerRoles = ["admin", "directora", "direccion", "dirección", 
 const workOrderCreatorRoles = workOrderManagerRoles;
 const workOrderMaterialRoles = ["admin", "directora", "cuentas", "generador", "creativo", "disenador", "editor"];
 const urgencyManagerRoles = ["admin", "directora", "director", "direccion", "dirección", "jefe", "jefatura", "cuentas", "coordinador", "coordinadora", "coordinacion", "coordinación", "ejecutivo", "ejecutiva"];
+const productionPlannerRoles = [
+  "admin",
+  "direccion",
+  "director",
+  "directora",
+  "cuentas",
+  "cuenta",
+  "coordinador",
+  "coordinadora",
+  "coordinacion",
+  "coordinación",
+  "ejecutivo",
+  "ejecutiva",
+  "produccion",
+  "producción",
+  "digital lead",
+  "project manager",
+  "manager",
+];
+const productionPlannerEmails = ["guzcategui@grupolumen.com"];
+const productionPlannerTalentOptions = ["Modelo", "Vendedor", "No", "Por definir"];
+const productionPlannerMatrixStatusOptions = ["Pendiente", "En revisión", "Aprobado", "No aplica"];
+const productionPlannerStatusOptions = ["Pendiente", "En proceso", "En revisión", "Aprobado", "Programado", "Producido", "Pausado", "Cancelado"];
 
 const workOrderPhaseCatalog = [
   { key: "brief", title: "Brief" },
@@ -867,6 +893,24 @@ const reports = [
   { brandId: "jim-gt", metric: "Views", value: 182000, trend: 22 },
 ];
 
+const initialProductionPlannerItems = [
+  { id: "planner-talleres-2026-07", month: 7, year: 2026, brand: "Talleres", medium: "Meta", deliverables: "", talentRequirement: "Modelo", rawMatrixStatus: "En revisión", rawMatrixDueDate: "2026-07-01", productionDate: "2026-07-14", status: "Pendiente", accountOwner: "Raquel", digitalOwner: "lis", notes: "mismo modelo", archivedAt: null },
+  { id: "planner-repuestos-2026-07", month: 7, year: 2026, brand: "Repuestos", medium: "Meta", deliverables: "", talentRequirement: "Modelo", rawMatrixStatus: "En revisión", rawMatrixDueDate: "2026-07-01", productionDate: "2026-07-14", status: "Pendiente", accountOwner: "Raquel", digitalOwner: "lis", notes: "mismo modelo", archivedAt: null },
+  { id: "planner-volkswagen-2026-07", month: 7, year: 2026, brand: "Volkswagen", medium: "TikTok", deliverables: "10 videos", talentRequirement: "Modelo", rawMatrixStatus: "", rawMatrixDueDate: "2026-07-10", productionDate: "2026-07-15", status: "Pendiente", accountOwner: "Pelin", digitalOwner: "lis", notes: "", archivedAt: null },
+  { id: "planner-volkswagen-camiones-2026-07", month: 7, year: 2026, brand: "Volkswagen Camiones", medium: "TikTok", deliverables: "10 videos", talentRequirement: "Vendedor", rawMatrixStatus: "", rawMatrixDueDate: "2026-07-09", productionDate: "2026-07-16", status: "Pendiente", accountOwner: "Pelin", digitalOwner: "lis", notes: "", archivedAt: null },
+  { id: "planner-212-2026-07", month: 7, year: 2026, brand: "212", medium: "TikTok", deliverables: "5 videos", talentRequirement: "No", rawMatrixStatus: "Aprobado", rawMatrixDueDate: "", productionDate: "", status: "Pendiente", accountOwner: "Raquel", digitalOwner: "lis", notes: "material de stock ya tiene rodrigo, Revisar Julio con Raquel", archivedAt: null },
+  { id: "planner-jim-2026-07", month: 7, year: 2026, brand: "JIM", medium: "TikTok", deliverables: "10 videos", talentRequirement: "Modelo", rawMatrixStatus: "", rawMatrixDueDate: "2026-07-09", productionDate: "2026-07-21", status: "Pendiente", accountOwner: "Raquel", digitalOwner: "lis", notes: "Axel y lis ven modelo", archivedAt: null },
+  { id: "planner-bestune-2026-07", month: 7, year: 2026, brand: "Bestune", medium: "TikTok", deliverables: "10 videos", talentRequirement: "Modelo", rawMatrixStatus: "", rawMatrixDueDate: "2026-07-03", productionDate: "2026-07-22", status: "Pendiente", accountOwner: "Raquel", digitalOwner: "", notes: "", archivedAt: null },
+  { id: "planner-leapmotor-2026-07", month: 7, year: 2026, brand: "Leapmotor", medium: "TikTok", deliverables: "10 videos", talentRequirement: "Vendedor", rawMatrixStatus: "", rawMatrixDueDate: "2026-07-03", productionDate: "2026-07-20", status: "Pendiente", accountOwner: "Raquel", digitalOwner: "", notes: "", archivedAt: null },
+  { id: "planner-washgo-2026-07", month: 7, year: 2026, brand: "Wash&go", medium: "Meta", deliverables: "4 videos", talentRequirement: "No", rawMatrixStatus: "", rawMatrixDueDate: "", productionDate: "2026-07-16", status: "Pendiente", accountOwner: "Karen", digitalOwner: "Javi", notes: "No se necesita produccion en Julio", archivedAt: null },
+  { id: "planner-solarsa-2026-07", month: 7, year: 2026, brand: "Solarsa", medium: "Meta", deliverables: "4 videos", talentRequirement: "No", rawMatrixStatus: "", rawMatrixDueDate: "", productionDate: "2026-07-15", status: "Pendiente", accountOwner: "Karen", digitalOwner: "Javi", notes: "", archivedAt: null },
+  { id: "planner-usados-2026-07", month: 7, year: 2026, brand: "Usados", medium: "Meta", deliverables: "Diseño", talentRequirement: "", rawMatrixStatus: "En revisión", rawMatrixDueDate: "", productionDate: "", status: "Pendiente", accountOwner: "Raquel", digitalOwner: "Lis", notes: "", archivedAt: null },
+  { id: "planner-rz-2026-07", month: 7, year: 2026, brand: "RZ", medium: "", deliverables: "", talentRequirement: "", rawMatrixStatus: "", rawMatrixDueDate: "", productionDate: "", status: "Pendiente", accountOwner: "Karen", digitalOwner: "", notes: "", archivedAt: null },
+  { id: "planner-silk-2026-07", month: 7, year: 2026, brand: "SILK", medium: "Meta", deliverables: "8 videos", talentRequirement: "Modelo", rawMatrixStatus: "", rawMatrixDueDate: "", productionDate: "", status: "Pendiente", accountOwner: "Alejandro", digitalOwner: "Javi/Giuls", notes: "En espera de fecha con Axel y Alejandro", archivedAt: null },
+];
+
+let productionPlannerItems = loadStoredCollection("lumen_production_planner_items_v1", initialProductionPlannerItems);
+
 const state = {
   currentModule: "dashboard",
   currentBrandId: ALL_BRANDS_ID,
@@ -901,6 +945,17 @@ const state = {
   reportMonth: "",
   reportStartDate: "",
   reportEndDate: "",
+  productionPlannerMonth: 7,
+  productionPlannerYear: 2026,
+  productionPlannerEditingId: "",
+  productionPlannerShowArchived: false,
+  productionPlannerFilters: {
+    brand: "",
+    medium: "",
+    status: "",
+    accountOwner: "",
+    digitalOwner: "",
+  },
   notificationBrandId: "",
   initialRouteApplied: false,
   passwordResetMode: false,
@@ -1157,10 +1212,52 @@ function mapDbWorkOrderPhase(row) {
   };
 }
 
+function mapDbProductionPlannerItem(row) {
+  return {
+    id: row.id,
+    month: Number(row.month || 7),
+    year: Number(row.year || 2026),
+    brand: row.brand || "",
+    medium: row.medium || "",
+    deliverables: row.deliverables || "",
+    talentRequirement: row.talent_requirement || "",
+    rawMatrixStatus: row.raw_matrix_status || "",
+    rawMatrixDueDate: row.raw_matrix_due_date || "",
+    productionDate: row.production_date || "",
+    status: row.status || "Pendiente",
+    accountOwner: row.account_owner || "",
+    digitalOwner: row.digital_owner || "",
+    notes: row.notes || "",
+    createdBy: row.created_by || "",
+    updatedBy: row.updated_by || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
+    archivedAt: row.archived_at || null,
+  };
+}
+
+function productionPlannerItemToDb(item) {
+  return {
+    month: Number(item.month || state.productionPlannerMonth || 7),
+    year: Number(item.year || state.productionPlannerYear || 2026),
+    brand: item.brand || "",
+    medium: item.medium || null,
+    deliverables: item.deliverables || null,
+    talent_requirement: item.talentRequirement || null,
+    raw_matrix_status: item.rawMatrixStatus || null,
+    raw_matrix_due_date: item.rawMatrixDueDate || null,
+    production_date: item.productionDate || null,
+    status: item.status || "Pendiente",
+    account_owner: item.accountOwner || null,
+    digital_owner: item.digitalOwner || null,
+    notes: item.notes || null,
+  };
+}
+
 async function loadSupabaseData() {
   if (!isSupabaseMode() || !dataState.session) return;
 
-  const [profileResult, clientsResult, brandsResult, membershipsResult, profilesResult, ordersResult, notificationRecipientsResult, phasesResult] = await Promise.all([
+  const [profileResult, clientsResult, brandsResult, membershipsResult, profilesResult, ordersResult, notificationRecipientsResult, phasesResult, productionPlannerResult] = await Promise.all([
     supabaseClient.from("profiles").select("*").eq("id", dataState.session.user.id).maybeSingle(),
     supabaseClient.from("clients").select("*").order("name"),
     supabaseClient.from("brands").select("*").eq("is_active", true).order("name"),
@@ -1178,6 +1275,7 @@ async function loadSupabaseData() {
       .order("due_date", { ascending: true }),
     supabaseClient.from("brand_notification_recipients").select("brand_id,user_id"),
     supabaseClient.from("work_order_phases").select("*").order("sort_order", { ascending: true }),
+    supabaseClient.from("production_planner_items").select("*").order("production_date", { ascending: true }),
   ]);
 
   const error =
@@ -1202,6 +1300,7 @@ async function loadSupabaseData() {
   setCollection(brands, (brandsResult.data || []).map(mapDbBrand));
   setCollection(users, (profilesResult.data || []).map((profile) => mapDbUser(profile, membershipsResult.data || [])));
   dataState.brandNotificationRecipientsReady = !notificationRecipientsResult.error;
+  dataState.productionPlannerReady = !productionPlannerResult.error;
   setCollection(
     brandNotificationRecipients,
     (notificationRecipientsResult.data || []).map((recipient) => ({
@@ -1223,6 +1322,9 @@ async function loadSupabaseData() {
       phases: phasesByOrderId.get(row.id) || [],
     }),
   );
+  if (!productionPlannerResult.error) {
+    productionPlannerItems = (productionPlannerResult.data || []).map(mapDbProductionPlannerItem);
+  }
 
   if (!isAllBrandsScope() && !brands.some((brand) => brand.id === state.currentBrandId)) {
     state.currentBrandId = ALL_BRANDS_ID;
@@ -1340,6 +1442,7 @@ function moduleDisplayLabel(module) {
 
 function canOpenModule(key) {
   if (!ENABLE_AI_ASSISTANT && aiModuleKeys.includes(key)) return false;
+  if (key === "production-planner") return canAccessProductionPlanner();
   if (!OPERATIONS_MODE) return true;
   if (!operationalModuleKeys.includes(key)) return false;
   if (!isManagementDashboardRole()) return operationalUserModuleKeys.includes(key);
@@ -1716,6 +1819,14 @@ function canManageUrgency() {
   if (!isSupabaseMode()) return true;
   const role = normalizeRoleKey(dataState.profile?.role);
   return urgencyManagerRoles.map(normalizeRoleKey).includes(role);
+}
+
+function canAccessProductionPlanner() {
+  if (!isSupabaseMode()) return true;
+  const role = normalizeRoleKey(dataState.profile?.role || "");
+  const email = String(dataState.profile?.email || "").trim().toLowerCase();
+  const allowedRoles = productionPlannerRoles.map(normalizeRoleKey);
+  return allowedRoles.some((allowedRole) => role.includes(allowedRole)) || productionPlannerEmails.includes(email);
 }
 
 function isManagementDashboardRole(role = dataState.profile?.role) {
@@ -2315,6 +2426,7 @@ function renderModule() {
     brands: renderBrandsWorkspace,
     "brand-config": renderBrandConfig,
     "work-orders": renderWorkOrders,
+    "production-planner": renderProductionPlanner,
     notifications: renderNotifications,
     productions: renderProductions,
     content: renderContent,
@@ -5588,6 +5700,262 @@ function renderBrandEmailRecipientManager() {
   `;
 }
 
+const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+function productionPlannerPeriodLabel(month = state.productionPlannerMonth, year = state.productionPlannerYear) {
+  return `${monthNames[Number(month || 1) - 1] || "Mes"} ${year || 2026}`;
+}
+
+function productionPlannerStatusClass(status = "") {
+  const normalized = normalizeRoleKey(status);
+  if (["aprobado", "programado", "producido"].includes(normalized)) return "green";
+  if (["en revision", "en proceso"].includes(normalized)) return "blue";
+  if (["pausado", "cancelado"].includes(normalized)) return "red";
+  return "amber";
+}
+
+function saveProductionPlannerItems() {
+  if (isSupabaseMode()) return;
+  localStorage.setItem("lumen_production_planner_items_v1", JSON.stringify(productionPlannerItems));
+}
+
+function currentProductionPlannerItems({ includeArchived = state.productionPlannerShowArchived } = {}) {
+  const filters = state.productionPlannerFilters;
+  return productionPlannerItems
+    .filter((item) => Number(item.month) === Number(state.productionPlannerMonth) && Number(item.year) === Number(state.productionPlannerYear))
+    .filter((item) => includeArchived || !item.archivedAt)
+    .filter((item) => !filters.brand || item.brand === filters.brand)
+    .filter((item) => !filters.medium || item.medium === filters.medium)
+    .filter((item) => !filters.status || item.status === filters.status)
+    .filter((item) => !filters.accountOwner || item.accountOwner === filters.accountOwner)
+    .filter((item) => !filters.digitalOwner || item.digitalOwner === filters.digitalOwner)
+    .sort((a, b) => String(a.productionDate || "9999-12-31").localeCompare(String(b.productionDate || "9999-12-31")) || a.brand.localeCompare(b.brand));
+}
+
+function productionPlannerFilterOptions(field) {
+  return [...new Set(productionPlannerItems
+    .filter((item) => Number(item.month) === Number(state.productionPlannerMonth) && Number(item.year) === Number(state.productionPlannerYear))
+    .map((item) => item[field])
+    .filter(Boolean))]
+    .sort((a, b) => String(a).localeCompare(String(b)));
+}
+
+function renderProductionPlannerSelectOptions(options, activeValue = "", emptyLabel = "Todos") {
+  return `
+    <option value="">${escapeHtml(emptyLabel)}</option>
+    ${options.map((option) => `<option value="${escapeHtml(option)}" ${option === activeValue ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+  `;
+}
+
+function renderProductionPlanner() {
+  if (!canAccessProductionPlanner()) {
+    return `<section class="panel section"><h2 class="section-title">Planificador de producción</h2><p class="muted">No tienes acceso a esta herramienta.</p></section>`;
+  }
+  const items = currentProductionPlannerItems();
+  const activeItems = items.filter((item) => !item.archivedAt);
+  const archivedCount = currentProductionPlannerItems({ includeArchived: true }).filter((item) => item.archivedAt).length;
+  const editingItem = productionPlannerItems.find((item) => item.id === state.productionPlannerEditingId);
+  return `
+    <section class="dashboard-command production-planner-workspace">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Planificador de producción</h2>
+          <div class="small-muted">Seguimiento mensual de marcas, entregables, fechas de matriz y producción.</div>
+        </div>
+        <div class="row wrap">
+          <span class="badge blue">${escapeHtml(productionPlannerPeriodLabel())}</span>
+          <button class="button-ghost small" data-action="duplicate-production-planner-month">Duplicar mes anterior</button>
+          <button class="button small" data-action="new-production-planner-item">Agregar producción</button>
+        </div>
+      </div>
+      ${!dataState.productionPlannerReady && isSupabaseMode() ? `<div class="auth-error">Falta ejecutar <strong>supabase/patch_production_planner.sql</strong> para activar esta tabla en Supabase.</div>` : ""}
+      <section class="panel section compact-section">
+        <div class="filters-row planner-filters">
+          <div class="field">
+            <label>Mes</label>
+            <select class="input" data-production-planner-period="month">
+              ${monthNames.map((name, index) => `<option value="${index + 1}" ${Number(state.productionPlannerMonth) === index + 1 ? "selected" : ""}>${name}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label>Año</label>
+            <input class="input" type="number" min="2026" step="1" data-production-planner-period="year" value="${escapeHtml(state.productionPlannerYear)}" />
+          </div>
+          <div class="field">
+            <label>Marca</label>
+            <select class="input" data-production-planner-filter="brand">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("brand"), state.productionPlannerFilters.brand)}</select>
+          </div>
+          <div class="field">
+            <label>Medio</label>
+            <select class="input" data-production-planner-filter="medium">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("medium"), state.productionPlannerFilters.medium)}</select>
+          </div>
+          <div class="field">
+            <label>Estado</label>
+            <select class="input" data-production-planner-filter="status">${renderProductionPlannerSelectOptions(productionPlannerStatusOptions, state.productionPlannerFilters.status)}</select>
+          </div>
+          <div class="field">
+            <label>Resp. cuentas</label>
+            <select class="input" data-production-planner-filter="accountOwner">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("accountOwner"), state.productionPlannerFilters.accountOwner)}</select>
+          </div>
+          <div class="field">
+            <label>Resp. digital</label>
+            <select class="input" data-production-planner-filter="digitalOwner">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("digitalOwner"), state.productionPlannerFilters.digitalOwner)}</select>
+          </div>
+          <label class="checkbox-line planner-archive-toggle">
+            <input type="checkbox" data-production-planner-archive-toggle ${state.productionPlannerShowArchived ? "checked" : ""} />
+            Ver archivadas (${archivedCount})
+          </label>
+        </div>
+      </section>
+      <section class="panel section">
+        <div class="section-header compact">
+          <div>
+            <h3 class="section-title">${escapeHtml(productionPlannerPeriodLabel())}</h3>
+            <div class="small-muted">${activeItems.length} producciones activas en este periodo.</div>
+          </div>
+        </div>
+        <div class="table-wrap production-planner-table-wrap">
+          <table class="compact-table production-planner-table">
+            <thead>
+              <tr>
+                <th>Marca</th>
+                <th>Medio</th>
+                <th>Entregables</th>
+                <th>Modelo/vendedor</th>
+                <th>Matriz en crudo</th>
+                <th>Entrega matriz</th>
+                <th>Producción</th>
+                <th>Estado</th>
+                <th>Resp. cuentas</th>
+                <th>Resp. digital</th>
+                <th>Notas</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${
+                items.length
+                  ? items.map(renderProductionPlannerRow).join("")
+                  : `<tr><td colspan="12">No hay producciones para ${escapeHtml(productionPlannerPeriodLabel())}.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+    ${editingItem || state.productionPlannerEditingId === "new" ? renderProductionPlannerModal(editingItem) : ""}
+  `;
+}
+
+function renderProductionPlannerRow(item) {
+  return `
+    <tr class="${item.archivedAt ? "archived-row" : ""}">
+      <td><strong>${escapeHtml(item.brand)}</strong></td>
+      <td>${escapeHtml(item.medium || "—")}</td>
+      <td>${escapeHtml(item.deliverables || "—")}</td>
+      <td>${escapeHtml(item.talentRequirement || "—")}</td>
+      <td>${escapeHtml(item.rawMatrixStatus || "—")}</td>
+      <td>${escapeHtml(item.rawMatrixDueDate ? formatDate(item.rawMatrixDueDate) : "Sin fecha")}</td>
+      <td>${escapeHtml(item.productionDate ? formatDate(item.productionDate) : "Sin fecha")}</td>
+      <td><span class="badge ${productionPlannerStatusClass(item.status)}">${escapeHtml(item.status || "Pendiente")}</span></td>
+      <td>${escapeHtml(item.accountOwner || "—")}</td>
+      <td>${escapeHtml(item.digitalOwner || "—")}</td>
+      <td>${escapeHtml(item.notes || "—")}</td>
+      <td>
+        <div class="row wrap">
+          <button class="button-ghost small" data-action="edit-production-planner-item" data-id="${escapeHtml(item.id)}">Editar</button>
+          <button class="button-ghost small" data-action="${item.archivedAt ? "restore-production-planner-item" : "archive-production-planner-item"}" data-id="${escapeHtml(item.id)}">${item.archivedAt ? "Restaurar" : "Archivar"}</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderProductionPlannerModal(item) {
+  const isNew = !item;
+  const draft = item || {
+    id: "new",
+    month: state.productionPlannerMonth,
+    year: state.productionPlannerYear,
+    brand: "",
+    medium: "",
+    deliverables: "",
+    talentRequirement: "Por definir",
+    rawMatrixStatus: "Pendiente",
+    rawMatrixDueDate: "",
+    productionDate: "",
+    status: "Pendiente",
+    accountOwner: "",
+    digitalOwner: "",
+    notes: "",
+  };
+  return `
+    <div class="modal-backdrop" data-action="cancel-production-planner-edit" aria-hidden="true"></div>
+    <aside class="modal-panel production-planner-modal" role="dialog" aria-modal="true" aria-label="${isNew ? "Agregar producción" : "Editar producción"}">
+      <button class="modal-close-button" type="button" data-action="cancel-production-planner-edit" aria-label="Cerrar">×</button>
+      <section class="panel section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">${isNew ? "Agregar producción" : "Editar producción"}</h2>
+            <div class="small-muted">${escapeHtml(productionPlannerPeriodLabel(draft.month, draft.year))}</div>
+          </div>
+          <span class="badge blue">Planificador</span>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label>Marca</label>
+            <input class="input" id="planner-brand" value="${escapeHtml(draft.brand)}" placeholder="Volkswagen" />
+          </div>
+          <div class="field">
+            <label>Medio</label>
+            <input class="input" id="planner-medium" value="${escapeHtml(draft.medium)}" placeholder="Meta, TikTok..." />
+          </div>
+          <div class="field">
+            <label>Entregables</label>
+            <input class="input" id="planner-deliverables" value="${escapeHtml(draft.deliverables)}" placeholder="10 videos" />
+          </div>
+          <div class="field">
+            <label>¿Necesita modelo/vendedor?</label>
+            <select class="input" id="planner-talent-requirement">${renderProductionPlannerSelectOptions(productionPlannerTalentOptions, draft.talentRequirement, "Seleccionar")}</select>
+          </div>
+          <div class="field">
+            <label>Matriz en crudo</label>
+            <select class="input" id="planner-raw-matrix-status">${renderProductionPlannerSelectOptions(productionPlannerMatrixStatusOptions, draft.rawMatrixStatus, "Seleccionar")}</select>
+          </div>
+          <div class="field">
+            <label>Fecha entrega matriz en crudo</label>
+            <input class="input" id="planner-raw-matrix-due-date" type="date" value="${escapeHtml(draft.rawMatrixDueDate || "")}" />
+          </div>
+          <div class="field">
+            <label>Fecha de producción</label>
+            <input class="input" id="planner-production-date" type="date" value="${escapeHtml(draft.productionDate || "")}" />
+          </div>
+          <div class="field">
+            <label>Estado</label>
+            <select class="input" id="planner-status">${renderProductionPlannerSelectOptions(productionPlannerStatusOptions, draft.status, "Seleccionar")}</select>
+          </div>
+          <div class="field">
+            <label>Responsable cuentas</label>
+            <input class="input" id="planner-account-owner" value="${escapeHtml(draft.accountOwner)}" />
+          </div>
+          <div class="field">
+            <label>Responsable digital</label>
+            <input class="input" id="planner-digital-owner" value="${escapeHtml(draft.digitalOwner)}" />
+          </div>
+          <div class="field full">
+            <label>Notas</label>
+            <textarea class="textarea" id="planner-notes">${escapeHtml(draft.notes)}</textarea>
+          </div>
+        </div>
+        <div class="row wrap">
+          <button class="button" data-action="save-production-planner-item" data-id="${escapeHtml(draft.id)}">Guardar</button>
+          <button class="button-ghost" data-action="cancel-production-planner-edit">Cancelar</button>
+        </div>
+      </section>
+    </aside>
+  `;
+}
+
 function renderNotifications() {
   const openOrders = workOrders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
@@ -7293,6 +7661,29 @@ function bindEvents() {
     });
   });
 
+  document.querySelectorAll("[data-production-planner-period]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const key = input.dataset.productionPlannerPeriod;
+      const value = Number(input.value);
+      if (key === "month") state.productionPlannerMonth = Math.min(12, Math.max(1, value || 7));
+      if (key === "year") state.productionPlannerYear = Math.max(2026, value || 2026);
+      state.productionPlannerEditingId = "";
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-production-planner-filter]").forEach((input) => {
+    input.addEventListener("change", () => {
+      state.productionPlannerFilters[input.dataset.productionPlannerFilter] = input.value;
+      render();
+    });
+  });
+
+  document.querySelector("[data-production-planner-archive-toggle]")?.addEventListener("change", (event) => {
+    state.productionPlannerShowArchived = event.target.checked;
+    render();
+  });
+
   document.querySelectorAll("[data-workorder-filter]").forEach((input) => {
     input.addEventListener("change", () => {
       state.workOrderFilters[input.dataset.workorderFilter] = input.value;
@@ -7642,6 +8033,13 @@ async function handleAction(action, id) {
     "run-weekly-digest-now": () => runWeeklyDigestNow(),
     "run-monthly-content-matrix": () => runMonthlyWorkOrderAutomation("content_matrix"),
     "run-monthly-paid-placement": () => runMonthlyWorkOrderAutomation("paid_placement"),
+    "new-production-planner-item": () => openProductionPlannerItem(),
+    "edit-production-planner-item": () => openProductionPlannerItem(id),
+    "cancel-production-planner-edit": () => cancelProductionPlannerEdit(),
+    "save-production-planner-item": () => saveProductionPlannerItem(id),
+    "archive-production-planner-item": () => archiveProductionPlannerItem(id, true),
+    "restore-production-planner-item": () => archiveProductionPlannerItem(id, false),
+    "duplicate-production-planner-month": () => duplicatePreviousProductionPlannerMonth(),
     "save-brand-email-recipients": () => saveBrandEmailRecipients(),
     "clear-brand-email-recipients": () => clearBrandEmailRecipients(),
     "download-report-pdf": () => downloadReportPdf(),
@@ -7656,6 +8054,183 @@ async function handleAction(action, id) {
   if (actionMap[action]) {
     await actionMap[action]();
   }
+}
+
+function openProductionPlannerItem(id = "") {
+  if (!canAccessProductionPlanner()) {
+    showToast("No tienes acceso al Planificador de producción");
+    return;
+  }
+  state.productionPlannerEditingId = id || "new";
+  render();
+}
+
+function cancelProductionPlannerEdit() {
+  state.productionPlannerEditingId = "";
+  render();
+}
+
+function readProductionPlannerForm(id = "") {
+  return {
+    id,
+    month: Number(state.productionPlannerMonth),
+    year: Number(state.productionPlannerYear),
+    brand: document.getElementById("planner-brand")?.value.trim() || "",
+    medium: document.getElementById("planner-medium")?.value.trim() || "",
+    deliverables: document.getElementById("planner-deliverables")?.value.trim() || "",
+    talentRequirement: document.getElementById("planner-talent-requirement")?.value || "",
+    rawMatrixStatus: document.getElementById("planner-raw-matrix-status")?.value || "",
+    rawMatrixDueDate: document.getElementById("planner-raw-matrix-due-date")?.value || "",
+    productionDate: document.getElementById("planner-production-date")?.value || "",
+    status: document.getElementById("planner-status")?.value || "Pendiente",
+    accountOwner: document.getElementById("planner-account-owner")?.value.trim() || "",
+    digitalOwner: document.getElementById("planner-digital-owner")?.value.trim() || "",
+    notes: document.getElementById("planner-notes")?.value.trim() || "",
+  };
+}
+
+async function saveProductionPlannerItem(id = "") {
+  if (!canAccessProductionPlanner()) {
+    showToast("No tienes acceso al Planificador de producción");
+    return;
+  }
+  const existingItem = productionPlannerItems.find((item) => item.id === id);
+  const values = readProductionPlannerForm(existingItem?.id || "");
+  if (!values.brand) {
+    showToast("Escribe la marca para guardar la producción");
+    return;
+  }
+
+  if (isSupabaseMode()) {
+    const payload = {
+      ...productionPlannerItemToDb(values),
+      updated_by: dataState.session?.user?.id || null,
+    };
+    if (existingItem) {
+      const { error } = await supabaseClient
+        .from("production_planner_items")
+        .update(payload)
+        .eq("id", existingItem.id);
+      if (error) {
+        showToast(`No se pudo guardar: ${error.message}`);
+        return;
+      }
+    } else {
+      const { error } = await supabaseClient
+        .from("production_planner_items")
+        .insert({ ...payload, created_by: dataState.session?.user?.id || null });
+      if (error) {
+        showToast(`No se pudo crear: ${error.message}`);
+        return;
+      }
+    }
+    await loadSupabaseData();
+  } else if (existingItem) {
+    Object.assign(existingItem, values, { updatedAt: new Date().toISOString() });
+    saveProductionPlannerItems();
+  } else {
+    productionPlannerItems.unshift({
+      ...values,
+      id: `planner-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      archivedAt: null,
+    });
+    saveProductionPlannerItems();
+  }
+
+  state.productionPlannerEditingId = "";
+  showToast("Planificador de producción guardado");
+  render();
+}
+
+async function archiveProductionPlannerItem(id, shouldArchive) {
+  if (!canAccessProductionPlanner()) {
+    showToast("No tienes acceso al Planificador de producción");
+    return;
+  }
+  const item = productionPlannerItems.find((plannerItem) => plannerItem.id === id);
+  if (!item) return;
+  const archivedAt = shouldArchive ? new Date().toISOString() : null;
+
+  if (isSupabaseMode()) {
+    const { error } = await supabaseClient
+      .from("production_planner_items")
+      .update({ archived_at: archivedAt, updated_by: dataState.session?.user?.id || null })
+      .eq("id", item.id);
+    if (error) {
+      showToast(`No se pudo ${shouldArchive ? "archivar" : "restaurar"}: ${error.message}`);
+      return;
+    }
+    await loadSupabaseData();
+  } else {
+    item.archivedAt = archivedAt;
+    item.updatedAt = new Date().toISOString();
+    saveProductionPlannerItems();
+  }
+  showToast(shouldArchive ? "Producción archivada" : "Producción restaurada");
+  render();
+}
+
+async function duplicatePreviousProductionPlannerMonth() {
+  if (!canAccessProductionPlanner()) {
+    showToast("No tienes acceso al Planificador de producción");
+    return;
+  }
+  const currentMonth = Number(state.productionPlannerMonth);
+  const currentYear = Number(state.productionPlannerYear);
+  const previousMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+  const previousYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+  const sourceItems = productionPlannerItems.filter((item) => Number(item.month) === previousMonth && Number(item.year) === previousYear && !item.archivedAt);
+  if (!sourceItems.length) {
+    showToast(`No hay filas activas en ${productionPlannerPeriodLabel(previousMonth, previousYear)} para duplicar`);
+    return;
+  }
+  const existingCount = productionPlannerItems.filter((item) => Number(item.month) === currentMonth && Number(item.year) === currentYear && !item.archivedAt).length;
+  if (existingCount && !window.confirm(`Ya hay ${existingCount} filas activas en ${productionPlannerPeriodLabel()}. ¿Duplicar de todos modos?`)) return;
+
+  const copies = sourceItems.map((item) => ({
+    month: currentMonth,
+    year: currentYear,
+    brand: item.brand,
+    medium: item.medium,
+    deliverables: item.deliverables,
+    talentRequirement: item.talentRequirement,
+    rawMatrixStatus: item.rawMatrixStatus ? "Pendiente" : "",
+    rawMatrixDueDate: "",
+    productionDate: "",
+    status: "Pendiente",
+    accountOwner: item.accountOwner,
+    digitalOwner: item.digitalOwner,
+    notes: item.notes,
+  }));
+
+  if (isSupabaseMode()) {
+    const payload = copies.map((item) => ({
+      ...productionPlannerItemToDb(item),
+      created_by: dataState.session?.user?.id || null,
+      updated_by: dataState.session?.user?.id || null,
+    }));
+    const { error } = await supabaseClient.from("production_planner_items").insert(payload);
+    if (error) {
+      showToast(`No se pudo duplicar el mes: ${error.message}`);
+      return;
+    }
+    await loadSupabaseData();
+  } else {
+    productionPlannerItems.unshift(
+      ...copies.map((item, index) => ({
+        ...item,
+        id: `planner-copy-${Date.now()}-${index}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        archivedAt: null,
+      })),
+    );
+    saveProductionPlannerItems();
+  }
+  showToast(`Mes anterior duplicado en ${productionPlannerPeriodLabel()}`);
+  render();
 }
 
 async function loginWithPassword() {
