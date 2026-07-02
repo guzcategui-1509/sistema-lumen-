@@ -4683,13 +4683,17 @@ function renderWorkOrderDetailPanel(order) {
   const canManageUrgencyFlag = canManageUrgency();
   const canArchive = canArchiveWorkOrders();
   const canUploadMaterials = canUploadWorkOrderMaterials(order);
-  const archived = isArchivedWorkOrder(order);
-  debugInteraction("urgency-render", {
+  const isArchived = Boolean(order.archivedAt || order.archived_at);
+  const isUrgent = Boolean(order.isUrgent || order.is_urgent);
+  const showUrgencyButton = canManageUrgencyFlag && !isArchived;
+  debugInteraction("urgency-render-actions", {
+    normalizedRole: normalizeRoleKey(dataState.profile?.role || ""),
     canManageUrgency: canManageUrgencyFlag,
-    archived,
-    isUrgent: isUrgentWorkOrder(order),
-    code: order.id,
-    id: order.dbId || order.id,
+    isArchived,
+    isUrgent,
+    showUrgencyButton,
+    orderId: order.dbId || order.id,
+    code: order.id || order.code,
   });
 
   return `
@@ -4702,7 +4706,7 @@ function renderWorkOrderDetailPanel(order) {
           <div class="row wrap">
             <span class="badge">${escapeHtml(order.id)}</span>
             <span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>
-            ${isUrgentWorkOrder(order) ? `<span class="badge red">Urgente</span>` : ""}
+            ${isUrgent ? `<span class="badge red">Urgente</span>` : ""}
             <span class="badge ${order.priority === "high" ? "red" : order.priority === "medium" ? "amber" : "green"}">${escapeHtml(workOrderPriorityLabels[order.priority] || order.priority)}</span>
           </div>
           <h2 class="section-title">${escapeHtml(order.title)}</h2>
@@ -4710,10 +4714,24 @@ function renderWorkOrderDetailPanel(order) {
         </div>
         <div class="row wrap">
           ${canManage ? `<button class="button-ghost small" data-action="edit-work-order" data-id="${order.id}">Editar</button>` : ""}
-          ${canManageUrgencyFlag && !archived ? `<button class="${isUrgentWorkOrder(order) ? "button-ghost" : "button-danger"} small" data-action="${isUrgentWorkOrder(order) ? "unmark-work-order-urgent" : "mark-work-order-urgent"}" data-id="${order.id}">${isUrgentWorkOrder(order) ? "Quitar urgencia" : "Marcar urgencia"}</button>` : ""}
+          ${
+            showUrgencyButton
+              ? `
+                <button
+                  type="button"
+                  class="${isUrgent ? "button-ghost" : "button-danger"} small"
+                  data-action="${isUrgent ? "unmark-work-order-urgent" : "mark-work-order-urgent"}"
+                  data-id="${escapeHtml(order.id)}"
+                  data-order-id="${escapeHtml(order.dbId || order.id)}"
+                >
+                  ${isUrgent ? "Quitar urgencia" : "Marcar urgencia"}
+                </button>
+              `
+              : ""
+          }
           ${
             canArchive
-              ? archived
+              ? isArchived
                 ? `<button class="button-ghost small" data-action="unarchive-work-order" data-id="${order.id}">Restaurar</button>`
                 : `<button class="button-danger small" data-action="archive-work-order" data-id="${order.id}">Archivar</button>`
               : ""
@@ -4722,12 +4740,12 @@ function renderWorkOrderDetailPanel(order) {
         </div>
       </div>
       ${renderUrgentOrderBanner(order)}
-      ${canManage && !archived ? renderWorkOrderStageControl(order) : ""}
+      ${canManage && !isArchived ? renderWorkOrderStageControl(order) : ""}
       ${renderWorkOrderPhaseProgress(order)}
       <div class="work-order-detail-grid">
         <div class="detail-block">
           <span>Estado</span>
-          <strong>${archived ? "Archivada" : escapeHtml(workOrderStatusLabels[order.status] || order.status)}</strong>
+          <strong>${isArchived ? "Archivada" : escapeHtml(workOrderStatusLabels[order.status] || order.status)}</strong>
         </div>
         <div class="detail-block">
           <span>Categoria</span>
