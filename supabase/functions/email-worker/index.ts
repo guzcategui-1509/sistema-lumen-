@@ -1,6 +1,7 @@
 type EmailNotification = {
   id: string;
   recipient_email: string;
+  notification_type: string;
   subject: string;
   html_body: string | null;
 };
@@ -160,7 +161,7 @@ Deno.serve(async (request) => {
 
   const now = encodeURIComponent(new Date().toISOString());
   const response = await supabaseRequest(
-    `email_notifications?status=eq.queued&or=(scheduled_for.is.null,scheduled_for.lte.${now})&select=id,recipient_email,subject,html_body&limit=25`,
+    `email_notifications?status=in.(queued,pending)&or=(scheduled_for.is.null,scheduled_for.lte.${now})&select=id,recipient_email,notification_type,subject,html_body&order=scheduled_for.asc.nullsfirst,created_at.asc&limit=25`,
   );
 
   if (!response.ok) {
@@ -179,13 +180,13 @@ Deno.serve(async (request) => {
         provider_message_id: providerMessageId,
         error_message: null,
       });
-      results.push({ id: notification.id, status: "sent" });
+      results.push({ id: notification.id, notification_type: notification.notification_type, status: "sent" });
     } catch (error) {
       await markNotification(notification.id, {
         status: "failed",
         error_message: error instanceof Error ? error.message : "Unknown email error",
       });
-      results.push({ id: notification.id, status: "failed" });
+      results.push({ id: notification.id, notification_type: notification.notification_type, status: "failed" });
     }
   }
 
