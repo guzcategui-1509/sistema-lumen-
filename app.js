@@ -63,6 +63,8 @@ const dataState = {
   session: null,
   profile: null,
   brandNotificationRecipientsReady: false,
+  emailNotificationsReady: true,
+  lastEmailFunctionError: null,
   productionPlannerReady: true,
 };
 
@@ -442,6 +444,7 @@ const officialBrandAbbreviations = {
 
 const users = loadStoredCollection("lumen_users_v1", []);
 const brandNotificationRecipients = loadStoredCollection("lumen_brand_notification_recipients_v1", []);
+const emailNotifications = [];
 
 const demoWorkOrdersResetVersion = "2026-05-26-clean-all-test-work-orders";
 if (localStorage.getItem("lumen_work_orders_reset_version") !== demoWorkOrdersResetVersion) {
@@ -1270,6 +1273,20 @@ function mapDbProductionPlannerItem(row) {
   };
 }
 
+function mapDbEmailNotification(row) {
+  return {
+    id: row.id,
+    notificationType: row.notification_type || "",
+    status: row.status || "queued",
+    subject: row.subject || "",
+    recipientEmail: row.recipient_email || "",
+    scheduledFor: row.scheduled_for || "",
+    sentAt: row.sent_at || "",
+    errorMessage: row.error_message || "",
+    createdAt: row.created_at || "",
+  };
+}
+
 function productionPlannerItemToDb(item) {
   return {
     month: Number(item.month || state.productionPlannerMonth || 7),
@@ -1291,7 +1308,18 @@ function productionPlannerItemToDb(item) {
 async function loadSupabaseData() {
   if (!isSupabaseMode() || !dataState.session) return;
 
-  const [profileResult, clientsResult, brandsResult, membershipsResult, profilesResult, ordersResult, notificationRecipientsResult, phasesResult, productionPlannerResult] = await Promise.all([
+  const [
+    profileResult,
+    clientsResult,
+    brandsResult,
+    membershipsResult,
+    profilesResult,
+    ordersResult,
+    notificationRecipientsResult,
+    phasesResult,
+    productionPlannerResult,
+    emailNotificationsResult,
+  ] = await Promise.all([
     supabaseClient.from("profiles").select("*").eq("id", dataState.session.user.id).maybeSingle(),
     supabaseClient.from("clients").select("*").order("name"),
     supabaseClient.from("brands").select("*").eq("is_active", true).order("name"),
@@ -1310,6 +1338,11 @@ async function loadSupabaseData() {
     supabaseClient.from("brand_notification_recipients").select("brand_id,user_id"),
     supabaseClient.from("work_order_phases").select("*").order("sort_order", { ascending: true }),
     supabaseClient.from("production_planner_items").select("*").order("production_date", { ascending: true }),
+    supabaseClient
+      .from("email_notifications")
+      .select("id,notification_type,status,subject,recipient_email,scheduled_for,sent_at,error_message,created_at")
+      .order("created_at", { ascending: false })
+      .limit(200),
   ]);
 
   const error =
@@ -1335,6 +1368,7 @@ async function loadSupabaseData() {
   setCollection(users, (profilesResult.data || []).map((profile) => mapDbUser(profile, membershipsResult.data || [])));
   dataState.brandNotificationRecipientsReady = !notificationRecipientsResult.error;
   dataState.productionPlannerReady = !productionPlannerResult.error;
+  dataState.emailNotificationsReady = !emailNotificationsResult.error;
   setCollection(
     brandNotificationRecipients,
     (notificationRecipientsResult.data || []).map((recipient) => ({
@@ -1358,6 +1392,9 @@ async function loadSupabaseData() {
   );
   if (!productionPlannerResult.error) {
     productionPlannerItems = (productionPlannerResult.data || []).map(mapDbProductionPlannerItem);
+  }
+  if (!emailNotificationsResult.error) {
+    setCollection(emailNotifications, (emailNotificationsResult.data || []).map(mapDbEmailNotification));
   }
 
   if (!isAllBrandsScope() && !brands.some((brand) => brand.id === state.currentBrandId)) {
@@ -5766,6 +5803,25 @@ function currentProductionPlannerItems({ includeArchived = state.productionPlann
     .sort((a, b) => String(a.productionDate || "9999-12-31").localeCompare(String(b.productionDate || "9999-12-31")) || a.brand.localeCompare(b.brand));
 }
 
+function productionPlannerPeriodItems() {
+  return productionPlannerItems.filter(
+    (item) => Number(item.month) === Number(state.productionPlannerMonth) && Number(item.year) === Number(state.productionPlannerYear),
+  );
+}
+
+function productionPlannerSummaryLine() {
+  const periodItems = productionPlannerPeriodItems();
+  const activeItems = periodItems.filter((item) => !item.archivedAt);
+  const producedItems = activeItems.filter((item) => normalizeRoleKey(item.status) === "producido");
+  const archivedItems = periodItems.filter((item) => item.archivedAt);
+  const nextProduction = activeItems
+    .filter((item) => item.productionDate)
+    .sort((a, b) => String(a.productionDate).localeCompare(String(b.productionDate)))[0];
+  return `${activeItems.length} producciones activas · ${producedItems.length} producidas · ${archivedItems.length} archivadas · Próxima producción: ${
+    nextProduction ? formatDate(nextProduction.productionDate) : "Sin fecha"
+  }`;
+}
+
 function productionPlannerFilterOptions(field) {
   return [...new Set(productionPlannerItems
     .filter((item) => Number(item.month) === Number(state.productionPlannerMonth) && Number(item.year) === Number(state.productionPlannerYear))
@@ -5786,35 +5842,35 @@ function renderProductionPlanner() {
     return `<section class="panel section"><h2 class="section-title">Planificador de producción</h2><p class="muted">No tienes acceso a esta herramienta.</p></section>`;
   }
   const items = currentProductionPlannerItems();
-  const activeItems = items.filter((item) => !item.archivedAt);
   const archivedCount = currentProductionPlannerItems({ includeArchived: true }).filter((item) => item.archivedAt).length;
   const editingItem = productionPlannerItems.find((item) => item.id === state.productionPlannerEditingId);
   return `
-    <section class="dashboard-command production-planner-workspace">
-      <div class="section-header">
+    <section class="production-planner-workspace">
+      <div class="production-planner-toolbar">
         <div>
           <h2 class="section-title">Planificador de producción</h2>
-          <div class="small-muted">Seguimiento mensual de marcas, entregables, fechas de matriz y producción.</div>
+          <div class="small-muted">Seguimiento mensual de marcas, entregables, matriz y producción.</div>
         </div>
-        <div class="row wrap">
+        <div class="production-planner-period-controls">
           <span class="badge blue">${escapeHtml(productionPlannerPeriodLabel())}</span>
+          <label>
+            <span>Mes</span>
+            <select class="input compact-input" data-production-planner-period="month">
+              ${monthNames.map((name, index) => `<option value="${index + 1}" ${Number(state.productionPlannerMonth) === index + 1 ? "selected" : ""}>${name}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Año</span>
+            <input class="input compact-input year-input" type="number" min="2026" step="1" data-production-planner-period="year" value="${escapeHtml(state.productionPlannerYear)}" />
+          </label>
           <button class="button-ghost small" data-action="duplicate-production-planner-month">Duplicar mes anterior</button>
           <button class="button small" data-action="new-production-planner-item">Agregar producción</button>
         </div>
       </div>
       ${!dataState.productionPlannerReady && isSupabaseMode() ? `<div class="auth-error">Falta ejecutar <strong>supabase/patch_production_planner.sql</strong> para activar esta tabla en Supabase.</div>` : ""}
-      <section class="panel section compact-section">
+      <div class="production-planner-summary-line">${escapeHtml(productionPlannerSummaryLine())}</div>
+      <section class="panel compact-section production-planner-filter-panel">
         <div class="filters-row planner-filters">
-          <div class="field">
-            <label>Mes</label>
-            <select class="input" data-production-planner-period="month">
-              ${monthNames.map((name, index) => `<option value="${index + 1}" ${Number(state.productionPlannerMonth) === index + 1 ? "selected" : ""}>${name}</option>`).join("")}
-            </select>
-          </div>
-          <div class="field">
-            <label>Año</label>
-            <input class="input" type="number" min="2026" step="1" data-production-planner-period="year" value="${escapeHtml(state.productionPlannerYear)}" />
-          </div>
           <div class="field">
             <label>Marca</label>
             <select class="input" data-production-planner-filter="brand">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("brand"), state.productionPlannerFilters.brand)}</select>
@@ -5841,13 +5897,7 @@ function renderProductionPlanner() {
           </label>
         </div>
       </section>
-      <section class="panel section">
-        <div class="section-header compact">
-          <div>
-            <h3 class="section-title">${escapeHtml(productionPlannerPeriodLabel())}</h3>
-            <div class="small-muted">${activeItems.length} producciones activas en este periodo.</div>
-          </div>
-        </div>
+      <section class="panel production-planner-table-panel">
         <div class="table-wrap production-planner-table-wrap">
           <table class="compact-table production-planner-table">
             <thead>
@@ -5883,7 +5933,7 @@ function renderProductionPlanner() {
 
 function renderProductionPlannerRow(item) {
   return `
-    <tr class="${item.archivedAt ? "archived-row" : ""}">
+    <tr class="production-planner-row ${item.archivedAt ? "archived-row" : ""}" data-action="edit-production-planner-item" data-id="${escapeHtml(item.id)}">
       <td><strong>${escapeHtml(item.brand)}</strong></td>
       <td>${escapeHtml(item.medium || "—")}</td>
       <td>${escapeHtml(item.deliverables || "—")}</td>
@@ -5982,7 +6032,12 @@ function renderProductionPlannerModal(item) {
           </div>
         </div>
         <div class="row wrap">
-          <button class="button" data-action="save-production-planner-item" data-id="${escapeHtml(draft.id)}">Guardar</button>
+          <button class="button" data-action="save-production-planner-item" data-id="${escapeHtml(draft.id)}">${isNew ? "Guardar" : "Guardar cambios"}</button>
+          ${
+            isNew
+              ? ""
+              : `<button class="button-ghost" data-action="${draft.archivedAt ? "restore-production-planner-item" : "archive-production-planner-item"}" data-id="${escapeHtml(draft.id)}">${draft.archivedAt ? "Restaurar" : "Archivar"}</button>`
+          }
           <button class="button-ghost" data-action="cancel-production-planner-edit">Cancelar</button>
         </div>
       </section>
@@ -5990,22 +6045,122 @@ function renderProductionPlannerModal(item) {
   `;
 }
 
+const notificationRuleTypeMap = {
+  assignment: ["assignment"],
+  "deadline-24h": ["deadline_24h"],
+  "work-order-edits": ["status_change", "daily_digest"],
+  "phase-assignment": ["assignment", "phase_completed"],
+  "urgent-alert": ["status_change"],
+  overdue: ["overdue"],
+  "weekly-digest": ["weekly_digest"],
+  "daily-activity-digest": ["daily_digest"],
+  "monthly-content-matrix": ["assignment"],
+  "monthly-paid-placement": ["assignment"],
+};
+
+function normalizeEmailStatus(value) {
+  return String(value || "queued").toLowerCase();
+}
+
+function emailNotificationSummary(types = []) {
+  const typeSet = new Set(types.filter(Boolean));
+  const rows = typeSet.size ? emailNotifications.filter((item) => typeSet.has(item.notificationType)) : emailNotifications;
+  const counts = rows.reduce(
+    (summary, item) => {
+      const status = normalizeEmailStatus(item.status);
+      if (status === "sent") summary.sent += 1;
+      else if (status === "failed") summary.failed += 1;
+      else if (status === "cancelled" || status === "canceled") summary.cancelled += 1;
+      else summary.prepared += 1;
+      return summary;
+    },
+    { total: rows.length, prepared: 0, sent: 0, failed: 0, cancelled: 0 },
+  );
+  const last = rows
+    .filter((item) => item.sentAt || item.createdAt || item.scheduledFor)
+    .sort((a, b) => String(b.sentAt || b.createdAt || b.scheduledFor).localeCompare(String(a.sentAt || a.createdAt || a.scheduledFor)))[0];
+  return {
+    ...counts,
+    lastAt: last?.sentAt || last?.createdAt || last?.scheduledFor || "",
+  };
+}
+
+function renderNotificationRuleStatus(rule) {
+  const types = notificationRuleTypeMap[rule.id] || [];
+  const summary = emailNotificationSummary(types);
+  return `
+    <div class="notification-rule">
+      <div>
+        <strong>${rule.title}</strong>
+        <div class="muted">${rule.channel} / ${rule.recipients}</div>
+        <div class="small-muted">
+          Cola: ${types.length ? types.map(escapeHtml).join(", ") : "sin tipo directo"} ·
+          Último evento: ${summary.lastAt ? formatDateTime(summary.lastAt) : "Sin registros recientes"}
+        </div>
+        <div class="small-muted">Edición de reglas pendiente: este panel informa estado real, no cambia reglas todavía.</div>
+      </div>
+      <div class="row wrap end">
+        <span class="badge ${rule.enabled ? "green" : "amber"}">${rule.enabled ? "Regla activa" : "Regla pausada"}</span>
+        <span class="badge blue">Preparados ${summary.prepared}</span>
+        <span class="badge green">Enviados ${summary.sent}</span>
+        <span class="badge ${summary.failed ? "red" : "neutral"}">Fallidos ${summary.failed}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderEmailQueueStatusPanel() {
+  const summary = emailNotificationSummary();
+  const lastError = dataState.lastEmailFunctionError;
+  return `
+    <section class="panel section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Estado real de correos</h2>
+          <div class="small-muted">
+            Últimos ${emailNotifications.length} registros leídos de email_notifications.
+            ${dataState.emailNotificationsReady ? "" : "No se pudo leer la cola con el usuario actual."}
+          </div>
+        </div>
+        <span class="badge amber">Preparar no es enviar</span>
+      </div>
+      <section class="grid grid-4">
+        ${renderMetric("Preparados", summary.prepared, "queued/pending esperando worker")}
+        ${renderMetric("Enviados", summary.sent, "status sent")}
+        ${renderMetric("Fallidos", summary.failed, "Revisar error_message")}
+        ${renderMetric("Cancelados", summary.cancelled, "No se enviarán")}
+      </section>
+      <div class="admin-note">
+        El envío real requiere email-worker, BREVO_API_KEY, EMAIL_FROM, SUPABASE_SERVICE_ROLE_KEY y CRON_SECRET en Supabase Functions.
+        Si el cron no está instalado, usa "Enviar correos pendientes" manualmente.
+      </div>
+      ${
+        lastError
+          ? `<div class="admin-note">
+              Último error de función: ${escapeHtml(lastError.functionName)} · status ${escapeHtml(lastError.status || "sin status")} · ${escapeHtml(lastError.message)}
+            </div>`
+          : ""
+      }
+    </section>
+  `;
+}
+
 function renderNotifications() {
   const openOrders = workOrders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
-  const dueTomorrow = openOrders.filter((order) => daysUntil(order.dueDate) === 1);
+  const emailSummary = emailNotificationSummary();
   return `
     <section class="section">
       <div class="panel brand-hero">
         <div>
           <div class="hero-title">
             <h2>Notificaciones de OTs</h2>
-            <span class="badge blue">Correo operativo</span>
+            <span class="badge blue">Cola + worker</span>
           </div>
-          <p class="muted">Las asignaciones y urgencias llegan al momento. Los demás cambios se agrupan en un resumen diario.</p>
+          <p class="muted">Las reglas preparan correos en cola. El envío real ocurre cuando corre email-worker con Brevo configurado.</p>
         </div>
         <div class="quick-links">
-          <button class="button" data-action="run-daily-digest-now">Enviar resumen diario ahora</button>
+          <button class="button" data-action="run-daily-digest-now">Preparar y enviar resumen diario</button>
           <button class="button-ghost" data-action="send-email-queue">Enviar pendientes</button>
           <button class="button-ghost" data-module="work-orders">Ver OTs</button>
         </div>
@@ -6013,29 +6168,20 @@ function renderNotifications() {
       <section class="grid grid-4">
         ${renderMetric("OTs monitoreadas", openOrders.length, "Abiertas en todas las marcas")}
         ${renderMetric("Vencidas", overdueOrders.length, "Incluidas como alerta roja")}
-        ${renderMetric("Vencen mañana", dueTomorrow.length, "Recordatorio 24h")}
-        ${renderMetric("Destinatarios", internalUsers().length, "Equipo interno")}
+        ${renderMetric("Correos preparados", emailSummary.prepared, "Pendientes de email-worker")}
+        ${renderMetric("Correos fallidos", emailSummary.failed, "Con error_message")}
       </section>
       ${renderBrandEmailRecipientManager()}
+      ${renderEmailQueueStatusPanel()}
       <section class="grid grid-2 notifications-detail-grid">
         <div class="panel section">
           <div class="section-header">
             <h2 class="section-title">Reglas activas</h2>
-            <span class="badge green">Automatizable</span>
+            <span class="badge amber">Estado de cola</span>
           </div>
           <div class="stack">
             ${notificationRules
-              .map(
-                (rule) => `
-                  <div class="notification-rule">
-                    <div>
-                      <strong>${rule.title}</strong>
-                      <div class="muted">${rule.channel} / ${rule.recipients}</div>
-                    </div>
-                    <span class="badge ${rule.enabled ? "green" : "amber"}">${rule.enabled ? "Activo" : "Pausado"}</span>
-                  </div>
-                `,
-              )
+              .map(renderNotificationRuleStatus)
               .join("")}
           </div>
         </div>
@@ -6043,14 +6189,17 @@ function renderNotifications() {
           <div class="section-header">
             <div>
               <h2 class="section-title">Resúmenes programados</h2>
-              <div class="small-muted">Un correo diario de actividad y un panorama personal cada lunes.</div>
+              <div class="small-muted">Preparación de digest diario/semanal. El envío depende de email-worker.</div>
             </div>
             <div class="row wrap">
               <button class="button-ghost small" data-action="queue-daily-digest">Preparar resumen diario</button>
               <button class="button-ghost small" data-action="queue-weekly-digest">Preparar resumen semanal</button>
             </div>
           </div>
-          <div class="small-muted">Preparar solo deja los correos listos; no salen hasta tocar "Enviar pendientes".</div>
+          <div class="small-muted">
+            Preparar solo crea registros queued en email_notifications. Para envío inmediato usa "Enviar pendientes".
+            Si está instalado supabase/schedule_email_automation.sql, el worker corre cada 10 minutos.
+          </div>
           ${renderWeeklyDigestPreview()}
         </div>
       </section>
@@ -6060,28 +6209,28 @@ function renderNotifications() {
             <h2 class="section-title">Como funcionan las notificaciones</h2>
             <div class="small-muted">Una guia rapida para entender que hace cada boton sin tocar configuraciones tecnicas.</div>
           </div>
-          <span class="badge green">Brevo conectado</span>
+          <span class="badge amber">Requiere configuracion</span>
         </div>
         <div class="notification-guide-grid">
           <div class="mini-card">
-            <strong>1. Avisos inmediatos</strong>
-            <span class="muted">Una nueva asignación, urgencia o vencimiento importante sí llega al momento.</span>
+            <strong>1. Correos preparados</strong>
+            <span class="muted">Las reglas crean registros en email_notifications con status queued o pending.</span>
           </div>
           <div class="mini-card">
-            <strong>2. Cambios sin ruido</strong>
-            <span class="muted">Ediciones, subtareas, materiales y cambios de estado quedan registrados sin mandar un correo por cada acción.</span>
+            <strong>2. Envio real</strong>
+            <span class="muted">email-worker toma correos queued y los manda por Brevo. Sin worker, quedan preparados.</span>
           </div>
           <div class="mini-card">
-            <strong>3. Resumen al final del día</strong>
-            <span class="muted">Cada persona recibe un solo correo con lo ocurrido en las marcas donde fue configurada como destinataria.</span>
+            <strong>3. Resumen diario</strong>
+            <span class="muted">daily-activity-digest prepara correos con cambios recientes; no los envia directamente.</span>
           </div>
           <div class="mini-card">
             <strong>4. Resumen semanal</strong>
-            <span class="muted">Cada persona interna recibe sus OTs asignadas todos los lunes, con foco semanal y mensual.</span>
+            <span class="muted">weekly-digest prepara correos personales; email-worker debe enviarlos despues.</span>
           </div>
           <div class="mini-card">
-            <strong>5. Envío por Brevo</strong>
-            <span class="muted">Los resúmenes preparados se envían automáticamente por Brevo; también puedes probarlos desde esta pantalla.</span>
+            <strong>5. Automatizacion</strong>
+            <span class="muted">El cron existe solo si se ejecuto el SQL de schedule_email_automation en Supabase.</span>
           </div>
           <div class="mini-card">
             <strong>6. Matriz mensual</strong>
@@ -9305,7 +9454,7 @@ async function createWorkOrderFromForm() {
           })),
         );
         if (emailError) showToast(`OT creada, pero fallo email: ${emailError.message}`);
-        else await invokeEmailFunction("email-worker", (data) => `OT creada y correos procesados: ${data?.processed ?? 0}`, {}, true);
+        else await invokeEmailFunction("email-worker", (data) => `OT creada y correos procesados: ${data?.processed ?? 0}`, {}, { allowCreators: true });
       }
     }
 
@@ -10183,25 +10332,103 @@ function previewWeeklyDigest() {
   showToast(`Resumen semanal: ${totalOpen} OTs abiertas y ${totalOverdue} vencidas. Esto solo es vista previa.`);
 }
 
-async function invokeEmailFunction(functionName, successMessage, extraBody = {}, allowCreators = false) {
+function redactFunctionPayload(payload = {}) {
+  return Object.fromEntries(
+    Object.entries(payload).map(([key, value]) => [key, key.toLowerCase().includes("triggered") ? "[current-user]" : value]),
+  );
+}
+
+async function readEdgeFunctionError(error) {
+  const details = {
+    message: error?.message || "Edge Function error",
+    status: null,
+    body: null,
+  };
+  const response = error?.context || error?.response;
+  if (response && typeof response.clone === "function") {
+    details.status = response.status || null;
+    const text = await response.clone().text().catch(() => "");
+    if (text) {
+      try {
+        details.body = JSON.parse(text);
+      } catch {
+        details.body = text;
+      }
+    }
+  }
+  return details;
+}
+
+function emailWorkerResultMessage(prefix, data) {
+  const results = Array.isArray(data?.results) ? data.results : [];
+  const sent = results.filter((item) => item.status === "sent").length;
+  const failed = results.filter((item) => item.status === "failed").length;
+  return `${prefix}: ${data?.processed ?? 0} procesados · ${sent} enviados · ${failed} fallidos`;
+}
+
+function edgeFunctionFailureMessage(functionName, details) {
+  const names = {
+    "daily-activity-digest": "resumen diario",
+    "weekly-digest": "resumen semanal",
+    "email-worker": "envío de correos pendientes",
+    "monthly-work-orders": "automatización mensual",
+  };
+  const label = names[functionName] || functionName;
+  const bodyText = typeof details.body === "string" ? details.body : JSON.stringify(details.body || {});
+  if (functionName === "daily-activity-digest" && bodyText.includes("daily_digest")) {
+    return "No se pudo preparar el resumen diario. Revisa si supabase/patch_daily_activity_digest.sql ya fue ejecutado y consulta logs de Supabase.";
+  }
+  if (functionName === "email-worker" && bodyText.includes("Missing environment variables")) {
+    return "No se pudieron enviar correos: faltan variables de email en Supabase Functions.";
+  }
+  return `No se pudo ejecutar ${label}. Revisa logs de Supabase Edge Function.`;
+}
+
+async function invokeEmailFunction(functionName, successMessage, extraBody = {}, options = {}) {
   if (!isSupabaseMode()) {
     showToast("Conecta Supabase para usar emails reales");
     return null;
   }
+  const { allowCreators = false } = options || {};
   if (!(canManageWorkOrders() || (allowCreators && canRunOperationalEmail()))) {
     showToast("Solo roles operativos autorizados pueden disparar automatizaciones");
     return null;
   }
 
   try {
+    const safeExtraBody = typeof extraBody === "function" ? {} : extraBody;
+    if (typeof extraBody === "function") {
+      console.warn("[Lumen Edge Function warning]", {
+        functionName,
+        warning: "invokeEmailFunction received a function as extraBody; ignoring it. Pass a plain object as the third argument.",
+      });
+    }
+    const payload = { triggered_by: dataState.session?.user?.id, ...safeExtraBody };
     const { data, error } = await supabaseClient.functions.invoke(functionName, {
-      body: { triggered_by: dataState.session?.user?.id, ...extraBody },
+      body: payload,
     });
     if (error) throw error;
     showToast(typeof successMessage === "function" ? successMessage(data) : successMessage);
+    await loadSupabaseData().catch(() => null);
+    render();
     return data;
   } catch (error) {
-    showToast(error.message || `No se pudo ejecutar ${functionName}`);
+    const details = await readEdgeFunctionError(error);
+    dataState.lastEmailFunctionError = {
+      functionName,
+      status: details.status,
+      message: details.message,
+      body: details.body,
+      at: new Date().toISOString(),
+    };
+    console.warn("[Lumen Edge Function error]", {
+      functionName,
+      status: details.status,
+      error: details.message,
+      details: details.body,
+      payload: redactFunctionPayload({ triggered_by: dataState.session?.user?.id, ...safeExtraBody }),
+    });
+    showToast(edgeFunctionFailureMessage(functionName, details));
     return null;
   }
 }
@@ -10247,7 +10474,7 @@ async function sendEmailQueue() {
 
   return invokeEmailFunction(
     "email-worker",
-    (data) => `Correos enviados o revisados: ${data?.processed ?? 0}`,
+    (data) => emailWorkerResultMessage("Correos pendientes revisados", data),
   );
 }
 
@@ -10261,7 +10488,7 @@ async function runWeeklyDigestNow() {
   if (!queued) return;
   await invokeEmailFunction(
     "email-worker",
-    (data) => `Resumen semanal enviado. Correos procesados: ${data?.processed ?? 0}`,
+    (data) => emailWorkerResultMessage("Resumen semanal enviado/revisado", data),
   );
 }
 
@@ -10275,7 +10502,7 @@ async function runDailyDigestNow() {
   if (!queued) return;
   await invokeEmailFunction(
     "email-worker",
-    (data) => `Resumen diario enviado. Correos procesados: ${data?.processed ?? 0}`,
+    (data) => emailWorkerResultMessage("Resumen diario enviado/revisado", data),
   );
 }
 
