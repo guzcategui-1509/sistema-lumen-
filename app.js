@@ -1061,6 +1061,40 @@ const roleLabels = {
   cliente: "Cliente",
 };
 
+const visibleRoleOptions = [
+  { value: "admin", label: "Admin" },
+  { value: "directora", label: "Dirección" },
+  { value: "cuentas", label: "Cuentas" },
+  { value: "coordinador", label: "Coordinador" },
+  { value: "coordinacion", label: "Coordinación" },
+  { value: "medios", label: "Medios" },
+  { value: "creativo", label: "Creativo" },
+  { value: "disenador", label: "Diseñador" },
+  { value: "editor", label: "Editor" },
+  { value: "generador", label: "Generador" },
+  { value: "community", label: "Community" },
+  { value: "pauta", label: "Pauta" },
+  { value: "operaciones", label: "Operaciones" },
+  { value: "ejecutivo", label: "Ejecutivo" },
+  { value: "cliente", label: "Cliente" },
+];
+
+function uniqueRoleOptions(options = visibleRoleOptions) {
+  const seen = new Set();
+  return options.filter((option) => {
+    const key = normalizeRoleKey(option.label || option.value);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function renderVisibleRoleOptions(selectedRole = "") {
+  return uniqueRoleOptions()
+    .map((option) => `<option value="${escapeHtml(option.value)}" ${selectedRole === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`)
+    .join("");
+}
+
 function getSupabaseConfig() {
   const config = window.LUMEN_SUPABASE_CONFIG || {};
   const url = (config.url || "").trim();
@@ -7360,9 +7394,7 @@ function renderAdminUserManager(canManage) {
           <div class="field">
             <label>Rol</label>
             <select class="input" id="admin-user-role" ${disabled}>
-              ${Object.keys(roleLabels)
-                .map((role) => `<option value="${role}" ${selectedRole === role ? "selected" : ""}>${roleLabels[role]}</option>`)
-                .join("")}
+              ${renderVisibleRoleOptions(selectedRole)}
             </select>
           </div>
           <div class="field">
