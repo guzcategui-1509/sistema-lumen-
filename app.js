@@ -926,6 +926,7 @@ const state = {
   viewingWorkOrderId: "",
   focusedWorkOrderId: "",
   creatingWorkOrder: false,
+  workOrderSubmitting: false,
   workOrderDraftPhases: [],
   workOrderFormDraft: null,
   workOrderUsesPhases: true,
@@ -2378,6 +2379,7 @@ function render() {
   if (!canOpenModule(state.currentModule)) {
     state.currentModule = "dashboard";
     state.creatingWorkOrder = false;
+    state.workOrderSubmitting = false;
     state.editingWorkOrderId = "";
     state.viewingWorkOrderId = "";
   }
@@ -4849,8 +4851,8 @@ function renderWorkOrderForm(order = null) {
             Enviar notificacion por email
           </label>
           <span class="field-help email-recipient-help">${escapeHtml(emailRecipientSummary)} Configura la lista por marca en Notificaciones.</span>
-          <button class="button" data-action="${isEditing ? "update-work-order" : "create-work-order"}">
-            ${isEditing ? "Guardar cambios" : "Crear OT"}
+          <button class="button" data-action="${isEditing ? "update-work-order" : "create-work-order"}" ${!isEditing && state.workOrderSubmitting ? "disabled aria-busy=\"true\"" : ""}>
+            ${isEditing ? "Guardar cambios" : state.workOrderSubmitting ? "Creando..." : "Crear OT"}
           </button>
           ${isEditing ? `<button class="button-ghost" data-action="cancel-edit-work-order">Cancelar</button>` : `<button class="button-ghost" data-action="close-create-work-order">Cancelar</button>`}
         </div>
@@ -7902,6 +7904,7 @@ function bindEvents() {
       state.currentModule = button.dataset.module;
       if (state.currentModule !== "work-orders") {
         state.creatingWorkOrder = false;
+        state.workOrderSubmitting = false;
         state.editingWorkOrderId = "";
         state.viewingWorkOrderId = "";
         state.focusedWorkOrderId = "";
@@ -8234,6 +8237,7 @@ function openCreateWorkOrder() {
   if (!canCreateWorkOrders()) {
     state.currentModule = "dashboard";
     state.creatingWorkOrder = false;
+    state.workOrderSubmitting = false;
     showToast("Tu rol puede consultar y avanzar tus fases, pero no crear OTs.");
     render();
     return;
@@ -8243,6 +8247,7 @@ function openCreateWorkOrder() {
   state.editingWorkOrderId = "";
   state.viewingWorkOrderId = "";
   state.focusedWorkOrderId = "";
+  state.workOrderSubmitting = false;
   resetWorkOrderFormDraft();
   state.workOrderDraftPhases = defaultWorkOrderPhases();
   state.workOrderUsesPhases = true;
@@ -8255,9 +8260,19 @@ function openCreateWorkOrder() {
 
 function closeCreateWorkOrder() {
   state.creatingWorkOrder = false;
+  state.workOrderSubmitting = false;
   state.workOrderDraftPhases = [];
   resetWorkOrderFormDraft();
   render();
+}
+
+function setWorkOrderCreateSubmitting(isSubmitting) {
+  state.workOrderSubmitting = Boolean(isSubmitting);
+  const button = document.querySelector("[data-action=\"create-work-order\"]");
+  if (!button) return;
+  button.disabled = state.workOrderSubmitting;
+  button.setAttribute("aria-busy", state.workOrderSubmitting ? "true" : "false");
+  button.textContent = state.workOrderSubmitting ? "Creando..." : "Crear OT";
 }
 
 function captureFormScrollPosition() {
@@ -9647,6 +9662,10 @@ function buildUrgentWorkOrderEmail(order) {
 }
 
 async function createWorkOrderFromForm() {
+  if (state.workOrderSubmitting) {
+    debugInteraction("create-work-order-blocked", { reason: "already-submitting" });
+    return;
+  }
   if (!canCreateWorkOrders()) {
     showToast("Solo Dirección, Cuentas, Generador o Creativo puede crear órdenes");
     return;
@@ -9657,6 +9676,8 @@ async function createWorkOrderFromForm() {
   }
   const values = getWorkOrderFormValues();
   if (!validateWorkOrderValues(values)) return;
+  setWorkOrderCreateSubmitting(true);
+  try {
   let code = "";
   try {
     code = await generateWorkOrderCodeForBrand(state.currentBrandId);
@@ -9761,6 +9782,7 @@ async function createWorkOrderFromForm() {
 
     await loadSupabaseData();
     state.creatingWorkOrder = false;
+    state.workOrderSubmitting = false;
     state.workOrderDraftPhases = [];
     resetWorkOrderFormDraft();
     showToast(`OT creada en Supabase: ${code}`);
@@ -9790,10 +9812,14 @@ async function createWorkOrderFromForm() {
   });
   saveWorkOrders();
   state.creatingWorkOrder = false;
+  state.workOrderSubmitting = false;
   state.workOrderDraftPhases = [];
   resetWorkOrderFormDraft();
   showToast(`OT creada y ${values.notifyOnEmail ? "email preparado" : "sin email"}`);
   render();
+  } finally {
+    if (state.workOrderSubmitting) setWorkOrderCreateSubmitting(false);
+  }
 }
 
 async function sendUrgentWorkOrderAlert(id) {
