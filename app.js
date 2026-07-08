@@ -5913,6 +5913,52 @@ function renderProductionPlannerResponsibleChips(item = {}) {
   `;
 }
 
+function productionPlannerPillClass(value = "", prefix = "status") {
+  const normalized = normalizeRoleKey(value || "pendiente").replace(/\s+/g, "-");
+  if (prefix === "medium") {
+    if (normalized.includes("meta")) return "production-pill--meta";
+    if (normalized.includes("tiktok")) return "production-pill--tiktok";
+    if (normalized.includes("diseno") || normalized.includes("diseño")) return "production-pill--design";
+    return "production-pill--medium-default";
+  }
+  if (["modelo", "vendedor", "no", "por-definir"].includes(normalized)) return `production-pill--need-${normalized}`;
+  if (["en-revision", "aprobado", "pendiente", "no-aplica"].includes(normalized)) return `production-pill--matrix-${normalized}`;
+  if (["en-proceso", "en-revision", "aprobado", "programado", "producido", "pausado", "cancelado", "pendiente"].includes(normalized)) {
+    return `production-pill--${normalized}`;
+  }
+  return `production-pill--${prefix}-default`;
+}
+
+function renderProductionPlannerPill(value, prefix = "status", fallback = "Pendiente") {
+  const label = value || fallback;
+  return `<span class="production-pill ${productionPlannerPillClass(label, prefix)}">${escapeHtml(label)}</span>`;
+}
+
+function renderProductionPlannerDateStack(item = {}) {
+  return `
+    <div class="production-date-stack">
+      <span><strong>Matriz</strong>${escapeHtml(item.rawMatrixDueDate ? formatDate(item.rawMatrixDueDate) : "Sin fecha")}</span>
+      <span><strong>Producción</strong>${escapeHtml(item.productionDate ? formatDate(item.productionDate) : "Sin fecha")}</span>
+    </div>
+  `;
+}
+
+function renderProductionPlannerOwnerChips(item = {}) {
+  const additionalNames = productionPlannerResponsibleNames(item).filter(
+    (name) => ![item.accountOwner, item.digitalOwner].filter(Boolean).some((owner) => normalizePlannerSearchValue(owner) === normalizePlannerSearchValue(name)),
+  );
+  const visibleAdditional = additionalNames.slice(0, 2);
+  return `
+    <div class="production-assignee-chips">
+      ${item.accountOwner ? `<span class="production-assignee-chip"><small>Cuentas</small>${escapeHtml(item.accountOwner)}</span>` : ""}
+      ${item.digitalOwner ? `<span class="production-assignee-chip"><small>Digital</small>${escapeHtml(item.digitalOwner)}</span>` : ""}
+      ${visibleAdditional.map((name) => `<span class="production-assignee-chip is-team"><small>Equipo</small>${escapeHtml(name)}</span>`).join("")}
+      ${additionalNames.length > visibleAdditional.length ? `<span class="production-assignee-chip is-more">+${additionalNames.length - visibleAdditional.length} más</span>` : ""}
+      ${!item.accountOwner && !item.digitalOwner && !additionalNames.length ? `<span class="muted">Sin responsables</span>` : ""}
+    </div>
+  `;
+}
+
 function renderProductionPlannerAssigneeOptions(selectedIds = []) {
   const selected = new Set(selectedIds || []);
   const options = internalUsers().sort((a, b) => String(a.name).localeCompare(String(b.name)));
@@ -6056,35 +6102,28 @@ function renderProductionPlanner() {
           </button>
         `).join("")}
       </div>
-      <section class="panel compact-section production-planner-filter-panel">
-        <div class="filters-row planner-filters">
-          <div class="field planner-search-field">
-            <label>Buscar</label>
-            <input class="input" data-production-planner-filter="search" value="${escapeHtml(state.productionPlannerFilters.search)}" placeholder="Buscar producción, marca, medio o responsable..." />
+      <section class="production-planner-filter-panel">
+        <div class="production-planner-filterbar">
+          <div class="planner-search-field">
+            <input class="input" aria-label="Buscar producción" data-production-planner-filter="search" value="${escapeHtml(state.productionPlannerFilters.search)}" placeholder="Buscar producción, marca, medio o responsable..." />
           </div>
-          <div class="field">
-            <label>Marca</label>
-            <select class="input" data-production-planner-filter="brand">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("brand"), state.productionPlannerFilters.brand)}</select>
+          <div class="planner-filter-control">
+            <select class="input" aria-label="Marca" data-production-planner-filter="brand">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("brand"), state.productionPlannerFilters.brand, "Marca")}</select>
           </div>
-          <div class="field">
-            <label>Medio</label>
-            <select class="input" data-production-planner-filter="medium">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("medium"), state.productionPlannerFilters.medium)}</select>
+          <div class="planner-filter-control">
+            <select class="input" aria-label="Medio" data-production-planner-filter="medium">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("medium"), state.productionPlannerFilters.medium, "Medio")}</select>
           </div>
-          <div class="field">
-            <label>Estado</label>
-            <select class="input" data-production-planner-filter="status">${renderProductionPlannerSelectOptions(productionPlannerStatusOptions, state.productionPlannerFilters.status)}</select>
+          <div class="planner-filter-control">
+            <select class="input" aria-label="Estado" data-production-planner-filter="status">${renderProductionPlannerSelectOptions(productionPlannerStatusOptions, state.productionPlannerFilters.status, "Estado")}</select>
           </div>
-          <div class="field">
-            <label>Resp. cuentas</label>
-            <select class="input" data-production-planner-filter="accountOwner">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("accountOwner"), state.productionPlannerFilters.accountOwner)}</select>
+          <div class="planner-filter-control">
+            <select class="input" aria-label="Responsable cuentas" data-production-planner-filter="accountOwner">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("accountOwner"), state.productionPlannerFilters.accountOwner, "Resp. cuentas")}</select>
           </div>
-          <div class="field">
-            <label>Resp. digital</label>
-            <select class="input" data-production-planner-filter="digitalOwner">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("digitalOwner"), state.productionPlannerFilters.digitalOwner)}</select>
+          <div class="planner-filter-control">
+            <select class="input" aria-label="Responsable digital" data-production-planner-filter="digitalOwner">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("digitalOwner"), state.productionPlannerFilters.digitalOwner, "Resp. digital")}</select>
           </div>
-          <div class="field">
-            <label>Responsable</label>
-            <select class="input" data-production-planner-filter="responsible">${renderProductionPlannerSelectOptions(responsibleOptions, state.productionPlannerFilters.responsible)}</select>
+          <div class="planner-filter-control">
+            <select class="input" aria-label="Responsable" data-production-planner-filter="responsible">${renderProductionPlannerSelectOptions(responsibleOptions, state.productionPlannerFilters.responsible, "Responsable")}</select>
           </div>
           <label class="checkbox-line planner-archive-toggle">
             <input type="checkbox" data-production-planner-archive-toggle ${state.productionPlannerShowArchived ? "checked" : ""} />
@@ -6099,17 +6138,14 @@ function renderProductionPlanner() {
           <table class="compact-table production-planner-table">
             <thead>
               <tr>
-                <th>Marca</th>
-                <th>Medio</th>
+                <th>Marca / Producción</th>
+                <th>Canal</th>
                 <th>Entregables</th>
-                <th>Modelo/vendedor</th>
-                <th>Matriz en crudo</th>
-                <th>Entrega matriz</th>
-                <th>Producción</th>
+                <th>Necesidad</th>
+                <th>Matriz</th>
+                <th>Fechas</th>
                 <th>Estado</th>
-                <th>Resp. cuentas</th>
-                <th>Resp. digital</th>
-                <th>Equipo</th>
+                <th>Responsables</th>
                 <th>Notas</th>
                 <th>Acciones</th>
               </tr>
@@ -6118,7 +6154,7 @@ function renderProductionPlanner() {
               ${
                 items.length
                   ? items.map(renderProductionPlannerRow).join("")
-                  : `<tr><td colspan="13">No hay producciones para ${escapeHtml(productionPlannerPeriodLabel())}.</td></tr>`
+                  : `<tr><td colspan="10">No hay producciones para ${escapeHtml(productionPlannerPeriodLabel())}.</td></tr>`
               }
             </tbody>
           </table>
@@ -6132,20 +6168,22 @@ function renderProductionPlanner() {
 function renderProductionPlannerRow(item) {
   return `
     <tr class="production-planner-row ${item.archivedAt ? "archived-row" : ""}" data-action="edit-production-planner-item" data-id="${escapeHtml(item.id)}">
-      <td><strong>${escapeHtml(item.brand)}</strong></td>
-      <td>${escapeHtml(item.medium || "—")}</td>
-      <td>${escapeHtml(item.deliverables || "—")}</td>
-      <td>${escapeHtml(item.talentRequirement || "—")}</td>
-      <td>${escapeHtml(item.rawMatrixStatus || "—")}</td>
-      <td>${escapeHtml(item.rawMatrixDueDate ? formatDate(item.rawMatrixDueDate) : "Sin fecha")}</td>
-      <td>${escapeHtml(item.productionDate ? formatDate(item.productionDate) : "Sin fecha")}</td>
-      <td><span class="badge ${productionPlannerStatusClass(item.status)}">${escapeHtml(item.status || "Pendiente")}</span></td>
-      <td>${escapeHtml(item.accountOwner || "—")}</td>
-      <td>${escapeHtml(item.digitalOwner || "—")}</td>
-      <td>${renderProductionPlannerResponsibleChips(item)}</td>
-      <td>${escapeHtml(item.notes || "—")}</td>
       <td>
-        <div class="row wrap">
+        <div class="production-brand-cell">
+          <strong class="production-brand-name">${escapeHtml(item.brand || "Sin marca")}</strong>
+          <span class="production-brand-meta">${escapeHtml(productionPlannerPeriodLabel(item.month, item.year))}</span>
+        </div>
+      </td>
+      <td>${renderProductionPlannerPill(item.medium, "medium", "Sin medio")}</td>
+      <td><div class="production-deliverables-cell">${escapeHtml(item.deliverables || "Sin entregables")}</div></td>
+      <td>${renderProductionPlannerPill(item.talentRequirement, "need", "Por definir")}</td>
+      <td>${renderProductionPlannerPill(item.rawMatrixStatus, "matrix", "Pendiente")}</td>
+      <td>${renderProductionPlannerDateStack(item)}</td>
+      <td>${renderProductionPlannerPill(item.status, "status", "Pendiente")}</td>
+      <td>${renderProductionPlannerOwnerChips(item)}</td>
+      <td><div class="production-note-cell" title="${escapeHtml(item.notes || "")}">${escapeHtml(item.notes || "Sin notas")}</div></td>
+      <td>
+        <div class="production-row-actions">
           <button class="button-ghost small" data-action="edit-production-planner-item" data-id="${escapeHtml(item.id)}">Editar</button>
           <button class="button-ghost small" data-action="${item.archivedAt ? "restore-production-planner-item" : "archive-production-planner-item"}" data-id="${escapeHtml(item.id)}">${item.archivedAt ? "Restaurar" : "Archivar"}</button>
         </div>
