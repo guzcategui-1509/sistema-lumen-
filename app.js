@@ -564,6 +564,7 @@ const productionPlannerEmails = ["guzcategui@grupolumen.com"];
 const productionPlannerTalentOptions = ["Modelo", "Vendedor", "No", "Por definir"];
 const productionPlannerMatrixStatusOptions = ["Pendiente", "En revisión", "Aprobado", "No aplica"];
 const productionPlannerStatusOptions = ["Pendiente", "En proceso", "En revisión", "Aprobado", "Programado", "Producido", "Pausado", "Cancelado"];
+const productionPlannerNotificationType = "production_assigned";
 
 const workOrderPhaseCatalog = [
   { key: "brief", title: "Brief" },
@@ -953,11 +954,13 @@ const state = {
   productionPlannerEditingId: "",
   productionPlannerShowArchived: false,
   productionPlannerFilters: {
+    search: "",
     brand: "",
     medium: "",
     status: "",
     accountOwner: "",
     digitalOwner: "",
+    responsible: "",
   },
   notificationBrandId: "",
   initialRouteApplied: false,
@@ -1264,6 +1267,7 @@ function mapDbProductionPlannerItem(row) {
     status: row.status || "Pendiente",
     accountOwner: row.account_owner || "",
     digitalOwner: row.digital_owner || "",
+    additionalResponsibleIds: Array.isArray(row.additional_responsible_ids) ? row.additional_responsible_ids : [],
     notes: row.notes || "",
     createdBy: row.created_by || "",
     updatedBy: row.updated_by || "",
@@ -1301,6 +1305,7 @@ function productionPlannerItemToDb(item) {
     status: item.status || "Pendiente",
     account_owner: item.accountOwner || null,
     digital_owner: item.digitalOwner || null,
+    additional_responsible_ids: uniqueUserIds(item.additionalResponsibleIds || []),
     notes: item.notes || null,
   };
 }
@@ -5795,11 +5800,13 @@ function currentProductionPlannerItems({ includeArchived = state.productionPlann
   return productionPlannerItems
     .filter((item) => Number(item.month) === Number(state.productionPlannerMonth) && Number(item.year) === Number(state.productionPlannerYear))
     .filter((item) => includeArchived || !item.archivedAt)
+    .filter((item) => productionPlannerMatchesSearch(item, filters.search))
     .filter((item) => !filters.brand || item.brand === filters.brand)
     .filter((item) => !filters.medium || item.medium === filters.medium)
     .filter((item) => !filters.status || item.status === filters.status)
     .filter((item) => !filters.accountOwner || item.accountOwner === filters.accountOwner)
     .filter((item) => !filters.digitalOwner || item.digitalOwner === filters.digitalOwner)
+    .filter((item) => !filters.responsible || productionPlannerResponsibleNames(item).includes(filters.responsible))
     .sort((a, b) => String(a.productionDate || "9999-12-31").localeCompare(String(b.productionDate || "9999-12-31")) || a.brand.localeCompare(b.brand));
 }
 
@@ -5830,6 +5837,175 @@ function productionPlannerFilterOptions(field) {
     .sort((a, b) => String(a).localeCompare(String(b)));
 }
 
+function normalizePlannerSearchValue(value = "") {
+  return plainText(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function userIdsMatchingPlannerOwner(value = "") {
+  const query = normalizePlannerSearchValue(value);
+  if (!query) return [];
+  return internalUsers()
+    .filter((user) => {
+      const name = normalizePlannerSearchValue(user.name);
+      const email = normalizePlannerSearchValue(user.email);
+      return name === query || email === query || name.includes(query) || query.includes(name);
+    })
+    .map((user) => user.id);
+}
+
+function productionPlannerResponsibleIds(item = {}) {
+  return uniqueUserIds([
+    ...userIdsMatchingPlannerOwner(item.accountOwner),
+    ...userIdsMatchingPlannerOwner(item.digitalOwner),
+    ...(item.additionalResponsibleIds || []),
+  ]);
+}
+
+function productionPlannerResponsibleNames(item = {}) {
+  return productionPlannerResponsibleIds(item).map(userName).filter(Boolean);
+}
+
+function productionPlannerResponsibleSearchText(item = {}) {
+  return [
+    item.accountOwner,
+    item.digitalOwner,
+    ...productionPlannerResponsibleNames(item),
+    ...(item.additionalResponsibleIds || []).map(userEmail),
+  ].filter(Boolean).join(" ");
+}
+
+function productionPlannerBrandCounts() {
+  return productionPlannerPeriodItems()
+    .filter((item) => state.productionPlannerShowArchived || !item.archivedAt)
+    .reduce((counts, item) => {
+      const brand = item.brand || "Sin marca";
+      counts.set(brand, (counts.get(brand) || 0) + 1);
+      return counts;
+    }, new Map());
+}
+
+function productionPlannerVisibleBrandOptions() {
+  return [...productionPlannerBrandCounts().entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function productionPlannerMatchesSearch(item, search = "") {
+  const query = normalizePlannerSearchValue(search);
+  if (!query) return true;
+  const haystack = normalizePlannerSearchValue([
+    item.brand,
+    item.medium,
+    item.deliverables,
+    item.accountOwner,
+    item.digitalOwner,
+    productionPlannerResponsibleSearchText(item),
+    item.notes,
+  ].filter(Boolean).join(" "));
+  return haystack.includes(query);
+}
+
+function renderProductionPlannerResponsibleChips(item = {}) {
+  const names = productionPlannerResponsibleNames(item);
+  if (!names.length) return `<span class="muted">—</span>`;
+  return `
+    <div class="planner-chip-list">
+      ${names.map((name) => `<span class="planner-user-chip">${escapeHtml(name)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function renderProductionPlannerAssigneeOptions(selectedIds = []) {
+  const selected = new Set(selectedIds || []);
+  const options = internalUsers().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return options.length
+    ? options.map((user) => `
+        <label class="planner-assignee-option">
+          <input type="checkbox" data-production-planner-assignee value="${escapeHtml(user.id)}" ${selected.has(user.id) ? "checked" : ""} />
+          <span>
+            <strong>${escapeHtml(user.name)}</strong>
+            <small>${escapeHtml(roleLabels[user.role] || user.role)} · ${escapeHtml(user.email || "sin email")}</small>
+          </span>
+        </label>
+      `).join("")
+    : `<div class="empty compact-empty">No hay usuarios internos activos.</div>`;
+}
+
+function buildProductionPlannerUrl(month = state.productionPlannerMonth, year = state.productionPlannerYear) {
+  const url = new URL(getAppBaseUrl());
+  url.searchParams.set("module", "production-planner");
+  url.searchParams.set("month", month);
+  url.searchParams.set("year", year);
+  return url.toString();
+}
+
+function buildProductionPlannerAssignmentEmail(item, eventLabel = "Nueva producción asignada") {
+  const plannerUrl = buildProductionPlannerUrl(item.month, item.year);
+  return `
+    <div style="margin:0;background:#f6f6f3;padding:28px 16px;font-family:Arial,Helvetica,sans-serif;color:#2d2d2d;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #deded8;border-radius:14px;overflow:hidden;">
+        <div style="padding:26px 28px 20px;border-left:7px solid #49ee8c;">
+          <div style="font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#176339;margin-bottom:10px;">${escapeHtml(eventLabel)}</div>
+          <h1 style="margin:0 0 8px;font-size:27px;line-height:1.15;color:#2d2d2d;">${escapeHtml(item.brand || "Producción")}</h1>
+          <p style="margin:0;color:#5f6760;font-size:17px;line-height:1.45;">${escapeHtml(item.deliverables || item.medium || "Sin entregables especificados")}</p>
+        </div>
+        <div style="padding:0 28px 26px;">
+          <table role="presentation" style="width:100%;border-collapse:collapse;margin:10px 0 22px;">
+            ${[
+              ["Periodo", productionPlannerPeriodLabel(item.month, item.year)],
+              ["Medio", item.medium || "Sin medio"],
+              ["Entregables", item.deliverables || "Sin entregables"],
+              ["Matriz en crudo", item.rawMatrixStatus || "Sin estado"],
+              ["Fecha entrega matriz", item.rawMatrixDueDate ? formatDate(item.rawMatrixDueDate) : "Sin fecha"],
+              ["Fecha producción", item.productionDate ? formatDate(item.productionDate) : "Sin fecha"],
+              ["Estado", item.status || "Pendiente"],
+              ["Responsable cuentas", item.accountOwner || "Sin asignar"],
+              ["Responsable digital", item.digitalOwner || "Sin asignar"],
+              ["Equipo involucrado", productionPlannerResponsibleNames(item).join(", ") || "Sin adicionales"],
+            ].map(([label, value]) => `
+              <tr>
+                <td style="padding:10px 0;border-bottom:1px solid #ecece8;color:#6b726c;">${escapeHtml(label)}</td>
+                <td style="padding:10px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(value)}</td>
+              </tr>
+            `).join("")}
+          </table>
+          ${item.notes ? `<div style="margin-bottom:22px;border:1px solid #ecece8;border-radius:12px;padding:14px 16px;background:#fafaf8;"><strong>Notas:</strong> ${escapeHtml(item.notes)}</div>` : ""}
+          <a href="${escapeHtml(plannerUrl)}" style="display:inline-block;background:#2d2d2d;color:#ffffff;text-decoration:none;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:800;">Abrir Planificador de producción</a>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function queueProductionPlannerAssignmentEmails(item, recipientIds = [], eventLabel = "Nueva producción asignada") {
+  if (!isSupabaseMode()) return { count: 0, error: null };
+  const currentUserId = dataState.session?.user?.id || "";
+  const recipients = dedupeUsersByEmail(
+    internalUsers().filter((user) => recipientIds.includes(user.id) && user.id !== currentUserId && user.email),
+  );
+  if (!recipients.length) return { count: 0, error: null };
+
+  const { error } = await supabaseClient.from("email_notifications").insert(
+    recipients.map((user) => ({
+      brand_id: null,
+      work_order_id: null,
+      recipient_user_id: user.id,
+      recipient_email: user.email,
+      notification_type: productionPlannerNotificationType,
+      subject: `${eventLabel}: ${item.brand || "Producción"} · ${item.deliverables || item.medium || productionPlannerPeriodLabel(item.month, item.year)}`,
+      html_body: buildProductionPlannerAssignmentEmail(item, eventLabel),
+      status: "queued",
+      scheduled_for: new Date().toISOString(),
+    })),
+  );
+  if (error) {
+    console.warn("No se pudo encolar email production_assigned.", {
+      plannerItemId: item.id,
+      recipients: recipients.map((user) => user.id),
+      message: error.message,
+    });
+  }
+  return { count: recipients.length, error };
+}
+
 function renderProductionPlannerSelectOptions(options, activeValue = "", emptyLabel = "Todos") {
   return `
     <option value="">${escapeHtml(emptyLabel)}</option>
@@ -5842,8 +6018,11 @@ function renderProductionPlanner() {
     return `<section class="panel section"><h2 class="section-title">Planificador de producción</h2><p class="muted">No tienes acceso a esta herramienta.</p></section>`;
   }
   const items = currentProductionPlannerItems();
+  const totalPeriodItems = productionPlannerPeriodItems().filter((item) => state.productionPlannerShowArchived || !item.archivedAt).length;
   const archivedCount = currentProductionPlannerItems({ includeArchived: true }).filter((item) => item.archivedAt).length;
   const editingItem = productionPlannerItems.find((item) => item.id === state.productionPlannerEditingId);
+  const brandOptions = productionPlannerVisibleBrandOptions();
+  const responsibleOptions = [...new Set(productionPlannerPeriodItems().flatMap(productionPlannerResponsibleNames))].sort((a, b) => a.localeCompare(b));
   return `
     <section class="production-planner-workspace">
       <div class="production-planner-toolbar">
@@ -5869,8 +6048,20 @@ function renderProductionPlanner() {
       </div>
       ${!dataState.productionPlannerReady && isSupabaseMode() ? `<div class="auth-error">Falta ejecutar <strong>supabase/patch_production_planner.sql</strong> para activar esta tabla en Supabase.</div>` : ""}
       <div class="production-planner-summary-line">${escapeHtml(productionPlannerSummaryLine())}</div>
+      <div class="planner-brand-chips" aria-label="Filtro rápido por marca">
+        <button class="quick-chip ${state.productionPlannerFilters.brand ? "" : "active"}" data-production-planner-brand-filter="">Todas <span>${totalPeriodItems}</span></button>
+        ${brandOptions.map(([brand, count]) => `
+          <button class="quick-chip ${state.productionPlannerFilters.brand === brand ? "active" : ""}" data-production-planner-brand-filter="${escapeHtml(brand)}">
+            ${escapeHtml(brand)} <span>${count}</span>
+          </button>
+        `).join("")}
+      </div>
       <section class="panel compact-section production-planner-filter-panel">
         <div class="filters-row planner-filters">
+          <div class="field planner-search-field">
+            <label>Buscar</label>
+            <input class="input" data-production-planner-filter="search" value="${escapeHtml(state.productionPlannerFilters.search)}" placeholder="Buscar producción, marca, medio o responsable..." />
+          </div>
           <div class="field">
             <label>Marca</label>
             <select class="input" data-production-planner-filter="brand">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("brand"), state.productionPlannerFilters.brand)}</select>
@@ -5891,11 +6082,17 @@ function renderProductionPlanner() {
             <label>Resp. digital</label>
             <select class="input" data-production-planner-filter="digitalOwner">${renderProductionPlannerSelectOptions(productionPlannerFilterOptions("digitalOwner"), state.productionPlannerFilters.digitalOwner)}</select>
           </div>
+          <div class="field">
+            <label>Responsable</label>
+            <select class="input" data-production-planner-filter="responsible">${renderProductionPlannerSelectOptions(responsibleOptions, state.productionPlannerFilters.responsible)}</select>
+          </div>
           <label class="checkbox-line planner-archive-toggle">
             <input type="checkbox" data-production-planner-archive-toggle ${state.productionPlannerShowArchived ? "checked" : ""} />
             Ver archivadas (${archivedCount})
           </label>
+          <button class="button-ghost small planner-clear-filters" data-action="clear-production-planner-filters">Limpiar filtros</button>
         </div>
+        <div class="planner-result-count">Mostrando ${items.length} de ${totalPeriodItems} producciones</div>
       </section>
       <section class="panel production-planner-table-panel">
         <div class="table-wrap production-planner-table-wrap">
@@ -5912,6 +6109,7 @@ function renderProductionPlanner() {
                 <th>Estado</th>
                 <th>Resp. cuentas</th>
                 <th>Resp. digital</th>
+                <th>Equipo</th>
                 <th>Notas</th>
                 <th>Acciones</th>
               </tr>
@@ -5920,7 +6118,7 @@ function renderProductionPlanner() {
               ${
                 items.length
                   ? items.map(renderProductionPlannerRow).join("")
-                  : `<tr><td colspan="12">No hay producciones para ${escapeHtml(productionPlannerPeriodLabel())}.</td></tr>`
+                  : `<tr><td colspan="13">No hay producciones para ${escapeHtml(productionPlannerPeriodLabel())}.</td></tr>`
               }
             </tbody>
           </table>
@@ -5944,6 +6142,7 @@ function renderProductionPlannerRow(item) {
       <td><span class="badge ${productionPlannerStatusClass(item.status)}">${escapeHtml(item.status || "Pendiente")}</span></td>
       <td>${escapeHtml(item.accountOwner || "—")}</td>
       <td>${escapeHtml(item.digitalOwner || "—")}</td>
+      <td>${renderProductionPlannerResponsibleChips(item)}</td>
       <td>${escapeHtml(item.notes || "—")}</td>
       <td>
         <div class="row wrap">
@@ -5971,6 +6170,7 @@ function renderProductionPlannerModal(item) {
     status: "Pendiente",
     accountOwner: "",
     digitalOwner: "",
+    additionalResponsibleIds: [],
     notes: "",
   };
   return `
@@ -6025,6 +6225,13 @@ function renderProductionPlannerModal(item) {
           <div class="field">
             <label>Responsable digital</label>
             <input class="input" id="planner-digital-owner" value="${escapeHtml(draft.digitalOwner)}" />
+          </div>
+          <div class="field full">
+            <label>Equipo involucrado / Responsables adicionales</label>
+            <div class="planner-assignee-grid">
+              ${renderProductionPlannerAssigneeOptions(draft.additionalResponsibleIds || [])}
+            </div>
+            <div class="field-help">Selecciona solo personas involucradas. No se duplican si tambien aparecen en cuentas o digital.</div>
           </div>
           <div class="field full">
             <label>Notas</label>
@@ -7858,6 +8065,20 @@ function bindEvents() {
       state.productionPlannerFilters[input.dataset.productionPlannerFilter] = input.value;
       render();
     });
+    if (input.dataset.productionPlannerFilter === "search") {
+      input.addEventListener("input", () => {
+        state.productionPlannerFilters.search = input.value;
+        window.clearTimeout(input._lumenPlannerSearchTimer);
+        input._lumenPlannerSearchTimer = window.setTimeout(render, 160);
+      });
+    }
+  });
+
+  document.querySelectorAll("[data-production-planner-brand-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.productionPlannerFilters.brand = button.dataset.productionPlannerBrandFilter || "";
+      render();
+    });
   });
 
   document.querySelector("[data-production-planner-archive-toggle]")?.addEventListener("change", (event) => {
@@ -8221,6 +8442,7 @@ async function handleAction(action, id) {
     "archive-production-planner-item": () => archiveProductionPlannerItem(id, true),
     "restore-production-planner-item": () => archiveProductionPlannerItem(id, false),
     "duplicate-production-planner-month": () => duplicatePreviousProductionPlannerMonth(),
+    "clear-production-planner-filters": () => clearProductionPlannerFilters(),
     "save-brand-email-recipients": () => saveBrandEmailRecipients(),
     "clear-brand-email-recipients": () => clearBrandEmailRecipients(),
     "download-report-pdf": () => downloadReportPdf(),
@@ -8251,6 +8473,20 @@ function cancelProductionPlannerEdit() {
   render();
 }
 
+function clearProductionPlannerFilters() {
+  state.productionPlannerFilters = {
+    search: "",
+    brand: "",
+    medium: "",
+    status: "",
+    accountOwner: "",
+    digitalOwner: "",
+    responsible: "",
+  };
+  state.productionPlannerShowArchived = false;
+  render();
+}
+
 function readProductionPlannerForm(id = "") {
   return {
     id,
@@ -8266,6 +8502,7 @@ function readProductionPlannerForm(id = "") {
     status: document.getElementById("planner-status")?.value || "Pendiente",
     accountOwner: document.getElementById("planner-account-owner")?.value.trim() || "",
     digitalOwner: document.getElementById("planner-digital-owner")?.value.trim() || "",
+    additionalResponsibleIds: Array.from(document.querySelectorAll("[data-production-planner-assignee]:checked")).map((input) => input.value),
     notes: document.getElementById("planner-notes")?.value.trim() || "",
   };
 }
@@ -8281,6 +8518,10 @@ async function saveProductionPlannerItem(id = "") {
     showToast("Escribe la marca para guardar la producción");
     return;
   }
+  const previousResponsibleIds = existingItem ? productionPlannerResponsibleIds(existingItem) : [];
+  const nextResponsibleIds = productionPlannerResponsibleIds(values);
+  const newResponsibleIds = nextResponsibleIds.filter((userId) => !previousResponsibleIds.includes(userId));
+  let savedItem = null;
 
   if (isSupabaseMode()) {
     const payload = {
@@ -8288,22 +8529,43 @@ async function saveProductionPlannerItem(id = "") {
       updated_by: dataState.session?.user?.id || null,
     };
     if (existingItem) {
-      const { error } = await supabaseClient
+      const { data, error } = await supabaseClient
         .from("production_planner_items")
         .update(payload)
-        .eq("id", existingItem.id);
+        .eq("id", existingItem.id)
+        .select()
+        .single();
       if (error) {
-        showToast(`No se pudo guardar: ${error.message}`);
+        const message = error.message || "";
+        showToast(message.includes("additional_responsible_ids")
+          ? "Falta ejecutar supabase/patch_production_planner_notifications.sql para responsables del Planificador"
+          : `No se pudo guardar: ${message}`);
         return;
       }
+      savedItem = mapDbProductionPlannerItem(data);
     } else {
-      const { error } = await supabaseClient
+      const { data, error } = await supabaseClient
         .from("production_planner_items")
-        .insert({ ...payload, created_by: dataState.session?.user?.id || null });
+        .insert({ ...payload, created_by: dataState.session?.user?.id || null })
+        .select()
+        .single();
       if (error) {
-        showToast(`No se pudo crear: ${error.message}`);
+        const message = error.message || "";
+        showToast(message.includes("additional_responsible_ids")
+          ? "Falta ejecutar supabase/patch_production_planner_notifications.sql para responsables del Planificador"
+          : `No se pudo crear: ${message}`);
         return;
       }
+      savedItem = mapDbProductionPlannerItem(data);
+    }
+    if (newResponsibleIds.length) {
+      const emailResult = await queueProductionPlannerAssignmentEmails(
+        savedItem || values,
+        newResponsibleIds,
+        existingItem ? "Producción actualizada" : "Nueva producción asignada",
+      );
+      if (emailResult.error) showToast(`Producción guardada, pero fallo email: ${emailResult.error.message}`);
+      else if (emailResult.count) await invokeEmailFunction("email-worker", (data) => `Producción guardada y correos revisados: ${data?.processed ?? 0}`, {}, { allowCreators: true });
     }
     await loadSupabaseData();
   } else if (existingItem) {
@@ -8383,6 +8645,7 @@ async function duplicatePreviousProductionPlannerMonth() {
     status: "Pendiente",
     accountOwner: item.accountOwner,
     digitalOwner: item.digitalOwner,
+    additionalResponsibleIds: item.additionalResponsibleIds || [],
     notes: item.notes,
   }));
 
