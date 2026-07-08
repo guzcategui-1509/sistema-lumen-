@@ -4,6 +4,9 @@ type EmailNotification = {
   notification_type: string;
   subject: string;
   html_body: string | null;
+  status: string;
+  scheduled_for: string | null;
+  created_at: string;
 };
 
 type Profile = {
@@ -93,11 +96,14 @@ async function authorizeRequest(request: Request) {
 }
 
 async function markNotification(id: string, payload: Record<string, unknown>) {
-  await supabaseRequest(`email_notifications?id=eq.${id}`, {
+  const response = await supabaseRequest(`email_notifications?id=eq.${id}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    throw new Error(`Failed to update email notification ${id}: ${await response.text()}`);
+  }
 }
 
 function parseEmailFrom(value: string) {
@@ -115,6 +121,15 @@ function parseEmailFrom(value: string) {
 }
 
 async function sendEmail(notification: EmailNotification) {
+  const missingFields = [
+    !notification.recipient_email ? "recipient_email" : "",
+    !notification.subject ? "subject" : "",
+    !notification.html_body ? "html_body" : "",
+  ].filter(Boolean);
+  if (missingFields.length) {
+    throw new Error(`Missing required email fields: ${missingFields.join(", ")}`);
+  }
+
   const sender = parseEmailFrom(EMAIL_FROM);
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
@@ -150,6 +165,15 @@ Deno.serve(async (request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  const requestBody = await request.clone().json().catch(() => ({})) as {
+    source?: string;
+    job?: string;
+  };
+  console.log("email-worker:start", {
+    source: requestBody.source ?? "manual",
+    job: requestBody.job ?? "email-worker",
+  });
+
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !BREVO_API_KEY) {
     return jsonResponse({ error: "Missing environment variables" }, 500);
   }
@@ -159,19 +183,39 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: auth.error ?? "Unauthorized" }, auth.status ?? 401);
   }
 
-  const now = encodeURIComponent(new Date().toISOString());
+  const now = new Date().toISOString();
+  const params = new URLSearchParams({
+    status: "in.(queued,pending)",
+    or: `(scheduled_for.is.null,scheduled_for.lte.${now})`,
+    select: "id,recipient_email,notification_type,subject,html_body,status,scheduled_for,created_at",
+    order: "scheduled_for.asc.nullsfirst,created_at.asc",
+    limit: "25",
+  });
   const response = await supabaseRequest(
-    `email_notifications?status=in.(queued,pending)&or=(scheduled_for.is.null,scheduled_for.lte.${now})&select=id,recipient_email,notification_type,subject,html_body&order=scheduled_for.asc.nullsfirst,created_at.asc&limit=25`,
+    `email_notifications?${params.toString()}`,
   );
 
   if (!response.ok) {
-    return jsonResponse({ error: await response.text() }, 500);
+    const errorText = await response.text();
+    console.log("email-worker:query-error", { error: errorText });
+    return jsonResponse({ error: errorText }, 500);
   }
 
   const notifications = (await response.json()) as EmailNotification[];
+  console.log("email-worker:candidates", { count: notifications.length });
   const results = [];
 
   for (const notification of notifications) {
+    console.log("email-worker:candidate", {
+      id: notification.id,
+      notification_type: notification.notification_type,
+      status: notification.status,
+      recipient_email: notification.recipient_email,
+      scheduled_for: notification.scheduled_for,
+      has_html_body: Boolean(notification.html_body),
+      has_subject: Boolean(notification.subject),
+    });
+
     try {
       const providerMessageId = await sendEmail(notification);
       await markNotification(notification.id, {
@@ -180,12 +224,22 @@ Deno.serve(async (request) => {
         provider_message_id: providerMessageId,
         error_message: null,
       });
+      console.log("email-worker:result", { id: notification.id, status: "sent" });
       results.push({ id: notification.id, notification_type: notification.notification_type, status: "sent" });
     } catch (error) {
-      await markNotification(notification.id, {
-        status: "failed",
-        error_message: error instanceof Error ? error.message : "Unknown email error",
-      });
+      const message = error instanceof Error ? error.message : "Unknown email error";
+      try {
+        await markNotification(notification.id, {
+          status: "failed",
+          error_message: message,
+        });
+      } catch (updateError) {
+        console.log("email-worker:update-failed", {
+          id: notification.id,
+          error: updateError instanceof Error ? updateError.message : "Unknown update error",
+        });
+      }
+      console.log("email-worker:result", { id: notification.id, status: "failed", error: message });
       results.push({ id: notification.id, notification_type: notification.notification_type, status: "failed" });
     }
   }
