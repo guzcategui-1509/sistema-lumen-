@@ -951,6 +951,8 @@ const initialProductionPlannerItems = [
 
 let productionPlannerItems = loadStoredCollection("lumen_production_planner_items_v1", initialProductionPlannerItems);
 
+const WORK_ORDER_DRAFT_STORAGE_KEY = "lumen_create_work_order_draft";
+
 const state = {
   currentModule: "dashboard",
   currentBrandId: ALL_BRANDS_ID,
@@ -4166,8 +4168,7 @@ function renderPhaseStatusOptions(activeStatus = "pending") {
 function renderPhaseAssigneeOptions(activeUserId = "") {
   return `
     <option value="">Sin responsable</option>
-    ${activeUsers()
-      .filter((user) => user.role !== "cliente" && canUserAccessBrand(user, state.currentBrandId))
+    ${availableWorkOrderAssigneeUsers(new Set(activeUserId ? [activeUserId] : []))
       .map((user) => `<option value="${escapeHtml(user.id)}" ${activeUserId === user.id ? "selected" : ""}>${escapeHtml(user.name)} · ${escapeHtml(roleLabels[user.role] || user.role)}</option>`)
       .join("")}
   `;
@@ -4340,11 +4341,112 @@ function renderWorkOrderFileChip(order, file, index, options = {}) {
 }
 
 function availableWorkOrderAssigneeUsers(selectedAssignees = new Set()) {
-  return users.filter(
-    (user) =>
-      user.role !== "cliente" &&
-      (user.isActive !== false || selectedAssignees.has(user.id)) &&
-      canUserAccessBrand(user, state.currentBrandId),
+  return users
+    .filter((user) => user.role !== "cliente" && (user.isActive !== false || selectedAssignees.has(user.id)))
+    .sort((a, b) => {
+      const selectedDelta = Number(selectedAssignees.has(b.id)) - Number(selectedAssignees.has(a.id));
+      if (selectedDelta) return selectedDelta;
+      return String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" });
+    });
+}
+
+function workOrderAssigneeSearchText(user) {
+  return normalizeAiText([user.name, user.email, user.role, roleLabels[user.role]].filter(Boolean).join(" "));
+}
+
+function emptyWorkOrderFormDraft() {
+  return {
+    title: "",
+    selectedBrandId: isAllBrandsScope() ? "" : state.currentBrandId,
+    assigneeSearch: "",
+    assignees: [],
+    dueDate: "",
+    priority: "medium",
+    status: "new",
+    category: "diseno",
+    artCount: "",
+    description: "Contexto, entregable esperado y criterios de aprobación.",
+    subtasks: "",
+    materialChanges: "",
+    notifyOnEmail: true,
+    usesPhases: true,
+    phases: [],
+    createRequestId: `wo-draft-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  };
+}
+
+function loadStoredWorkOrderDraft() {
+  try {
+    const raw = sessionStorage.getItem(WORK_ORDER_DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const draft = JSON.parse(raw);
+    if (!draft || typeof draft !== "object") return null;
+    return { ...emptyWorkOrderFormDraft(), ...draft };
+  } catch (error) {
+    console.warn("No se pudo restaurar el borrador de OT.", error);
+    return null;
+  }
+}
+
+function persistWorkOrderFormDraft() {
+  if (!state.workOrderFormDraft) return;
+  try {
+    sessionStorage.setItem(WORK_ORDER_DRAFT_STORAGE_KEY, JSON.stringify(state.workOrderFormDraft));
+  } catch (error) {
+    console.warn("No se pudo guardar el borrador temporal de OT.", error);
+  }
+}
+
+function clearStoredWorkOrderDraft() {
+  try {
+    sessionStorage.removeItem(WORK_ORDER_DRAFT_STORAGE_KEY);
+  } catch (error) {
+    console.warn("No se pudo limpiar el borrador temporal de OT.", error);
+  }
+}
+
+function ensureWorkOrderFormDraft() {
+  if (!state.workOrderFormDraft) {
+    state.workOrderFormDraft = loadStoredWorkOrderDraft() || emptyWorkOrderFormDraft();
+  }
+  if (!state.workOrderFormDraft.createRequestId) {
+    state.workOrderFormDraft.createRequestId = `wo-draft-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+  if (state.workOrderFormDraft.selectedBrandId && brands.some((brand) => brand.id === state.workOrderFormDraft.selectedBrandId)) {
+    state.currentBrandId = state.workOrderFormDraft.selectedBrandId;
+  } else if (!isAllBrandsScope()) {
+    state.workOrderFormDraft.selectedBrandId = state.currentBrandId;
+  }
+  if (state.workOrderFormDraft.usesPhases !== false && !state.workOrderDraftPhases.length && state.workOrderFormDraft.phases?.length) {
+    state.workOrderDraftPhases = normalizeWorkOrderPhases(state.workOrderFormDraft.phases);
+  }
+  persistWorkOrderFormDraft();
+  return state.workOrderFormDraft;
+}
+
+function hasMeaningfulWorkOrderDraft(draft = state.workOrderFormDraft) {
+  if (!draft) return false;
+  const phasesChanged = state.workOrderDraftPhases.some((phase, index) => {
+    const defaultPhase = workOrderPhaseCatalog[index];
+    return Boolean(
+      phase.assignedTo ||
+        phase.dueDate ||
+        phase.description !== (defaultWorkOrderPhaseDescriptions[phase.phaseKey] || "") ||
+        !defaultPhase ||
+        phase.phaseKey !== defaultPhase.key ||
+        phase.title !== defaultPhase.title,
+    );
+  });
+  return Boolean(
+    draft.title ||
+      draft.assigneeSearch ||
+      draft.assignees?.length ||
+      draft.dueDate ||
+      draft.artCount ||
+      draft.subtasks ||
+      draft.materialChanges ||
+      (draft.description && draft.description !== "Contexto, entregable esperado y criterios de aprobación.") ||
+      phasesChanged,
   );
 }
 
@@ -4680,8 +4782,11 @@ function selectedWorkOrderAssigneeIdsFromForm() {
 function readWorkOrderFormDraftFromDom() {
   const usePhasesInput = document.getElementById("ot-use-phases");
   const artCountInput = document.getElementById("ot-art-count");
+  const currentDraft = state.workOrderFormDraft || emptyWorkOrderFormDraft();
   return {
     title: document.getElementById("ot-title")?.value || "",
+    selectedBrandId: isAllBrandsScope() ? currentDraft.selectedBrandId || "" : state.currentBrandId,
+    assigneeSearch: document.getElementById("ot-assignee-search")?.value || "",
     assignees: selectedWorkOrderAssigneeIdsFromForm(),
     dueDate: document.getElementById("ot-due-date")?.value || "",
     priority: document.getElementById("ot-priority")?.value || "medium",
@@ -4693,6 +4798,7 @@ function readWorkOrderFormDraftFromDom() {
     materialChanges: document.getElementById("ot-material-changes")?.value || "",
     notifyOnEmail: document.getElementById("ot-email")?.checked ?? true,
     usesPhases: usePhasesInput ? usePhasesInput.checked : state.workOrderUsesPhases !== false,
+    createRequestId: currentDraft.createRequestId,
   };
 }
 
@@ -4702,11 +4808,14 @@ function syncWorkOrderFormDraftFromForm() {
   state.workOrderFormDraft = draft;
   state.workOrderUsesPhases = draft.usesPhases;
   state.workOrderDraftPhases = draft.usesPhases ? getWorkOrderPhaseFormValues() : [];
+  state.workOrderFormDraft.phases = state.workOrderDraftPhases;
+  persistWorkOrderFormDraft();
 }
 
-function resetWorkOrderFormDraft() {
+function resetWorkOrderFormDraft({ clearStorage = true } = {}) {
   state.workOrderFormDraft = null;
   state.workOrderUsesPhases = true;
+  if (clearStorage) clearStoredWorkOrderDraft();
 }
 
 function renderWorkOrderForm(order = null) {
@@ -4728,7 +4837,7 @@ function renderWorkOrderForm(order = null) {
       </div>
     `;
   }
-  const draft = state.workOrderFormDraft;
+  const draft = isEditing ? state.workOrderFormDraft : ensureWorkOrderFormDraft();
   const selectedAssignees = new Set(
     Array.isArray(draft?.assignees) ? draft.assignees : isEditing ? orderAssignees(order) : [],
   );
@@ -4753,6 +4862,7 @@ function renderWorkOrderForm(order = null) {
   const categoryValue = draft?.category ?? (isEditing ? order.category : "diseno");
   const artCountValue = draft?.artCount ?? (isEditing && order.artCount !== null && order.artCount !== undefined ? String(order.artCount) : "");
   const notifyOnEmail = draft?.notifyOnEmail ?? (isEditing ? order.notifyOnEmail !== false : true);
+  const assigneeSearchValue = draft?.assigneeSearch || "";
   const emailRecipientSummary = brandEmailRecipientSummary(state.currentBrandId, Array.from(selectedAssignees));
 
   return `
@@ -4777,7 +4887,7 @@ function renderWorkOrderForm(order = null) {
         <div class="field">
           <label>Responsables</label>
           <div class="assignee-picker">
-            <input class="input assignee-search" id="ot-assignee-search" placeholder="Buscar responsable..." />
+            <input class="input assignee-search" id="ot-assignee-search" placeholder="Buscar responsable..." value="${escapeHtml(assigneeSearchValue)}" />
             <div class="assignee-selected-list" aria-live="polite">
               ${
                 selectedUsers.length
@@ -4800,7 +4910,7 @@ function renderWorkOrderForm(order = null) {
                   (user) => {
                     const userLoad = workloadLabelForUser(user.id);
                     return `
-                    <label class="assignee-option" data-assignee-option="${escapeHtml(`${user.name} ${user.email} ${roleLabels[user.role] || user.role}`.toLowerCase())}">
+                    <label class="assignee-option" data-assignee-option="${escapeHtml(workOrderAssigneeSearchText(user))}" ${assigneeSearchValue && !workOrderAssigneeSearchText(user).includes(normalizeAiText(assigneeSearchValue)) ? "hidden" : ""}>
                       <input type="checkbox" data-ot-assignee value="${user.id}" ${selectedAssignees.has(user.id) ? "checked" : ""} />
                       <span>
                         <strong>${escapeHtml(user.name)}</strong>
@@ -4811,7 +4921,10 @@ function renderWorkOrderForm(order = null) {
                   `;
                   },
                 )
-                .join("") || `<div class="empty compact-empty">No hay responsables disponibles para esta marca</div>`}
+                .join("") || `<div class="empty compact-empty">No hay responsables internos disponibles</div>`}
+              <div class="empty compact-empty assignee-no-results" ${assigneeSearchValue && !availableUsers.some((user) => workOrderAssigneeSearchText(user).includes(normalizeAiText(assigneeSearchValue))) ? "" : "hidden"}>
+                Sin resultados para esta búsqueda
+              </div>
             </div>
           </div>
           <div class="field-help">Marca una o varias personas. El buscador filtra por nombre, correo o rol.</div>
@@ -7939,13 +8052,13 @@ function bindEvents() {
       }
       state.currentModule = button.dataset.module;
       if (state.currentModule !== "work-orders") {
+        syncWorkOrderFormDraftFromForm();
         state.creatingWorkOrder = false;
         state.workOrderSubmitting = false;
         state.editingWorkOrderId = "";
         state.viewingWorkOrderId = "";
         state.focusedWorkOrderId = "";
         state.workOrderDraftPhases = [];
-        resetWorkOrderFormDraft();
       }
       render();
     });
@@ -7953,7 +8066,15 @@ function bindEvents() {
 
   document.querySelectorAll(".js-brand-select").forEach((brandSelect) => {
     brandSelect.addEventListener("change", (event) => {
+      syncWorkOrderFormDraftFromForm();
       state.currentBrandId = event.target.value;
+      if (state.creatingWorkOrder) {
+        const draft = ensureWorkOrderFormDraft();
+        draft.selectedBrandId = event.target.value;
+        persistWorkOrderFormDraft();
+        render();
+        return;
+      }
       state.editingWorkOrderId = "";
       state.viewingWorkOrderId = "";
       state.focusedWorkOrderId = "";
@@ -7989,7 +8110,18 @@ function bindEvents() {
 
   document.querySelectorAll("[data-brand-jump]").forEach((button) => {
     button.addEventListener("click", () => {
+      syncWorkOrderFormDraftFromForm();
       state.currentBrandId = button.dataset.brandJump;
+      if (state.creatingWorkOrder) {
+        const draft = ensureWorkOrderFormDraft();
+        draft.selectedBrandId = state.currentBrandId;
+        if (state.workOrderUsesPhases && !state.workOrderDraftPhases.length) {
+          state.workOrderDraftPhases = defaultWorkOrderPhases({ dueDate: draft.dueDate || "" });
+        }
+        persistWorkOrderFormDraft();
+        render();
+        return;
+      }
       state.editingWorkOrderId = "";
       state.viewingWorkOrderId = "";
       state.workOrderDraftPhases = [];
@@ -8055,15 +8187,29 @@ function bindEvents() {
 
   document.querySelectorAll(".assignee-search").forEach((input) => {
     input.addEventListener("input", () => {
-      const query = input.value.trim().toLowerCase();
+      const query = normalizeAiText(input.value);
       document.querySelectorAll("[data-assignee-option]").forEach((option) => {
         option.hidden = query && !option.dataset.assigneeOption.includes(query);
       });
+      const noResults = document.querySelector(".assignee-no-results");
+      if (noResults) {
+        const visibleOptions = Array.from(document.querySelectorAll("[data-assignee-option]")).filter((option) => !option.hidden);
+        noResults.hidden = !query || Boolean(visibleOptions.length);
+      }
+      syncWorkOrderFormDraftFromForm();
     });
   });
 
   document.querySelectorAll("[data-ot-assignee]").forEach((input) => {
-    input.addEventListener("change", refreshAssigneeSelectedList);
+    input.addEventListener("change", () => {
+      refreshAssigneeSelectedList();
+      syncWorkOrderFormDraftFromForm();
+    });
+  });
+
+  document.querySelectorAll("#ot-title, #ot-due-date, #ot-priority, #ot-status, #ot-category, #ot-art-count, #ot-description, #ot-subtasks, #ot-material-changes, #ot-email").forEach((input) => {
+    input.addEventListener("input", syncWorkOrderFormDraftFromForm);
+    input.addEventListener("change", syncWorkOrderFormDraftFromForm);
   });
 
   document.getElementById("ot-use-phases")?.addEventListener("change", (event) => {
@@ -8072,11 +8218,19 @@ function bindEvents() {
     if (state.workOrderUsesPhases && !state.workOrderDraftPhases.length) {
       state.workOrderDraftPhases = defaultWorkOrderPhases({ dueDate: document.getElementById("ot-due-date")?.value || "" });
     }
+    if (state.workOrderFormDraft) {
+      state.workOrderFormDraft.usesPhases = state.workOrderUsesPhases;
+      state.workOrderFormDraft.phases = state.workOrderDraftPhases;
+      persistWorkOrderFormDraft();
+    }
     render();
   });
 
   ["ot-category", "ot-priority"].forEach((fieldId) => {
-    document.getElementById(fieldId)?.addEventListener("change", refreshWorkOrderGuidancePanels);
+    document.getElementById(fieldId)?.addEventListener("change", () => {
+      syncWorkOrderFormDraftFromForm();
+      refreshWorkOrderGuidancePanels();
+    });
   });
 
   document.querySelectorAll("[data-phase-field=\"phaseKey\"]").forEach((select) => {
@@ -8087,7 +8241,13 @@ function bindEvents() {
       const nextTitle = workOrderPhaseTitle(select.value);
       if (titleInput && (!titleInput.value || titleInput.value === "Nueva fase")) titleInput.value = nextTitle;
       if (descriptionInput && !descriptionInput.value) descriptionInput.value = defaultWorkOrderPhaseDescriptions[select.value] || "";
+      syncWorkOrderFormDraftFromForm();
     });
+  });
+
+  document.querySelectorAll("[data-phase-field]").forEach((input) => {
+    input.addEventListener("input", syncWorkOrderFormDraftFromForm);
+    input.addEventListener("change", syncWorkOrderFormDraftFromForm);
   });
 
   document.querySelectorAll("[data-work-order-month]").forEach((input) => {
@@ -8284,9 +8444,11 @@ function openCreateWorkOrder() {
   state.viewingWorkOrderId = "";
   state.focusedWorkOrderId = "";
   state.workOrderSubmitting = false;
-  resetWorkOrderFormDraft();
-  state.workOrderDraftPhases = defaultWorkOrderPhases();
-  state.workOrderUsesPhases = true;
+  const draft = ensureWorkOrderFormDraft();
+  state.workOrderUsesPhases = draft.usesPhases !== false;
+  if (state.workOrderUsesPhases && !state.workOrderDraftPhases.length) {
+    state.workOrderDraftPhases = defaultWorkOrderPhases({ dueDate: draft.dueDate || "" });
+  }
   state.creatingWorkOrder = true;
   render();
   if (ENABLE_AI_ASSISTANT) {
@@ -8295,6 +8457,10 @@ function openCreateWorkOrder() {
 }
 
 function closeCreateWorkOrder() {
+  syncWorkOrderFormDraftFromForm();
+  if (hasMeaningfulWorkOrderDraft() && !window.confirm("¿Descartar el borrador de esta OT?")) {
+    return;
+  }
   state.creatingWorkOrder = false;
   state.workOrderSubmitting = false;
   state.workOrderDraftPhases = [];
@@ -8358,6 +8524,11 @@ function addWorkOrderPhase() {
       state.workOrderDraftPhases.length,
     ),
   );
+  if (state.workOrderFormDraft) {
+    state.workOrderFormDraft.usesPhases = true;
+    state.workOrderFormDraft.phases = state.workOrderDraftPhases;
+    persistWorkOrderFormDraft();
+  }
   render();
   restoreFormScrollPosition(scrollPosition);
 }
@@ -8370,6 +8541,10 @@ function removeWorkOrderPhase(index) {
     ...phase,
     sortOrder: phaseIndex,
   }));
+  if (state.workOrderFormDraft) {
+    state.workOrderFormDraft.phases = state.workOrderDraftPhases;
+    persistWorkOrderFormDraft();
+  }
   render();
   restoreFormScrollPosition(scrollPosition);
 }
@@ -9198,6 +9373,7 @@ function fillWorkOrderWithAi(promptOverride = "") {
     refreshAssigneeSelectedList();
   }
 
+  syncWorkOrderFormDraftFromForm();
   refreshWorkOrderGuidancePanels();
   showToast("Borrador armado con IA. Revisa y presiona Crear OT para guardarla.");
 }
@@ -9226,6 +9402,7 @@ function optimizeWorkOrderUrgency() {
     });
     refreshAssigneeSelectedList();
   }
+  syncWorkOrderFormDraftFromForm();
   refreshWorkOrderGuidancePanels();
   showToast(plan.candidate ? `Sugerencia aplicada: ${plan.candidate.name} / ${formatDate(plan.dueDate)}` : "Fecha sugerida; falta responsable disponible");
 }
@@ -9710,6 +9887,7 @@ async function createWorkOrderFromForm() {
     showToast("Selecciona una marca antes de crear una OT");
     return;
   }
+  syncWorkOrderFormDraftFromForm();
   const values = getWorkOrderFormValues();
   if (!validateWorkOrderValues(values)) return;
   setWorkOrderCreateSubmitting(true);
@@ -10941,5 +11119,16 @@ function showToast(message) {
     render();
   }, 2200);
 }
+
+function syncOpenWorkOrderDraftBeforeSuspend() {
+  if (state.creatingWorkOrder || document.getElementById("ot-title")) {
+    syncWorkOrderFormDraftFromForm();
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") syncOpenWorkOrderDraftBeforeSuspend();
+});
+window.addEventListener("pagehide", syncOpenWorkOrderDraftBeforeSuspend);
 
 initializeApp();
