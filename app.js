@@ -627,6 +627,14 @@ const workOrderPhaseStatusLabels = {
   canceled: "Cancelada",
 };
 
+const workOrderPhaseEditableStatusLabels = {
+  pending: "Sin iniciar",
+  in_progress: "En proceso",
+  blocked: "En pausa",
+  in_review: "Revisión",
+  completed: "Terminado",
+};
+
 function phaseStatusLabel(status) {
   return workOrderPhaseStatusLabels[status] || "Sin iniciar";
 }
@@ -1288,6 +1296,19 @@ function mapDbWorkOrderPhase(row) {
     sortOrder: Number(row.sort_order || 0),
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
+    comments: Array.isArray(row.comments) ? row.comments : [],
+  };
+}
+
+function mapDbWorkOrderPhaseComment(row) {
+  return {
+    id: row.id,
+    workOrderId: row.work_order_id,
+    phaseId: row.phase_id,
+    authorId: row.author_id,
+    body: row.body || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
   };
 }
 
@@ -1361,6 +1382,7 @@ async function loadSupabaseData() {
     ordersResult,
     notificationRecipientsResult,
     phasesResult,
+    phaseCommentsResult,
     productionPlannerResult,
     emailNotificationsResult,
   ] = await Promise.all([
@@ -1381,6 +1403,7 @@ async function loadSupabaseData() {
       .order("due_date", { ascending: true }),
     supabaseClient.from("brand_notification_recipients").select("brand_id,user_id"),
     supabaseClient.from("work_order_phases").select("*").order("sort_order", { ascending: true }),
+    supabaseClient.from("work_order_phase_comments").select("*").order("created_at", { ascending: true }),
     supabaseClient.from("production_planner_items").select("*").order("production_date", { ascending: true }),
     supabaseClient
       .from("email_notifications")
@@ -1421,10 +1444,21 @@ async function loadSupabaseData() {
     })),
   );
   const phasesByOrderId = new Map();
+  const commentsByPhaseId = new Map();
+  if (!phaseCommentsResult.error) {
+    (phaseCommentsResult.data || []).forEach((comment) => {
+      const list = commentsByPhaseId.get(comment.phase_id) || [];
+      list.push(mapDbWorkOrderPhaseComment(comment));
+      commentsByPhaseId.set(comment.phase_id, list);
+    });
+  }
   if (!phasesResult.error) {
     (phasesResult.data || []).forEach((phase) => {
       const list = phasesByOrderId.get(phase.work_order_id) || [];
-      list.push(phase);
+      list.push({
+        ...phase,
+        comments: commentsByPhaseId.get(phase.id) || [],
+      });
       phasesByOrderId.set(phase.work_order_id, list);
     });
   }
@@ -2241,6 +2275,101 @@ function canCompleteWorkOrderPhase(phase, order = null) {
   if (canManageWorkOrders()) return true;
   const currentId = currentProfileId();
   return Boolean(currentId && (phase.assignedTo === currentId || phase.assigned_to === currentId));
+}
+
+function canUpdateWorkOrderPhaseStatus(phase, order = null) {
+  if (!phase || phase.status === "cancelled") return false;
+  if (order && isArchivedWorkOrder(order)) return false;
+  if (canManageWorkOrders()) return true;
+  const currentId = currentProfileId();
+  return Boolean(currentId && (phase.assignedTo === currentId || phase.assigned_to === currentId));
+}
+
+function canCommentOnWorkOrderPhase(phase, order = null) {
+  return canUpdateWorkOrderPhaseStatus(phase, order);
+}
+
+function renderPhaseStatusSelect(phase, order) {
+  if (!canUpdateWorkOrderPhaseStatus(phase, order)) return "";
+  return `
+    <label class="phase-status-control">
+      <span>Estado</span>
+      <select class="input phase-status-select" data-phase-status-select="${escapeHtml(phase.id)}">
+        ${Object.entries(workOrderPhaseEditableStatusLabels)
+          .map(([value, label]) => renderWorkOrderSelectOption(value, label, phase.status))
+          .join("")}
+      </select>
+    </label>
+  `;
+}
+
+function safeLinkHref(url = "") {
+  const raw = String(url || "");
+  const href = raw.startsWith("www.") ? `https://${raw}` : raw;
+  try {
+    const parsed = new URL(href);
+    if (!["http:", "https:"].includes(parsed.protocol)) return "";
+    return parsed.href;
+  } catch {
+    return "";
+  }
+}
+
+function renderLinkedText(value = "") {
+  const text = String(value || "");
+  const urlPattern = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi;
+  let cursor = 0;
+  let html = "";
+  for (const match of text.matchAll(urlPattern)) {
+    const url = match[0];
+    const index = match.index || 0;
+    html += escapeHtml(text.slice(cursor, index));
+    const href = safeLinkHref(url);
+    html += href
+      ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`
+      : escapeHtml(url);
+    cursor = index + url.length;
+  }
+  html += escapeHtml(text.slice(cursor));
+  return html.replace(/\n/g, "<br />");
+}
+
+function renderWorkOrderPhaseComments(phase, order) {
+  const comments = Array.isArray(phase.comments) ? phase.comments : [];
+  const canComment = canCommentOnWorkOrderPhase(phase, order);
+  return `
+    <div class="phase-comments">
+      <div class="phase-comments-list">
+        ${
+          comments.length
+            ? comments
+                .map(
+                  (comment) => `
+                    <article class="phase-comment">
+                      <div class="phase-comment-meta">
+                        <strong>${escapeHtml(userName(comment.authorId))}</strong>
+                        <span>${escapeHtml(formatDate(comment.createdAt))}</span>
+                      </div>
+                      <p>${renderLinkedText(comment.body)}</p>
+                    </article>
+                  `,
+                )
+                .join("")
+            : `<div class="small-muted">Sin avances comentados en esta fase.</div>`
+        }
+      </div>
+      ${
+        canComment
+          ? `
+            <div class="phase-comment-form">
+              <textarea class="textarea compact-textarea" data-phase-comment-input="${escapeHtml(phase.id)}" maxlength="2000" placeholder="Escribe un avance o pega un link de Drive, Canva, etc."></textarea>
+              <button class="button-ghost small" data-action="add-work-order-phase-comment" data-id="${escapeHtml(phase.id)}">Agregar comentario</button>
+            </div>
+          `
+          : ""
+      }
+    </div>
+  `;
 }
 
 function usersForBrandByRoles(roles = [], brandId = state.currentBrandId) {
@@ -4288,11 +4417,13 @@ function renderWorkOrderPhaseProgress(order) {
                     <span>${escapeHtml(workOrderPhaseStatusLabels[phase.status] || phase.status)}</span>
                     ${phase.completedAt ? `<span>Completada ${escapeHtml(formatDate(phase.completedAt))}</span>` : ""}
                   </div>
+                  ${renderPhaseStatusSelect(phase, order)}
                   ${
                     canCompleteWorkOrderPhase(phase, order)
                       ? `<button class="button-ghost small" data-action="complete-work-order-phase" data-id="${escapeHtml(phase.id)}">Marcar mi fase realizada</button>`
                       : ""
                   }
+                  ${renderWorkOrderPhaseComments(phase, order)}
                 </div>
               </div>
             `,
@@ -8377,6 +8508,16 @@ function bindEvents() {
       render();
     });
   });
+
+  document.querySelectorAll("[data-phase-status-select]").forEach((select) => {
+    select.addEventListener("change", () => {
+      updateWorkOrderPhaseStatus(select.dataset.phaseStatusSelect, select.value).catch((error) => {
+        console.warn("[Lumen phase] status update failed", error);
+        showToast(error.message || "No se pudo actualizar la fase");
+        render();
+      });
+    });
+  });
 }
 
 function refreshAssigneeSelectedList() {
@@ -8670,6 +8811,7 @@ async function handleAction(action, id) {
     "add-work-order-phase": () => addWorkOrderPhase(),
     "remove-work-order-phase": () => removeWorkOrderPhase(id),
     "complete-work-order-phase": () => completeWorkOrderPhase(id),
+    "add-work-order-phase-comment": () => addWorkOrderPhaseComment(id),
     "focus-urgent-orders": () => focusUrgentOrders(),
     "optimize-work-order-urgency": () => optimizeWorkOrderUrgency(),
     "create-work-order": () => createWorkOrderFromForm(),
@@ -10574,15 +10716,87 @@ function findWorkOrderPhaseById(phaseId) {
 function phasePermissionMessage(errorMessage = "") {
   if (
     errorMessage.includes("complete_work_order_phase") ||
+    errorMessage.includes("update_work_order_phase_status") ||
+    errorMessage.includes("add_work_order_phase_comment") ||
+    errorMessage.includes("work_order_phase_comments") ||
     errorMessage.includes("not_allowed_to_complete_phase") ||
+    errorMessage.includes("not_allowed_to_update_phase_status") ||
+    errorMessage.includes("not_allowed_to_comment_phase") ||
     errorMessage.includes("Could not find the function") ||
     errorMessage.includes("schema cache") ||
     errorMessage.includes("permission denied") ||
     errorMessage.includes("row-level security")
   ) {
-    return "Falta activar permisos de fases en Supabase: ejecuta supabase/patch_work_order_phase_completion.sql";
+    return "Falta activar permisos de fases en Supabase: ejecuta supabase/patch_work_order_phase_status_and_comments.sql";
   }
   return "";
+}
+
+async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
+  const found = findWorkOrderPhaseById(phaseId);
+  if (!found) {
+    showToast("No encontré esa fase");
+    render();
+    return;
+  }
+  const { order, phase } = found;
+  const allowedStatuses = Object.keys(workOrderPhaseEditableStatusLabels);
+  if (!allowedStatuses.includes(nextStatus)) {
+    showToast("Estado de fase no válido");
+    render();
+    return;
+  }
+  if (!canUpdateWorkOrderPhaseStatus(phase, order)) {
+    showToast("Solo puedes cambiar fases asignadas a ti.");
+    render();
+    return;
+  }
+  if (phase.status === nextStatus) return;
+
+  const wasCompleted = phase.status === "completed";
+  const completedAt = nextStatus === "completed" ? phase.completedAt || new Date().toISOString() : "";
+
+  if (isSupabaseMode()) {
+    const targetId = phase.dbId || phase.id;
+    const { data, error } = await supabaseClient.rpc("update_work_order_phase_status", {
+      target_phase_id: targetId,
+      next_status,
+    });
+    if (error) {
+      showToast(phasePermissionMessage(error.message || "") || `No se pudo actualizar la fase: ${error.message}`);
+      render();
+      return;
+    }
+    if (nextStatus === "completed" && !wasCompleted) {
+      const emailResult = await queuePhaseCompletedEmail(order, {
+        ...phase,
+        status: "completed",
+        completedAt: data?.completed_at || completedAt,
+      });
+      if (emailResult.error) {
+        showToast(`Fase actualizada, pero no se pudo preparar email: ${emailResult.error.message}`);
+      }
+    }
+    await loadSupabaseData();
+  } else {
+    order.phases = workOrderPhases(order).map((candidate) =>
+      candidate.id === phase.id
+        ? {
+            ...candidate,
+            status: nextStatus,
+            completedAt,
+            updatedAt: new Date().toISOString(),
+          }
+        : candidate,
+    );
+    order.updatedAt = new Date().toISOString();
+    saveWorkOrders();
+  }
+
+  state.viewingWorkOrderId = order.id;
+  state.focusedWorkOrderId = order.id;
+  showToast(`Fase actualizada: ${workOrderPhaseStatusLabels[nextStatus] || nextStatus}`);
+  render();
 }
 
 async function completeWorkOrderPhase(phaseId) {
@@ -10631,6 +10845,63 @@ async function completeWorkOrderPhase(phaseId) {
   state.viewingWorkOrderId = order.id;
   state.focusedWorkOrderId = order.id;
   showToast(`Fase completada: ${phase.title}`);
+  render();
+}
+
+async function addWorkOrderPhaseComment(phaseId) {
+  const found = findWorkOrderPhaseById(phaseId);
+  if (!found) {
+    showToast("No encontré esa fase");
+    return;
+  }
+  const { order, phase } = found;
+  if (!canCommentOnWorkOrderPhase(phase, order)) {
+    showToast("Solo puedes comentar en fases asignadas a ti.");
+    return;
+  }
+  const input = Array.from(document.querySelectorAll("[data-phase-comment-input]")).find(
+    (candidate) => candidate.dataset.phaseCommentInput === phaseId,
+  );
+  const body = input?.value?.trim() || "";
+  if (!body) {
+    showToast("Escribe un avance antes de guardar");
+    return;
+  }
+  if (body.length > 2000) {
+    showToast("El comentario no debe superar 2000 caracteres");
+    return;
+  }
+
+  if (isSupabaseMode()) {
+    const targetId = phase.dbId || phase.id;
+    const { error } = await supabaseClient.rpc("add_work_order_phase_comment", {
+      target_phase_id: targetId,
+      comment_body: body,
+    });
+    if (error) {
+      showToast(phasePermissionMessage(error.message || "") || `No se pudo guardar el comentario: ${error.message}`);
+      return;
+    }
+    await loadSupabaseData();
+  } else {
+    phase.comments = [
+      ...(phase.comments || []),
+      {
+        id: `phase-comment-${Date.now()}`,
+        workOrderId: order.dbId || order.id,
+        phaseId: phase.dbId || phase.id,
+        authorId: currentProfileId() || "giu",
+        body,
+        createdAt: new Date().toISOString(),
+        updatedAt: "",
+      },
+    ];
+    saveWorkOrders();
+  }
+
+  state.viewingWorkOrderId = order.id;
+  state.focusedWorkOrderId = order.id;
+  showToast("Comentario agregado a la fase");
   render();
 }
 
