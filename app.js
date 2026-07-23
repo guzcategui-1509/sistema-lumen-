@@ -21,7 +21,7 @@ const modules = [
 const ALL_BRANDS_ID = "all-brands";
 const OPERATIONS_MODE = true;
 const ENABLE_AI_ASSISTANT = false;
-const APP_BUILD_MARKER = "phase-debug-2026-07-23-v6-click-status-menu";
+const APP_BUILD_MARKER = "phase-debug-2026-07-23-v7-direct-status-buttons";
 const DEBUG_INTERACTIONS =
   typeof window !== "undefined" &&
   (new URLSearchParams(window.location.search).has("debugInteractions") || window.localStorage?.getItem("lumen_debug_interactions") === "1");
@@ -1015,7 +1015,6 @@ const state = {
   passwordResetMode: false,
   toast: "",
   debugEvents: [],
-  openPhaseStatusMenuId: "",
 };
 
 const statusLabels = {
@@ -2434,51 +2433,33 @@ function canCommentOnWorkOrderPhase(phase, order = null) {
 
 function renderPhaseStatusControl(phase, order) {
   if (!canUpdateWorkOrderPhaseStatus(phase, order)) return "";
-  const isOpen = state.openPhaseStatusMenuId === phase.id;
-  const currentLabel = workOrderPhaseEditableStatusLabels[phase.status] || workOrderPhaseStatusLabels[phase.status] || "Sin iniciar";
   debugInteraction("phase-status:control-rendered", {
     phaseId: phase.id,
     status: phase.status,
     action: "set-phase-status",
-    disabled: false,
-    open: isOpen,
+    optionCount: Object.keys(workOrderPhaseEditableStatusLabels).length,
   });
   return `
     <div class="phase-status-control">
       <span>Estado</span>
-      <button
-        type="button"
-        class="phase-status-menu-button"
-        data-action="toggle-phase-status-menu"
-        data-phase-id="${escapeHtml(phase.id)}"
-        aria-expanded="${isOpen ? "true" : "false"}"
-      >
-        ${escapeHtml(currentLabel)}
-      </button>
-      ${
-        isOpen
-          ? `
-            <div class="phase-status-menu" role="menu">
-              ${Object.entries(workOrderPhaseEditableStatusLabels)
-                .map(
-                  ([value, label]) => `
-                    <button
-                      type="button"
-                      class="phase-status-option ${phase.status === value ? "active" : ""}"
-                      data-action="set-phase-status"
-                      data-phase-id="${escapeHtml(phase.id)}"
-                      data-next-status="${escapeHtml(value)}"
-                      ${phase.status === value ? "disabled" : ""}
-                    >
-                      ${escapeHtml(label)}
-                    </button>
-                  `,
-                )
-                .join("")}
-            </div>
-          `
-          : ""
-      }
+      <div class="stage-control phase-status-buttons">
+        ${Object.entries(workOrderPhaseEditableStatusLabels)
+          .map(
+            ([value, label]) => `
+              <button
+                type="button"
+                class="${phase.status === value ? "active" : ""}"
+                data-action="set-phase-status"
+                data-phase-id="${escapeHtml(phase.id)}"
+                data-next-status="${escapeHtml(value)}"
+                ${phase.status === value ? "disabled" : ""}
+              >
+                ${escapeHtml(label)}
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
     </div>
   `;
 }
@@ -8954,6 +8935,9 @@ function bindDocumentInteractionEvents() {
   if (typeof window === "undefined" || window.__lumenDocumentInteractionsAttached) return;
   document.addEventListener("click", handleDocumentActionClick, true);
   window.__lumenDocumentInteractionsAttached = true;
+  debugInteraction("document-action-listener:bound", {
+    capture: true,
+  });
 }
 
 function handleDocumentActionClick(event) {
@@ -8961,11 +8945,34 @@ function handleDocumentActionClick(event) {
   if (!actionTarget || !document.getElementById("app")?.contains(actionTarget)) return;
   if (event.target.closest('select, option, input, textarea, [contenteditable="true"]')) return;
   if (actionTarget.disabled || actionTarget.getAttribute("aria-disabled") === "true") return;
-  event.preventDefault();
   const action = actionTarget.dataset.action;
-  if (action === "toggle-phase-status-menu" || action === "set-phase-status") {
+
+  if (action === "set-phase-status") {
+    event.preventDefault();
     event.stopPropagation();
+    const phaseId = actionTarget.dataset.phaseId || "";
+    const nextStatus = actionTarget.dataset.nextStatus || "";
+    if (!phaseId || !nextStatus) {
+      debugInteraction("phase-status:set-invalid", {
+        phaseId,
+        nextStatus,
+        outerHTML: actionTarget.outerHTML,
+      });
+      showToast("No se pudo identificar el estado seleccionado.", "error");
+      return;
+    }
+    debugInteraction("phase-status:set-click", {
+      phaseId,
+      nextStatus,
+    });
+    updateWorkOrderPhaseStatus(phaseId, nextStatus).catch((error) => {
+      console.warn("[Lumen phase] status button failed", error);
+      showToast(error.message || "No se pudo actualizar la fase");
+    });
+    return;
   }
+
+  event.preventDefault();
   const id = actionTarget.dataset.id || actionTarget.dataset.orderId || "";
   debugInteraction("click:caught", {
     action,
@@ -9026,8 +9033,6 @@ async function handleAction(action, id, actionElement = null) {
     "clear-work-order-filters": () => clearWorkOrderFilters(),
     "add-work-order-phase": () => addWorkOrderPhase(),
     "remove-work-order-phase": () => removeWorkOrderPhase(id),
-    "toggle-phase-status-menu": () => togglePhaseStatusMenu(actionElement?.dataset?.phaseId || id),
-    "set-phase-status": () => setPhaseStatusFromButton(actionElement),
     "complete-work-order-phase": () => completeWorkOrderPhase(id),
     "add-work-order-phase-comment": () => addWorkOrderPhaseComment(id),
     "focus-urgent-orders": () => focusUrgentOrders(),
@@ -9081,27 +9086,6 @@ async function handleAction(action, id, actionElement = null) {
   if (actionMap[action]) {
     await actionMap[action]();
   }
-}
-
-function togglePhaseStatusMenu(phaseId = "") {
-  if (!phaseId) return;
-  state.openPhaseStatusMenuId = state.openPhaseStatusMenuId === phaseId ? "" : phaseId;
-  debugInteraction("phase-status:menu-toggle", {
-    phaseId,
-    open: state.openPhaseStatusMenuId === phaseId,
-  });
-  render();
-}
-
-async function setPhaseStatusFromButton(button) {
-  const phaseId = button?.dataset?.phaseId || "";
-  const nextStatus = button?.dataset?.nextStatus || "";
-  debugInteraction("phase-status:set-click", {
-    phaseId,
-    nextStatus,
-    action: button?.dataset?.action || "",
-  });
-  await updateWorkOrderPhaseStatus(phaseId, nextStatus);
 }
 
 function openProductionPlannerItem(id = "") {
@@ -11093,7 +11077,6 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
 
   state.viewingWorkOrderId = order.id;
   state.focusedWorkOrderId = order.id;
-  state.openPhaseStatusMenuId = "";
   const phaseBeforeRender = workOrderPhases(order).find((candidate) => candidate.id === phase.id || candidate.dbId === (phase.dbId || phase.id));
   debugInteraction("phase-status:rerender", {
     selectedWorkOrderId: state.viewingWorkOrderId,

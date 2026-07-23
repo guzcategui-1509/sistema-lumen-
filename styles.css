@@ -3615,8 +3615,7 @@ tr:last-child td {
 }
 
 .phase-status-control {
-  position: relative;
-  display: inline-grid;
+  display: grid;
   gap: 6px;
   margin-top: 10px;
 }
@@ -3629,49 +3628,15 @@ tr:last-child td {
   text-transform: uppercase;
 }
 
-.phase-status-menu-button,
-.phase-status-option {
+.phase-status-buttons {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  max-width: 680px;
+  gap: 6px;
+}
+
+.phase-status-buttons button {
   min-height: 36px;
-  border: 1px solid rgba(16, 35, 26, 0.14);
-  border-radius: 10px;
-  background: #ffffff;
-  color: var(--ink);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.phase-status-menu-button {
-  padding: 0 12px;
-  text-align: left;
-}
-
-.phase-status-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 6;
-  display: grid;
-  min-width: 190px;
-  padding: 6px;
-  border: 1px solid rgba(16, 35, 26, 0.14);
-  border-radius: 12px;
-  background: #ffffff;
-  box-shadow: 0 18px 44px rgba(16, 35, 26, 0.18);
-}
-
-.phase-status-option {
-  display: block;
-  width: 100%;
-  padding: 0 10px;
-  text-align: left;
-}
-
-.phase-status-option:hover,
-.phase-status-option.active {
-  background: #eef7f1;
-  color: var(--green-dark);
+  padding: 6px 8px;
 }
 
 .detail-block,
