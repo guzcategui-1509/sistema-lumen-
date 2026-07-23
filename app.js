@@ -59,6 +59,7 @@ function iconSvg(name, className = "ui-icon") {
 const dataState = {
   mode: "demo",
   loading: true,
+  initialized: false,
   error: "",
   session: null,
   profile: null,
@@ -1480,6 +1481,57 @@ async function loadSupabaseData() {
   }
 }
 
+function captureNavigationState() {
+  return {
+    currentModule: state.currentModule,
+    currentBrandId: state.currentBrandId,
+    selectedContentId: state.selectedContentId,
+    editingWorkOrderId: state.editingWorkOrderId,
+    viewingWorkOrderId: state.viewingWorkOrderId,
+    focusedWorkOrderId: state.focusedWorkOrderId,
+    creatingWorkOrder: state.creatingWorkOrder,
+    workOrderSubmitting: state.workOrderSubmitting,
+    workOrderUsesPhases: state.workOrderUsesPhases,
+    workOrderDraftPhases: state.workOrderDraftPhases,
+    workOrderFormDraft: state.workOrderFormDraft,
+    productionPlannerEditingId: state.productionPlannerEditingId,
+  };
+}
+
+function restoreNavigationState(snapshot) {
+  if (!snapshot) return;
+  state.currentModule = snapshot.currentModule;
+  if (brands.some((brand) => brand.id === snapshot.currentBrandId) || snapshot.currentBrandId === ALL_BRANDS_ID) {
+    state.currentBrandId = snapshot.currentBrandId;
+  }
+  state.selectedContentId = snapshot.selectedContentId;
+  state.editingWorkOrderId = snapshot.editingWorkOrderId;
+  state.viewingWorkOrderId = snapshot.viewingWorkOrderId;
+  state.focusedWorkOrderId = snapshot.focusedWorkOrderId;
+  state.creatingWorkOrder = snapshot.creatingWorkOrder;
+  state.workOrderSubmitting = snapshot.workOrderSubmitting;
+  state.workOrderUsesPhases = snapshot.workOrderUsesPhases;
+  state.workOrderDraftPhases = snapshot.workOrderDraftPhases || [];
+  state.workOrderFormDraft = snapshot.workOrderFormDraft;
+  state.productionPlannerEditingId = snapshot.productionPlannerEditingId;
+}
+
+async function refreshSupabaseData({ silent = true, preserveNavigation = true } = {}) {
+  const navigationSnapshot = preserveNavigation ? captureNavigationState() : null;
+  if (state.creatingWorkOrder) syncOpenWorkOrderDraftBeforeSuspend();
+  if (!silent) {
+    dataState.loading = true;
+    render();
+  }
+  try {
+    await loadSupabaseData();
+    if (preserveNavigation) restoreNavigationState(navigationSnapshot);
+    dataState.initialized = true;
+  } finally {
+    if (!silent) dataState.loading = false;
+  }
+}
+
 async function initializeApp() {
   const hasSupabase = setupSupabaseClient();
   if (!hasSupabase) {
@@ -1502,6 +1554,7 @@ async function initializeApp() {
     if (session) {
       await loadSupabaseData();
       applyInitialRouteParams();
+      dataState.initialized = true;
     }
   } catch (error) {
     dataState.error = error.message || "No se pudo conectar Supabase";
@@ -1516,16 +1569,23 @@ async function initializeApp() {
     if (_event === "PASSWORD_RECOVERY") {
       dataState.passwordResetMode = true;
     }
-    if (session) {
-      dataState.loading = true;
+    if (_event === "TOKEN_REFRESHED" || (_event === "INITIAL_SESSION" && dataState.initialized)) {
       render();
+      return;
+    }
+    if (session) {
+      const silent = dataState.initialized;
+      const wasInitialized = dataState.initialized;
       try {
-        await loadSupabaseData();
-        applyInitialRouteParams();
+        await refreshSupabaseData({ silent, preserveNavigation: true });
+        if (!wasInitialized) applyInitialRouteParams();
       } catch (error) {
         dataState.error = error.message || "No se pudo cargar Supabase";
+      } finally {
+        dataState.loading = false;
       }
-      dataState.loading = false;
+    } else {
+      dataState.initialized = false;
     }
     render();
   });
@@ -2526,7 +2586,7 @@ function clsStatus(status) {
 }
 
 function render() {
-  if (isSupabaseMode() && dataState.loading) {
+  if (isSupabaseMode() && dataState.loading && !dataState.initialized) {
     document.getElementById("app").innerHTML = renderLoadingScreen();
     return;
   }
@@ -10756,6 +10816,25 @@ function phasePermissionMessage(errorMessage = "") {
   return "";
 }
 
+function replaceLocalWorkOrderPhase(order, phaseId, updater) {
+  if (!order) return null;
+  let updatedPhase = null;
+  order.phases = workOrderPhases(order).map((candidate) => {
+    if (candidate.id !== phaseId && candidate.dbId !== phaseId) return candidate;
+    updatedPhase = typeof updater === "function" ? updater(candidate) : { ...candidate, ...updater };
+    return updatedPhase;
+  });
+  order.updatedAt = new Date().toISOString();
+  return updatedPhase;
+}
+
+function setPhaseStatusSelectValue(phaseId, value) {
+  const select = Array.from(document.querySelectorAll("[data-phase-status-select]")).find(
+    (candidate) => candidate.dataset.phaseStatusSelect === phaseId,
+  );
+  if (select) select.value = value;
+}
+
 async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
   const found = findWorkOrderPhaseById(phaseId);
   if (!found) {
@@ -10778,19 +10857,30 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
   if (phase.status === nextStatus) return;
 
   const wasCompleted = phase.status === "completed";
+  const previousStatus = phase.status;
   const completedAt = nextStatus === "completed" ? phase.completedAt || new Date().toISOString() : "";
 
   if (isSupabaseMode()) {
     const targetId = phase.dbId || phase.id;
+    debugInteraction("phase-status:update:start", { phaseId, targetId, previousStatus, nextStatus });
     const { data, error } = await supabaseClient.rpc("update_work_order_phase_status", {
       target_phase_id: targetId,
       next_status,
     });
     if (error) {
+      debugInteraction("phase-status:update:error", { phaseId, targetId, nextStatus, message: error.message || "" });
+      setPhaseStatusSelectValue(phaseId, previousStatus);
       showToast(phasePermissionMessage(error.message || "") || `No se pudo actualizar la fase: ${error.message}`);
       render();
       return;
     }
+    const updatedRow = Array.isArray(data) ? data[0] : data;
+    replaceLocalWorkOrderPhase(order, phase.id, (candidate) => ({
+      ...candidate,
+      status: updatedRow?.status || nextStatus,
+      completedAt: updatedRow?.completed_at || completedAt,
+      updatedAt: updatedRow?.updated_at || new Date().toISOString(),
+    }));
     if (nextStatus === "completed" && !wasCompleted) {
       const emailResult = await queuePhaseCompletedEmail(order, {
         ...phase,
@@ -10801,19 +10891,13 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
         showToast(`Fase actualizada, pero no se pudo preparar email: ${emailResult.error.message}`);
       }
     }
-    await loadSupabaseData();
+    await refreshSupabaseData({ silent: true, preserveNavigation: true });
   } else {
-    order.phases = workOrderPhases(order).map((candidate) =>
-      candidate.id === phase.id
-        ? {
-            ...candidate,
-            status: nextStatus,
-            completedAt,
-            updatedAt: new Date().toISOString(),
-          }
-        : candidate,
-    );
-    order.updatedAt = new Date().toISOString();
+    replaceLocalWorkOrderPhase(order, phase.id, {
+      status: nextStatus,
+      completedAt,
+      updatedAt: new Date().toISOString(),
+    });
     saveWorkOrders();
   }
 
@@ -10898,19 +10982,29 @@ async function addWorkOrderPhaseComment(phaseId) {
 
   if (isSupabaseMode()) {
     const targetId = phase.dbId || phase.id;
-    const { error } = await supabaseClient.rpc("add_work_order_phase_comment", {
+    debugInteraction("phase-comment:add:start", { phaseId, targetId });
+    const { data, error } = await supabaseClient.rpc("add_work_order_phase_comment", {
       target_phase_id: targetId,
       comment_body: body,
     });
     if (error) {
+      debugInteraction("phase-comment:add:error", { phaseId, targetId, message: error.message || "" });
       showToast(phasePermissionMessage(error.message || "") || `No se pudo guardar el comentario: ${error.message}`);
       return;
     }
-    await loadSupabaseData();
+    const insertedComment = mapDbWorkOrderPhaseComment(Array.isArray(data) ? data[0] : data);
+    replaceLocalWorkOrderPhase(order, phase.id, (candidate) => ({
+      ...candidate,
+      comments: [...(candidate.comments || []), insertedComment],
+    }));
+    if (input) input.value = "";
+    await refreshSupabaseData({ silent: true, preserveNavigation: true });
   } else {
-    phase.comments = [
-      ...(phase.comments || []),
-      {
+    replaceLocalWorkOrderPhase(order, phase.id, (candidate) => ({
+      ...candidate,
+      comments: [
+        ...(candidate.comments || []),
+        {
         id: `phase-comment-${Date.now()}`,
         workOrderId: order.dbId || order.id,
         phaseId: phase.dbId || phase.id,
@@ -10919,7 +11013,9 @@ async function addWorkOrderPhaseComment(phaseId) {
         createdAt: new Date().toISOString(),
         updatedAt: "",
       },
-    ];
+      ],
+    }));
+    if (input) input.value = "";
     saveWorkOrders();
   }
 
