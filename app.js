@@ -615,17 +615,12 @@ const workOrderPhaseCatalog = [
 
 const workOrderPhaseStatusLabels = {
   pending: "Sin iniciar",
-  not_started: "Sin iniciar",
   in_progress: "En proceso",
   blocked: "En pausa",
-  paused: "En pausa",
   in_review: "Revisión",
-  review: "Revisión",
-  changes_requested: "Con cambios",
+  changes_requested: "Ajustes",
   completed: "Terminado",
-  done: "Terminado",
-  cancelled: "Cancelada",
-  canceled: "Cancelada",
+  cancelled: "Cancelado",
 };
 
 const workOrderPhaseEditableStatusLabels = {
@@ -633,7 +628,9 @@ const workOrderPhaseEditableStatusLabels = {
   in_progress: "En proceso",
   blocked: "En pausa",
   in_review: "Revisión",
+  changes_requested: "Ajustes",
   completed: "Terminado",
+  cancelled: "Cancelado",
 };
 
 function phaseStatusLabel(status) {
@@ -2270,7 +2267,7 @@ function workOrderPhases(order) {
 function normalizedPhaseFromValues(phase, index) {
   const phaseKey = phase.phaseKey || "custom";
   const status = phase.status || "pending";
-  const completedAt = status === "completed" ? phase.completedAt || new Date().toISOString() : "";
+  const completedAt = status === "completed" ? phase.completedAt || new Date().toISOString() : null;
   return {
     id: phase.id || `draft-phase-${Date.now()}-${index}`,
     dbId: phase.dbId || null,
@@ -4472,7 +4469,7 @@ function renderWorkOrderPhaseProgress(order) {
                   <strong>${escapeHtml(phase.title)}</strong>
                   <p>${escapeHtml(phase.description || "Sin descripción")}</p>
                   <div class="phase-meta">
-                    <span>${escapeHtml(phase.assignedTo ? userName(phase.assignedTo) : "Sin responsable")}</span>
+                    <span>${escapeHtml(phase.assignedTo ? userName(phase.assignedTo) : "Sin responsable asignado")}</span>
                     <span>${phase.dueDate ? escapeHtml(formatDate(phase.dueDate)) : "Sin deadline"}</span>
                     <span>${escapeHtml(workOrderPhaseStatusLabels[phase.status] || phase.status)}</span>
                     ${phase.completedAt ? `<span>Completada ${escapeHtml(formatDate(phase.completedAt))}</span>` : ""}
@@ -9527,7 +9524,7 @@ function getWorkOrderPhaseFormValues() {
           assignedTo: fieldValue("assignedTo"),
           status,
           dueDate: fieldValue("dueDate"),
-          completedAt: status === "completed" ? new Date().toISOString() : "",
+          completedAt: status === "completed" ? new Date().toISOString() : null,
           sortOrder: index,
         },
         index,
@@ -10858,7 +10855,7 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
 
   const wasCompleted = phase.status === "completed";
   const previousStatus = phase.status;
-  const completedAt = nextStatus === "completed" ? phase.completedAt || new Date().toISOString() : "";
+  const completedAt = nextStatus === "completed" ? phase.completedAt || new Date().toISOString() : null;
 
   if (isSupabaseMode()) {
     const targetId = phase.dbId || phase.id;
@@ -10885,7 +10882,7 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
       const emailResult = await queuePhaseCompletedEmail(order, {
         ...phase,
         status: "completed",
-        completedAt: data?.completed_at || completedAt,
+        completedAt: updatedRow?.completed_at || completedAt,
       });
       if (emailResult.error) {
         showToast(`Fase actualizada, pero no se pudo preparar email: ${emailResult.error.message}`);

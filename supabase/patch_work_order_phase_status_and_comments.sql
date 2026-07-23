@@ -81,7 +81,7 @@ declare
   phase_brand_id uuid;
   order_archived_at timestamptz;
 begin
-  if next_status not in ('pending', 'in_progress', 'blocked', 'in_review', 'completed') then
+  if next_status not in ('pending', 'in_progress', 'blocked', 'in_review', 'changes_requested', 'completed', 'cancelled') then
     raise exception 'invalid_phase_status';
   end if;
   next_phase_status := next_status::public.work_order_phase_status;
