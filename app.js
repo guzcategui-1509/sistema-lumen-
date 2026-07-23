@@ -21,7 +21,7 @@ const modules = [
 const ALL_BRANDS_ID = "all-brands";
 const OPERATIONS_MODE = true;
 const ENABLE_AI_ASSISTANT = false;
-const APP_BUILD_MARKER = "phase-debug-2026-07-23-v3";
+const APP_BUILD_MARKER = "phase-debug-2026-07-23-v4-direct-select";
 const DEBUG_INTERACTIONS =
   typeof window !== "undefined" &&
   (new URLSearchParams(window.location.search).has("debugInteractions") || window.localStorage?.getItem("lumen_debug_interactions") === "1");
@@ -2450,6 +2450,7 @@ function renderPhaseStatusSelect(phase, order) {
         data-phase-id="${escapeHtml(phase.id)}"
         data-phase-status-select="${escapeHtml(phase.id)}"
         data-previous-value="${escapeHtml(phase.status || "pending")}"
+        onchange="window.__lumenHandlePhaseStatusSelectChange && window.__lumenHandlePhaseStatusSelectChange(this, event)"
       >
         ${Object.entries(workOrderPhaseEditableStatusLabels)
           .map(([value, label]) => renderWorkOrderSelectOption(value, label, phase.status))
@@ -8972,24 +8973,44 @@ function handleGlobalPhaseStatusEvent(event) {
   });
   if (action !== "update-phase-status") return;
   if (!control || control.tagName !== "SELECT") return;
+  dispatchPhaseStatusSelectChange(control, event, event.type).catch((error) => {
+    console.warn("[Lumen phase] status select failed", error);
+    showToast(error.message || "No se pudo actualizar la fase");
+    render();
+  });
+}
 
-  const key = `${phaseId}::${control.value}`;
+async function dispatchPhaseStatusSelectChange(select, event, source = "unknown") {
+  const phaseId = select?.dataset?.phaseId || select?.dataset?.phaseStatusSelect || "";
+  const key = `${phaseId}::${select?.value || ""}`;
   const now = Date.now();
   const previous = state.lastPhaseStatusEvent || {};
   if (previous.key === key && now - previous.at < 500) {
     debugInteraction("phase-status:duplicate-event-skipped", {
       phaseId,
-      value: control.value,
-      eventType: event.type,
+      value: select?.value || "",
+      eventType: event?.type || source,
+      source,
     });
     return;
   }
   state.lastPhaseStatusEvent = { key, at: now };
-  handleUpdatePhaseStatusSelect(control).catch((error) => {
-    console.warn("[Lumen phase] status select failed", error);
-    showToast(error.message || "No se pudo actualizar la fase");
-    render();
-  });
+  await handleUpdatePhaseStatusSelect(select);
+}
+
+if (typeof window !== "undefined") {
+  window.__lumenHandlePhaseStatusSelectChange = async function (select, event) {
+    debugInteraction("phase-status:direct-change", {
+      tag: select?.tagName,
+      action: select?.dataset?.action,
+      phaseId: select?.dataset?.phaseId,
+      previousValue: select?.dataset?.previousValue,
+      value: select?.value,
+      disabled: Boolean(select?.disabled),
+      eventType: event?.type,
+    });
+    await dispatchPhaseStatusSelectChange(select, event, "direct-change");
+  };
 }
 
 async function handleUpdatePhaseStatusSelect(select) {
