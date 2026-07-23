@@ -21,6 +21,7 @@ const modules = [
 const ALL_BRANDS_ID = "all-brands";
 const OPERATIONS_MODE = true;
 const ENABLE_AI_ASSISTANT = false;
+const APP_BUILD_MARKER = "phase-debug-2026-07-23-v3";
 const DEBUG_INTERACTIONS =
   typeof window !== "undefined" &&
   (new URLSearchParams(window.location.search).has("debugInteractions") || window.localStorage?.getItem("lumen_debug_interactions") === "1");
@@ -66,6 +67,7 @@ const dataState = {
   brandNotificationRecipientsReady: false,
   emailNotificationsReady: true,
   phaseCommentsReady: true,
+  phaseComments: [],
   lastEmailFunctionError: null,
   productionPlannerReady: true,
 };
@@ -1012,6 +1014,7 @@ const state = {
   initialRouteApplied: false,
   passwordResetMode: false,
   toast: "",
+  debugEvents: [],
 };
 
 const statusLabels = {
@@ -1451,7 +1454,13 @@ async function loadSupabaseData() {
   );
   const phasesByOrderId = new Map();
   const commentsByPhaseId = new Map();
+  dataState.phaseComments = [];
   if (!phaseCommentsResult.error) {
+    dataState.phaseComments = (phaseCommentsResult.data || []).map(mapDbWorkOrderPhaseComment);
+    debugInteraction("phase-comments:loaded", {
+      count: dataState.phaseComments.length,
+      sample: dataState.phaseComments.slice(0, 3),
+    });
     (phaseCommentsResult.data || []).forEach((comment) => {
       const list = commentsByPhaseId.get(comment.phase_id) || [];
       list.push(mapDbWorkOrderPhaseComment(comment));
@@ -2308,12 +2317,80 @@ function currentProfileId() {
 
 function debugInteraction(eventName, details = {}) {
   if (!DEBUG_INTERACTIONS) return;
-  console.debug(`[Lumen interaction] ${eventName}`, {
+  const event = {
+    at: new Date().toISOString(),
+    event: eventName,
     role: dataState.profile?.role || "sin-perfil",
     module: state.currentModule,
+    currentView: state.currentModule,
+    selectedWorkOrderId: state.viewingWorkOrderId || state.focusedWorkOrderId || "",
     profileId: currentProfileId(),
     ...details,
-  });
+  };
+  state.debugEvents = [event, ...(state.debugEvents || [])].slice(0, 12);
+  console.debug(`[Lumen interaction] ${eventName}`, event);
+  updateDebugInteractionsPanel();
+}
+
+function debugSafeJson(value) {
+  try {
+    return JSON.stringify(value, (_key, innerValue) => {
+      if (innerValue instanceof Error) return innerValue.message;
+      if (typeof innerValue === "function") return "[Function]";
+      return innerValue;
+    });
+  } catch {
+    return String(value || "");
+  }
+}
+
+function renderDebugInteractionsPanel() {
+  if (!DEBUG_INTERACTIONS) return "";
+  const lastEvent = state.debugEvents?.[0] || {};
+  return `
+    <aside
+      id="debug-interactions-panel"
+      style="position:fixed;right:12px;bottom:12px;z-index:9999;width:min(460px,calc(100vw - 24px));max-height:52vh;overflow:auto;background:#101815;color:#e9f5ef;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:12px;box-shadow:0 16px 50px rgba(0,0,0,.25);font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;"
+    >
+      ${renderDebugInteractionsPanelContent(lastEvent)}
+    </aside>
+  `;
+}
+
+function renderDebugInteractionsPanelContent(lastEvent = state.debugEvents?.[0] || {}) {
+  if (!DEBUG_INTERACTIONS) return "";
+  const rows = (state.debugEvents || []).slice(0, 8);
+  return `
+    <div style="font-weight:700;margin-bottom:6px;">Debug interactions activo</div>
+    <div>build: <strong>${escapeHtml(APP_BUILD_MARKER)}</strong></div>
+    <div>currentUserId: ${escapeHtml(currentProfileId() || "sin usuario")}</div>
+    <div>currentView: ${escapeHtml(state.currentModule || "")}</div>
+    <div>selectedWorkOrderId: ${escapeHtml(state.viewingWorkOrderId || state.focusedWorkOrderId || "")}</div>
+    <div>lastAction: ${escapeHtml(lastEvent.event || "")}</div>
+    <div>lastRpc: ${escapeHtml(String(lastEvent.rpc || lastEvent.action || ""))}</div>
+    <div>lastRpcPayload: ${escapeHtml(debugSafeJson(lastEvent.payload || lastEvent.rpcPayload || {}))}</div>
+    <div>lastRpcResult: ${escapeHtml(debugSafeJson(lastEvent.result || lastEvent.data || lastEvent.returnedStatus || lastEvent.commentId || ""))}</div>
+    <div>lastRpcError: ${escapeHtml(debugSafeJson(lastEvent.error || ""))}</div>
+    <hr style="border:0;border-top:1px solid rgba(255,255,255,.16);margin:8px 0;" />
+    ${rows
+      .map(
+        (event) => `
+          <div style="margin-bottom:8px;">
+            <strong>${escapeHtml(event.event)}</strong>
+            <span style="opacity:.72;">${escapeHtml(new Date(event.at).toLocaleTimeString("es-MX"))}</span>
+            <pre style="white-space:pre-wrap;margin:2px 0 0;color:#cfe5db;">${escapeHtml(debugSafeJson(event))}</pre>
+          </div>
+        `,
+      )
+      .join("")}
+  `;
+}
+
+function updateDebugInteractionsPanel() {
+  if (!DEBUG_INTERACTIONS || typeof document === "undefined") return;
+  const panel = document.getElementById("debug-interactions-panel");
+  if (!panel) return;
+  panel.innerHTML = renderDebugInteractionsPanelContent();
 }
 
 function isCurrentUserRelatedToWorkOrder(order) {
@@ -2407,6 +2484,14 @@ function renderLinkedText(value = "") {
 function renderWorkOrderPhaseComments(phase, order) {
   const comments = Array.isArray(phase.comments) ? phase.comments : [];
   const canComment = canCommentOnWorkOrderPhase(phase, order);
+  debugInteraction("phase-comments:render", {
+    phaseId: phase.id,
+    phaseDbId: phase.dbId || "",
+    workOrderId: order?.id || "",
+    code: order?.id || order?.code || "",
+    count: comments.length,
+    sample: comments.slice(0, 2),
+  });
   return `
     <div class="phase-comments">
       <div class="phase-comments-list">
@@ -2673,6 +2758,7 @@ function render() {
       </main>
     </div>
     ${state.toast ? `<div class="toast">${state.toast}</div>` : ""}
+    ${renderDebugInteractionsPanel()}
   `;
   bindEvents();
   focusLinkedWorkOrder();
@@ -8839,9 +8925,10 @@ function bindDelegatedActionEvents() {
     event.preventDefault();
     const action = actionTarget.dataset.action;
     const id = actionTarget.dataset.id || actionTarget.dataset.orderId || "";
-    debugInteraction("click-action", {
+    debugInteraction("click:caught", {
       action,
       id,
+      phaseId: actionTarget.dataset.phaseId || id || "",
       tag: actionTarget.tagName,
       disabled: Boolean(actionTarget.disabled),
       pointerEvents: window.getComputedStyle(actionTarget).pointerEvents,
@@ -8858,7 +8945,7 @@ function bindDelegatedActionEvents() {
     if (action !== "update-phase-status") return;
     const phaseId = actionTarget.dataset.phaseId || actionTarget.dataset.id || actionTarget.dataset.phaseStatusSelect || "";
     const nextStatus = actionTarget.value;
-    debugInteraction("change-action", {
+    debugInteraction("change:caught", {
       action,
       phaseId,
       nextStatus,
@@ -10886,22 +10973,31 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
   if (isSupabaseMode()) {
     const targetId = phase.dbId || phase.id;
     debugInteraction("phase-status:update:start", {
+      rpc: "update_work_order_phase_status",
       phaseId,
       targetId,
       previousStatus,
       nextStatus,
       currentUserId: dataState.session?.user?.id || "",
+      payload: {
+        target_phase_id: targetId,
+        next_status: nextStatus,
+      },
     });
     const { data, error } = await supabaseClient.rpc("update_work_order_phase_status", {
       target_phase_id: targetId,
       next_status,
     });
     debugInteraction("phase-status:update:response", {
+      rpc: "update_work_order_phase_status",
       phaseId,
       targetId,
       nextStatus,
+      data,
+      result: Array.isArray(data) ? data[0] : data,
       returnedStatus: Array.isArray(data) ? data[0]?.status : data?.status,
       error: error?.message || "",
+      errorDetails: error?.details || error?.hint || error?.code || "",
     });
     if (error) {
       debugInteraction("phase-status:update:error", { phaseId, targetId, nextStatus, message: error.message || "" });
@@ -11019,20 +11115,30 @@ async function addWorkOrderPhaseComment(phaseId) {
   if (isSupabaseMode()) {
     const targetId = phase.dbId || phase.id;
     debugInteraction("phase-comment:add:start", {
+      rpc: "add_work_order_phase_comment",
       phaseId,
       targetId,
       bodyLength: body.length,
+      bodyPreview: body.slice(0, 80),
       currentUserId: dataState.session?.user?.id || "",
+      payload: {
+        target_phase_id: targetId,
+        comment_body: body,
+      },
     });
     const { data, error } = await supabaseClient.rpc("add_work_order_phase_comment", {
       target_phase_id: targetId,
       comment_body: body,
     });
     debugInteraction("phase-comment:add:response", {
+      rpc: "add_work_order_phase_comment",
       phaseId,
       targetId,
+      data,
+      result: Array.isArray(data) ? data[0] : data,
       commentId: Array.isArray(data) ? data[0]?.id : data?.id,
       error: error?.message || "",
+      errorDetails: error?.details || error?.hint || error?.code || "",
     });
     if (error) {
       debugInteraction("phase-comment:add:error", { phaseId, targetId, message: error.message || "" });
