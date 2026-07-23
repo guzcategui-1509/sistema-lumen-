@@ -2441,6 +2441,7 @@ function renderPhaseStatusSelect(phase, order) {
         data-action="update-phase-status"
         data-phase-id="${escapeHtml(phase.id)}"
         data-phase-status-select="${escapeHtml(phase.id)}"
+        data-previous-value="${escapeHtml(phase.status || "pending")}"
       >
         ${Object.entries(workOrderPhaseEditableStatusLabels)
           .map(([value, label]) => renderWorkOrderSelectOption(value, label, phase.status))
@@ -8940,23 +8941,41 @@ function bindDelegatedActionEvents() {
   });
   app.addEventListener("change", (event) => {
     const actionTarget = event.target.closest("[data-action]");
-    if (!actionTarget || !app.contains(actionTarget)) return;
-    const action = actionTarget.dataset.action;
-    if (action !== "update-phase-status") return;
-    const phaseId = actionTarget.dataset.phaseId || actionTarget.dataset.id || actionTarget.dataset.phaseStatusSelect || "";
-    const nextStatus = actionTarget.value;
+    const action = actionTarget?.dataset.action || event.target.dataset.action || "";
     debugInteraction("change:caught", {
+      tag: event.target.tagName,
       action,
-      phaseId,
-      nextStatus,
+      phaseId: actionTarget?.dataset.phaseId || event.target.dataset.phaseId || "",
+      oldValue: actionTarget?.dataset.previousValue || event.target.dataset.previousValue || "",
+      value: event.target.value,
+      disabled: Boolean(event.target.disabled),
       currentUserId: dataState.session?.user?.id || "",
     });
-    updateWorkOrderPhaseStatus(phaseId, nextStatus).catch((error) => {
-      console.warn("[Lumen phase] status update failed", error);
+    if (!actionTarget || !app.contains(actionTarget)) return;
+    if (action !== "update-phase-status") return;
+    handleUpdatePhaseStatusSelect(actionTarget).catch((error) => {
+      console.warn("[Lumen phase] status select failed", error);
       showToast(error.message || "No se pudo actualizar la fase");
       render();
     });
   });
+}
+
+async function handleUpdatePhaseStatusSelect(select) {
+  debugInteraction("phase-status:handler-enter", {
+    phaseId: select?.dataset?.phaseId || select?.dataset?.phaseStatusSelect || "",
+    value: select?.value || "",
+    previousValue: select?.dataset?.previousValue || "",
+    selectedIndex: select?.selectedIndex ?? -1,
+    options: Array.from(select?.options || []).map((option) => ({
+      value: option.value,
+      label: option.textContent,
+      selected: option.selected,
+    })),
+  });
+  const phaseId = select?.dataset?.phaseId || select?.dataset?.phaseStatusSelect || "";
+  const nextStatus = select?.value || "";
+  await updateWorkOrderPhaseStatus(phaseId, nextStatus);
 }
 
 async function handleAction(action, id) {
@@ -10969,6 +10988,12 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
   const wasCompleted = phase.status === "completed";
   const previousStatus = phase.status;
   const completedAt = nextStatus === "completed" ? phase.completedAt || new Date().toISOString() : null;
+  debugInteraction("phase-status:before-rpc", {
+    phaseId,
+    targetId: phase.dbId || phase.id,
+    nextStatus,
+    previousStatus,
+  });
 
   if (isSupabaseMode()) {
     const targetId = phase.dbId || phase.id;
@@ -11007,17 +11032,32 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
       return;
     }
     const updatedRow = Array.isArray(data) ? data[0] : data;
+    const localPhaseBefore = { ...phase };
+    const updatedStatus = updatedRow?.status ?? nextStatus;
+    const updatedCompletedAt =
+      updatedRow?.completed_at ??
+      updatedRow?.completedAt ??
+      (updatedStatus === "completed" ? new Date().toISOString() : null);
     replaceLocalWorkOrderPhase(order, phase.id, (candidate) => ({
       ...candidate,
-      status: updatedRow?.status || nextStatus,
-      completedAt: updatedRow?.completed_at || completedAt,
+      status: updatedStatus,
+      completedAt: updatedCompletedAt,
       updatedAt: updatedRow?.updated_at || new Date().toISOString(),
     }));
+    const localPhaseAfter = workOrderPhases(order).find((candidate) => candidate.id === phase.id || candidate.dbId === targetId);
+    debugInteraction("phase-status:local-update", {
+      phaseId,
+      targetId,
+      updatedStatus,
+      updatedCompletedAt,
+      localPhaseBefore,
+      localPhaseAfter,
+    });
     if (nextStatus === "completed" && !wasCompleted) {
       const emailResult = await queuePhaseCompletedEmail(order, {
         ...phase,
         status: "completed",
-        completedAt: updatedRow?.completed_at || completedAt,
+        completedAt: updatedCompletedAt || completedAt,
       });
       if (emailResult.error) {
         showToast(`Fase actualizada, pero no se pudo preparar email: ${emailResult.error.message}`);
@@ -11035,6 +11075,14 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
 
   state.viewingWorkOrderId = order.id;
   state.focusedWorkOrderId = order.id;
+  const phaseBeforeRender = workOrderPhases(order).find((candidate) => candidate.id === phase.id || candidate.dbId === (phase.dbId || phase.id));
+  debugInteraction("phase-status:rerender", {
+    selectedWorkOrderId: state.viewingWorkOrderId,
+    focusedWorkOrderId: state.focusedWorkOrderId,
+    currentView: state.currentModule,
+    phaseId,
+    phaseBeforeRender,
+  });
   showToast(`Fase actualizada: ${workOrderPhaseStatusLabels[nextStatus] || nextStatus}`);
   render();
 }
