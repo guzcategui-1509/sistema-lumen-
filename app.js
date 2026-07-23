@@ -1015,6 +1015,7 @@ const state = {
   passwordResetMode: false,
   toast: "",
   debugEvents: [],
+  lastPhaseStatusEvent: null,
 };
 
 const statusLabels = {
@@ -2433,6 +2434,13 @@ function canCommentOnWorkOrderPhase(phase, order = null) {
 
 function renderPhaseStatusSelect(phase, order) {
   if (!canUpdateWorkOrderPhaseStatus(phase, order)) return "";
+  debugInteraction("phase-status:select-rendered", {
+    phaseId: phase.id,
+    status: phase.status,
+    action: "update-phase-status",
+    disabled: false,
+    htmlHasDataAction: true,
+  });
   return `
     <label class="phase-status-control">
       <span>Estado</span>
@@ -8915,6 +8923,7 @@ function bindAuthEvents() {
 }
 
 function bindDelegatedActionEvents() {
+  bindGlobalPhaseStatusEvents();
   const app = document.getElementById("app");
   if (!app || app.dataset.actionDelegateBound === "true") return;
   app.dataset.actionDelegateBound = "true";
@@ -8939,25 +8948,47 @@ function bindDelegatedActionEvents() {
       showToast(error.message || "No se pudo completar la acción");
     });
   });
-  app.addEventListener("change", (event) => {
-    const actionTarget = event.target.closest("[data-action]");
-    const action = actionTarget?.dataset.action || event.target.dataset.action || "";
-    debugInteraction("change:caught", {
-      tag: event.target.tagName,
-      action,
-      phaseId: actionTarget?.dataset.phaseId || event.target.dataset.phaseId || "",
-      oldValue: actionTarget?.dataset.previousValue || event.target.dataset.previousValue || "",
-      value: event.target.value,
-      disabled: Boolean(event.target.disabled),
-      currentUserId: dataState.session?.user?.id || "",
+}
+
+function bindGlobalPhaseStatusEvents() {
+  if (typeof window === "undefined" || window.__lumenPhaseChangeListenerAttached) return;
+  document.addEventListener("change", handleGlobalPhaseStatusEvent, true);
+  document.addEventListener("input", handleGlobalPhaseStatusEvent, true);
+  window.__lumenPhaseChangeListenerAttached = true;
+}
+
+function handleGlobalPhaseStatusEvent(event) {
+  const control = event.target.closest?.("[data-action]");
+  const action = control?.dataset?.action || event.target.dataset?.action || "";
+  const phaseId = control?.dataset?.phaseId || event.target.dataset?.phaseId || "";
+  debugInteraction(event.type === "input" ? "global-input:caught" : "global-change:caught", {
+    tag: event.target.tagName,
+    action,
+    targetAction: event.target.dataset?.action || "",
+    phaseId,
+    value: event.target.value,
+    disabled: Boolean(event.target.disabled),
+    eventPhase: event.eventPhase,
+  });
+  if (action !== "update-phase-status") return;
+  if (!control || control.tagName !== "SELECT") return;
+
+  const key = `${phaseId}::${control.value}`;
+  const now = Date.now();
+  const previous = state.lastPhaseStatusEvent || {};
+  if (previous.key === key && now - previous.at < 500) {
+    debugInteraction("phase-status:duplicate-event-skipped", {
+      phaseId,
+      value: control.value,
+      eventType: event.type,
     });
-    if (!actionTarget || !app.contains(actionTarget)) return;
-    if (action !== "update-phase-status") return;
-    handleUpdatePhaseStatusSelect(actionTarget).catch((error) => {
-      console.warn("[Lumen phase] status select failed", error);
-      showToast(error.message || "No se pudo actualizar la fase");
-      render();
-    });
+    return;
+  }
+  state.lastPhaseStatusEvent = { key, at: now };
+  handleUpdatePhaseStatusSelect(control).catch((error) => {
+    console.warn("[Lumen phase] status select failed", error);
+    showToast(error.message || "No se pudo actualizar la fase");
+    render();
   });
 }
 
