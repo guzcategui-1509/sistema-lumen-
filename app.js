@@ -21,7 +21,7 @@ const modules = [
 const ALL_BRANDS_ID = "all-brands";
 const OPERATIONS_MODE = true;
 const ENABLE_AI_ASSISTANT = false;
-const APP_BUILD_MARKER = "phase-debug-2026-07-23-v4-direct-select";
+const APP_BUILD_MARKER = "phase-debug-2026-07-23-v5-single-change-path";
 const DEBUG_INTERACTIONS =
   typeof window !== "undefined" &&
   (new URLSearchParams(window.location.search).has("debugInteractions") || window.localStorage?.getItem("lumen_debug_interactions") === "1");
@@ -1015,7 +1015,6 @@ const state = {
   passwordResetMode: false,
   toast: "",
   debugEvents: [],
-  lastPhaseStatusEvent: null,
 };
 
 const statusLabels = {
@@ -2450,7 +2449,6 @@ function renderPhaseStatusSelect(phase, order) {
         data-phase-id="${escapeHtml(phase.id)}"
         data-phase-status-select="${escapeHtml(phase.id)}"
         data-previous-value="${escapeHtml(phase.status || "pending")}"
-        onchange="window.__lumenHandlePhaseStatusSelectChange && window.__lumenHandlePhaseStatusSelectChange(this, event)"
       >
         ${Object.entries(workOrderPhaseEditableStatusLabels)
           .map(([value, label]) => renderWorkOrderSelectOption(value, label, phase.status))
@@ -8924,93 +8922,55 @@ function bindAuthEvents() {
 }
 
 function bindDelegatedActionEvents() {
-  bindGlobalPhaseStatusEvents();
-  const app = document.getElementById("app");
-  if (!app || app.dataset.actionDelegateBound === "true") return;
-  app.dataset.actionDelegateBound = "true";
-  app.addEventListener("click", (event) => {
-    const actionTarget = event.target.closest("[data-action]");
-    if (!actionTarget || !app.contains(actionTarget)) return;
-    if (["SELECT", "OPTION", "TEXTAREA", "INPUT"].includes(actionTarget.tagName)) return;
-    if (actionTarget.disabled || actionTarget.getAttribute("aria-disabled") === "true") return;
-    event.preventDefault();
-    const action = actionTarget.dataset.action;
-    const id = actionTarget.dataset.id || actionTarget.dataset.orderId || "";
-    debugInteraction("click:caught", {
-      action,
-      id,
-      phaseId: actionTarget.dataset.phaseId || id || "",
-      tag: actionTarget.tagName,
-      disabled: Boolean(actionTarget.disabled),
-      pointerEvents: window.getComputedStyle(actionTarget).pointerEvents,
-    });
-    handleAction(action, id).catch((error) => {
-      console.warn("[Lumen interaction] action failed", { action, id, error });
-      showToast(error.message || "No se pudo completar la acción");
-    });
+  bindDocumentInteractionEvents();
+}
+
+function bindDocumentInteractionEvents() {
+  if (typeof window === "undefined" || window.__lumenDocumentInteractionsAttached) return;
+  document.addEventListener("click", handleDocumentActionClick, true);
+  document.addEventListener("change", handleDocumentChange, true);
+  window.__lumenDocumentInteractionsAttached = true;
+}
+
+function handleDocumentActionClick(event) {
+  const actionTarget = event.target.closest?.("[data-action]");
+  if (!actionTarget || !document.getElementById("app")?.contains(actionTarget)) return;
+  if (event.target.closest('select, option, input, textarea, [contenteditable="true"]')) return;
+  if (actionTarget.disabled || actionTarget.getAttribute("aria-disabled") === "true") return;
+  event.preventDefault();
+  const action = actionTarget.dataset.action;
+  const id = actionTarget.dataset.id || actionTarget.dataset.orderId || "";
+  debugInteraction("click:caught", {
+    action,
+    id,
+    phaseId: actionTarget.dataset.phaseId || id || "",
+    tag: actionTarget.tagName,
+    disabled: Boolean(actionTarget.disabled),
+    pointerEvents: window.getComputedStyle(actionTarget).pointerEvents,
+  });
+  handleAction(action, id).catch((error) => {
+    console.warn("[Lumen interaction] action failed", { action, id, error });
+    showToast(error.message || "No se pudo completar la acción");
   });
 }
 
-function bindGlobalPhaseStatusEvents() {
-  if (typeof window === "undefined" || window.__lumenPhaseChangeListenerAttached) return;
-  document.addEventListener("change", handleGlobalPhaseStatusEvent, true);
-  document.addEventListener("input", handleGlobalPhaseStatusEvent, true);
-  window.__lumenPhaseChangeListenerAttached = true;
-}
-
-function handleGlobalPhaseStatusEvent(event) {
-  const control = event.target.closest?.("[data-action]");
-  const action = control?.dataset?.action || event.target.dataset?.action || "";
-  const phaseId = control?.dataset?.phaseId || event.target.dataset?.phaseId || "";
-  debugInteraction(event.type === "input" ? "global-input:caught" : "global-change:caught", {
+function handleDocumentChange(event) {
+  const select = event.target.closest?.('select[data-action="update-phase-status"]');
+  debugInteraction("document-change:caught", {
     tag: event.target.tagName,
-    action,
+    action: select?.dataset?.action || event.target.dataset?.action || "",
     targetAction: event.target.dataset?.action || "",
-    phaseId,
+    phaseId: select?.dataset?.phaseId || event.target.dataset?.phaseId || "",
     value: event.target.value,
     disabled: Boolean(event.target.disabled),
     eventPhase: event.eventPhase,
   });
-  if (action !== "update-phase-status") return;
-  if (!control || control.tagName !== "SELECT") return;
-  dispatchPhaseStatusSelectChange(control, event, event.type).catch((error) => {
+  if (!select || !document.getElementById("app")?.contains(select)) return;
+  handleUpdatePhaseStatusSelect(select).catch((error) => {
     console.warn("[Lumen phase] status select failed", error);
     showToast(error.message || "No se pudo actualizar la fase");
     render();
   });
-}
-
-async function dispatchPhaseStatusSelectChange(select, event, source = "unknown") {
-  const phaseId = select?.dataset?.phaseId || select?.dataset?.phaseStatusSelect || "";
-  const key = `${phaseId}::${select?.value || ""}`;
-  const now = Date.now();
-  const previous = state.lastPhaseStatusEvent || {};
-  if (previous.key === key && now - previous.at < 500) {
-    debugInteraction("phase-status:duplicate-event-skipped", {
-      phaseId,
-      value: select?.value || "",
-      eventType: event?.type || source,
-      source,
-    });
-    return;
-  }
-  state.lastPhaseStatusEvent = { key, at: now };
-  await handleUpdatePhaseStatusSelect(select);
-}
-
-if (typeof window !== "undefined") {
-  window.__lumenHandlePhaseStatusSelectChange = async function (select, event) {
-    debugInteraction("phase-status:direct-change", {
-      tag: select?.tagName,
-      action: select?.dataset?.action,
-      phaseId: select?.dataset?.phaseId,
-      previousValue: select?.dataset?.previousValue,
-      value: select?.value,
-      disabled: Boolean(select?.disabled),
-      eventType: event?.type,
-    });
-    await dispatchPhaseStatusSelectChange(select, event, "direct-change");
-  };
 }
 
 async function handleUpdatePhaseStatusSelect(select) {
