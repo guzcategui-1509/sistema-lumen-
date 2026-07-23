@@ -65,6 +65,7 @@ const dataState = {
   profile: null,
   brandNotificationRecipientsReady: false,
   emailNotificationsReady: true,
+  phaseCommentsReady: true,
   lastEmailFunctionError: null,
   productionPlannerReady: true,
 };
@@ -1434,6 +1435,13 @@ async function loadSupabaseData() {
   dataState.brandNotificationRecipientsReady = !notificationRecipientsResult.error;
   dataState.productionPlannerReady = !productionPlannerResult.error;
   dataState.emailNotificationsReady = !emailNotificationsResult.error;
+  dataState.phaseCommentsReady = !phaseCommentsResult.error;
+  if (phaseCommentsResult.error) {
+    debugInteraction("phase-comments:load:error", {
+      message: phaseCommentsResult.error.message || "",
+      details: phaseCommentsResult.error.details || "",
+    });
+  }
   setCollection(
     brandNotificationRecipients,
     (notificationRecipientsResult.data || []).map((recipient) => ({
@@ -2351,7 +2359,12 @@ function renderPhaseStatusSelect(phase, order) {
   return `
     <label class="phase-status-control">
       <span>Estado</span>
-      <select class="input phase-status-select" data-phase-status-select="${escapeHtml(phase.id)}">
+      <select
+        class="input phase-status-select"
+        data-action="update-phase-status"
+        data-phase-id="${escapeHtml(phase.id)}"
+        data-phase-status-select="${escapeHtml(phase.id)}"
+      >
         ${Object.entries(workOrderPhaseEditableStatusLabels)
           .map(([value, label]) => renderWorkOrderSelectOption(value, label, phase.status))
           .join("")}
@@ -2398,7 +2411,9 @@ function renderWorkOrderPhaseComments(phase, order) {
     <div class="phase-comments">
       <div class="phase-comments-list">
         ${
-          comments.length
+          !dataState.phaseCommentsReady
+            ? `<div class="small-muted">No se pudieron cargar los comentarios de fases. Revisa permisos o consola.</div>`
+            : comments.length
             ? comments
                 .map(
                   (comment) => `
@@ -8566,15 +8581,6 @@ function bindEvents() {
     });
   });
 
-  document.querySelectorAll("[data-phase-status-select]").forEach((select) => {
-    select.addEventListener("change", () => {
-      updateWorkOrderPhaseStatus(select.dataset.phaseStatusSelect, select.value).catch((error) => {
-        console.warn("[Lumen phase] status update failed", error);
-        showToast(error.message || "No se pudo actualizar la fase");
-        render();
-      });
-    });
-  });
 }
 
 function refreshAssigneeSelectedList() {
@@ -8828,6 +8834,7 @@ function bindDelegatedActionEvents() {
   app.addEventListener("click", (event) => {
     const actionTarget = event.target.closest("[data-action]");
     if (!actionTarget || !app.contains(actionTarget)) return;
+    if (["SELECT", "OPTION", "TEXTAREA", "INPUT"].includes(actionTarget.tagName)) return;
     if (actionTarget.disabled || actionTarget.getAttribute("aria-disabled") === "true") return;
     event.preventDefault();
     const action = actionTarget.dataset.action;
@@ -8842,6 +8849,25 @@ function bindDelegatedActionEvents() {
     handleAction(action, id).catch((error) => {
       console.warn("[Lumen interaction] action failed", { action, id, error });
       showToast(error.message || "No se pudo completar la acción");
+    });
+  });
+  app.addEventListener("change", (event) => {
+    const actionTarget = event.target.closest("[data-action]");
+    if (!actionTarget || !app.contains(actionTarget)) return;
+    const action = actionTarget.dataset.action;
+    if (action !== "update-phase-status") return;
+    const phaseId = actionTarget.dataset.phaseId || actionTarget.dataset.id || actionTarget.dataset.phaseStatusSelect || "";
+    const nextStatus = actionTarget.value;
+    debugInteraction("change-action", {
+      action,
+      phaseId,
+      nextStatus,
+      currentUserId: dataState.session?.user?.id || "",
+    });
+    updateWorkOrderPhaseStatus(phaseId, nextStatus).catch((error) => {
+      console.warn("[Lumen phase] status update failed", error);
+      showToast(error.message || "No se pudo actualizar la fase");
+      render();
     });
   });
 }
@@ -10859,10 +10885,23 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
 
   if (isSupabaseMode()) {
     const targetId = phase.dbId || phase.id;
-    debugInteraction("phase-status:update:start", { phaseId, targetId, previousStatus, nextStatus });
+    debugInteraction("phase-status:update:start", {
+      phaseId,
+      targetId,
+      previousStatus,
+      nextStatus,
+      currentUserId: dataState.session?.user?.id || "",
+    });
     const { data, error } = await supabaseClient.rpc("update_work_order_phase_status", {
       target_phase_id: targetId,
       next_status,
+    });
+    debugInteraction("phase-status:update:response", {
+      phaseId,
+      targetId,
+      nextStatus,
+      returnedStatus: Array.isArray(data) ? data[0]?.status : data?.status,
+      error: error?.message || "",
     });
     if (error) {
       debugInteraction("phase-status:update:error", { phaseId, targetId, nextStatus, message: error.message || "" });
@@ -10979,10 +11018,21 @@ async function addWorkOrderPhaseComment(phaseId) {
 
   if (isSupabaseMode()) {
     const targetId = phase.dbId || phase.id;
-    debugInteraction("phase-comment:add:start", { phaseId, targetId });
+    debugInteraction("phase-comment:add:start", {
+      phaseId,
+      targetId,
+      bodyLength: body.length,
+      currentUserId: dataState.session?.user?.id || "",
+    });
     const { data, error } = await supabaseClient.rpc("add_work_order_phase_comment", {
       target_phase_id: targetId,
       comment_body: body,
+    });
+    debugInteraction("phase-comment:add:response", {
+      phaseId,
+      targetId,
+      commentId: Array.isArray(data) ? data[0]?.id : data?.id,
+      error: error?.message || "",
     });
     if (error) {
       debugInteraction("phase-comment:add:error", { phaseId, targetId, message: error.message || "" });
