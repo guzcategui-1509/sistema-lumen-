@@ -4482,7 +4482,7 @@ function availableWorkOrderAssigneeUsers(selectedAssignees = new Set()) {
 }
 
 function workOrderAssigneeSearchText(user) {
-  return normalizeAiText([user.name, user.email, user.role, roleLabels[user.role]].filter(Boolean).join(" "));
+  return normalizeSearchText([user.name, user.email, user.role, roleLabels[user.role]].filter(Boolean).join(" "));
 }
 
 function emptyWorkOrderFormDraft() {
@@ -4586,6 +4586,14 @@ function normalizeAiText(value = "") {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeSearchText(value = "") {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 function inferWorkOrderCategory(text = "") {
@@ -4994,6 +5002,7 @@ function renderWorkOrderForm(order = null) {
   const artCountValue = draft?.artCount ?? (isEditing && order.artCount !== null && order.artCount !== undefined ? String(order.artCount) : "");
   const notifyOnEmail = draft?.notifyOnEmail ?? (isEditing ? order.notifyOnEmail !== false : true);
   const assigneeSearchValue = draft?.assigneeSearch || "";
+  const normalizedAssigneeSearch = normalizeSearchText(assigneeSearchValue);
   const emailRecipientSummary = brandEmailRecipientSummary(state.currentBrandId, Array.from(selectedAssignees));
 
   return `
@@ -5018,7 +5027,7 @@ function renderWorkOrderForm(order = null) {
         <div class="field">
           <label>Responsables</label>
           <div class="assignee-picker">
-            <input class="input assignee-search" id="ot-assignee-search" placeholder="Buscar responsable..." value="${escapeHtml(assigneeSearchValue)}" />
+            <input class="input assignee-search" id="ot-assignee-search" autocomplete="off" placeholder="Buscar responsable..." value="${escapeHtml(assigneeSearchValue)}" />
             <div class="assignee-selected-list" aria-live="polite">
               ${
                 selectedUsers.length
@@ -5041,7 +5050,7 @@ function renderWorkOrderForm(order = null) {
                   (user) => {
                     const userLoad = workloadLabelForUser(user.id);
                     return `
-                    <label class="assignee-option" data-assignee-option="${escapeHtml(workOrderAssigneeSearchText(user))}" ${assigneeSearchValue && !workOrderAssigneeSearchText(user).includes(normalizeAiText(assigneeSearchValue)) ? "hidden" : ""}>
+                    <label class="assignee-option ${normalizedAssigneeSearch && !workOrderAssigneeSearchText(user).includes(normalizedAssigneeSearch) ? "is-filtered-out" : ""}" data-assignee-option="${escapeHtml(workOrderAssigneeSearchText(user))}">
                       <input type="checkbox" data-ot-assignee value="${user.id}" ${selectedAssignees.has(user.id) ? "checked" : ""} />
                       <span>
                         <strong>${escapeHtml(user.name)}</strong>
@@ -5053,7 +5062,7 @@ function renderWorkOrderForm(order = null) {
                   },
                 )
                 .join("") || `<div class="empty compact-empty">No hay responsables internos disponibles</div>`}
-              <div class="empty compact-empty assignee-no-results" ${assigneeSearchValue && !availableUsers.some((user) => workOrderAssigneeSearchText(user).includes(normalizeAiText(assigneeSearchValue))) ? "" : "hidden"}>
+              <div class="empty compact-empty assignee-no-results ${normalizedAssigneeSearch && !availableUsers.some((user) => workOrderAssigneeSearchText(user).includes(normalizedAssigneeSearch)) ? "" : "is-hidden"}">
                 Sin resultados para esta búsqueda
               </div>
             </div>
@@ -8318,16 +8327,7 @@ function bindEvents() {
 
   document.querySelectorAll(".assignee-search").forEach((input) => {
     input.addEventListener("input", () => {
-      const query = normalizeAiText(input.value);
-      document.querySelectorAll("[data-assignee-option]").forEach((option) => {
-        option.hidden = query && !option.dataset.assigneeOption.includes(query);
-      });
-      const noResults = document.querySelector(".assignee-no-results");
-      if (noResults) {
-        const visibleOptions = Array.from(document.querySelectorAll("[data-assignee-option]")).filter((option) => !option.hidden);
-        noResults.hidden = !query || Boolean(visibleOptions.length);
-      }
-      syncWorkOrderFormDraftFromForm();
+      applyWorkOrderAssigneeSearchFilter(input);
     });
   });
 
@@ -8540,6 +8540,30 @@ function refreshAssigneeSelectedList() {
       `;
     })
     .join("");
+}
+
+function updateWorkOrderAssigneeSearchDraft(value = "") {
+  const draft = state.workOrderFormDraft || ensureWorkOrderFormDraft();
+  draft.assigneeSearch = value;
+  draft.assignees = selectedWorkOrderAssigneeIdsFromForm();
+  persistWorkOrderFormDraft();
+}
+
+function applyWorkOrderAssigneeSearchFilter(input) {
+  const picker = input.closest(".assignee-picker") || document;
+  const query = normalizeSearchText(input.value);
+  const options = Array.from(picker.querySelectorAll("[data-assignee-option]"));
+  let visibleCount = 0;
+  options.forEach((option) => {
+    const isMatch = !query || option.dataset.assigneeOption.includes(query);
+    option.classList.toggle("is-filtered-out", !isMatch);
+    if (isMatch) visibleCount += 1;
+  });
+  const noResults = picker.querySelector(".assignee-no-results");
+  if (noResults) {
+    noResults.classList.toggle("is-hidden", !query || visibleCount > 0);
+  }
+  updateWorkOrderAssigneeSearchDraft(input.value);
 }
 
 function refreshWorkOrderGuidancePanels() {

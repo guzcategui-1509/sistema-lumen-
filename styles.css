@@ -2629,6 +2629,11 @@ tr:last-child td {
   text-transform: none;
 }
 
+.assignee-option.is-filtered-out,
+.assignee-no-results.is-hidden {
+  display: none;
+}
+
 .assignee-option:has(input:checked) {
   border-color: rgba(73, 238, 140, 0.5);
   background: #edfff4;
