@@ -21,7 +21,7 @@ const modules = [
 const ALL_BRANDS_ID = "all-brands";
 const OPERATIONS_MODE = true;
 const ENABLE_AI_ASSISTANT = false;
-const APP_BUILD_MARKER = "phase-debug-2026-07-23-v7-direct-status-buttons";
+const APP_BUILD_MARKER = "phase-debug-2026-07-24-v7b-no-submit";
 const DEBUG_INTERACTIONS =
   typeof window !== "undefined" &&
   (new URLSearchParams(window.location.search).has("debugInteractions") || window.localStorage?.getItem("lumen_debug_interactions") === "1");
@@ -8940,16 +8940,18 @@ function bindDocumentInteractionEvents() {
   });
 }
 
-function handleDocumentActionClick(event) {
+async function handleDocumentActionClick(event) {
   const actionTarget = event.target.closest?.("[data-action]");
-  if (!actionTarget || !document.getElementById("app")?.contains(actionTarget)) return;
-  if (event.target.closest('select, option, input, textarea, [contenteditable="true"]')) return;
-  if (actionTarget.disabled || actionTarget.getAttribute("aria-disabled") === "true") return;
+  if (!actionTarget) return;
   const action = actionTarget.dataset.action;
 
   if (action === "set-phase-status") {
     event.preventDefault();
     event.stopPropagation();
+
+    if (!document.getElementById("app")?.contains(actionTarget)) return;
+    if (actionTarget.disabled || actionTarget.getAttribute("aria-disabled") === "true") return;
+
     const phaseId = actionTarget.dataset.phaseId || "";
     const nextStatus = actionTarget.dataset.nextStatus || "";
     if (!phaseId || !nextStatus) {
@@ -8964,13 +8966,24 @@ function handleDocumentActionClick(event) {
     debugInteraction("phase-status:set-click", {
       phaseId,
       nextStatus,
+      tagName: actionTarget.tagName,
+      type: actionTarget.type,
+      href: actionTarget.getAttribute("href"),
+      insideForm: Boolean(actionTarget.closest("form")),
+      parentAction: actionTarget.parentElement?.closest?.("[data-action]")?.dataset?.action || "",
     });
-    updateWorkOrderPhaseStatus(phaseId, nextStatus).catch((error) => {
+    try {
+      await updateWorkOrderPhaseStatus(phaseId, nextStatus);
+    } catch (error) {
       console.warn("[Lumen phase] status button failed", error);
       showToast(error.message || "No se pudo actualizar la fase");
-    });
+    }
     return;
   }
+
+  if (!document.getElementById("app")?.contains(actionTarget)) return;
+  if (event.target.closest('select, option, input, textarea, [contenteditable="true"]')) return;
+  if (actionTarget.disabled || actionTarget.getAttribute("aria-disabled") === "true") return;
 
   event.preventDefault();
   const id = actionTarget.dataset.id || actionTarget.dataset.orderId || "";
