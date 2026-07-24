@@ -70,6 +70,8 @@ const dataState = {
   phaseComments: [],
   lastEmailFunctionError: null,
   productionPlannerReady: true,
+  weeklyDigestRunsReady: true,
+  notificationRulesReady: true,
 };
 
 const clients = [
@@ -485,6 +487,8 @@ const officialBrandAbbreviations = {
 const users = loadStoredCollection("lumen_users_v1", []);
 const brandNotificationRecipients = loadStoredCollection("lumen_brand_notification_recipients_v1", []);
 const emailNotifications = [];
+const weeklyDigestRuns = [];
+const notificationRules = [];
 
 const demoWorkOrdersResetVersion = "2026-05-26-clean-all-test-work-orders";
 if (localStorage.getItem("lumen_work_orders_reset_version") !== demoWorkOrdersResetVersion) {
@@ -497,7 +501,7 @@ let workOrders = [];
 const initialWorkOrders = workOrders.map((order) => ({ ...order }));
 workOrders = loadStoredCollection("lumen_work_orders_v1", initialWorkOrders);
 
-const notificationRules = [
+const notificationRuleCatalog = [
   {
     id: "assignment",
     title: "Nueva OT creada",
@@ -1367,6 +1371,33 @@ function mapDbEmailNotification(row) {
   };
 }
 
+function mapDbWeeklyDigestRun(row) {
+  return {
+    id: row.id,
+    runDate: row.run_date || "",
+    subject: row.subject || "",
+    recipientsCount: Number(row.recipients_count || 0),
+    openOrdersCount: Number(row.open_orders_count || 0),
+    overdueOrdersCount: Number(row.overdue_orders_count || 0),
+    status: row.status || "draft",
+    createdAt: row.created_at || "",
+    sentAt: row.sent_at || "",
+  };
+}
+
+function mapDbNotificationRule(row) {
+  return {
+    id: row.rule_key || "",
+    title: row.title || row.rule_key || "Regla sin nombre",
+    channel: row.channel || "Sin canal",
+    recipients: row.recipients || "Sin destinatarios configurados",
+    enabled: row.is_enabled === true,
+    source: "database",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
+  };
+}
+
 function productionPlannerItemToDb(item) {
   return {
     month: Number(item.month || state.productionPlannerMonth || 7),
@@ -1401,6 +1432,8 @@ async function loadSupabaseData() {
     phaseCommentsResult,
     productionPlannerResult,
     emailNotificationsResult,
+    weeklyDigestRunsResult,
+    notificationRulesResult,
   ] = await Promise.all([
     supabaseClient.from("profiles").select("*").eq("id", dataState.session.user.id).maybeSingle(),
     supabaseClient.from("clients").select("*").order("name"),
@@ -1426,6 +1459,15 @@ async function loadSupabaseData() {
       .select("id,notification_type,status,subject,recipient_email,scheduled_for,sent_at,error_message,created_at")
       .order("created_at", { ascending: false })
       .limit(200),
+    supabaseClient
+      .from("weekly_digest_runs")
+      .select("id,run_date,subject,recipients_count,open_orders_count,overdue_orders_count,status,created_at,sent_at")
+      .order("created_at", { ascending: false })
+      .limit(20),
+    supabaseClient
+      .from("notification_rules")
+      .select("id,rule_key,title,channel,recipients,is_enabled,created_at,updated_at")
+      .order("created_at", { ascending: true }),
   ]);
 
   const error =
@@ -1452,6 +1494,8 @@ async function loadSupabaseData() {
   dataState.brandNotificationRecipientsReady = !notificationRecipientsResult.error;
   dataState.productionPlannerReady = !productionPlannerResult.error;
   dataState.emailNotificationsReady = !emailNotificationsResult.error;
+  dataState.weeklyDigestRunsReady = !weeklyDigestRunsResult.error;
+  dataState.notificationRulesReady = !notificationRulesResult.error;
   dataState.phaseCommentsReady = !phaseCommentsResult.error;
   if (phaseCommentsResult.error) {
     debugInteraction("phase-comments:load:error", {
@@ -1502,6 +1546,12 @@ async function loadSupabaseData() {
   }
   if (!emailNotificationsResult.error) {
     setCollection(emailNotifications, (emailNotificationsResult.data || []).map(mapDbEmailNotification));
+  }
+  if (!weeklyDigestRunsResult.error) {
+    setCollection(weeklyDigestRuns, (weeklyDigestRunsResult.data || []).map(mapDbWeeklyDigestRun));
+  }
+  if (!notificationRulesResult.error) {
+    setCollection(notificationRules, (notificationRulesResult.data || []).map(mapDbNotificationRule));
   }
 
   if (!isAllBrandsScope() && !brands.some((brand) => brand.id === state.currentBrandId)) {
@@ -4062,25 +4112,35 @@ function renderWeeklyDigestPreview() {
         <span>${weeklyDigestConfig.day} ${weeklyDigestConfig.time}</span>
       </div>
       <div class="digest-list">
-        ${rows
-          .map(
-            ({ user, open, overdue, review, collaborators, next }) => `
-              <div class="digest-row">
-                <div>
-                  <strong>${user.name}</strong>
-                  <div class="muted">${roleLabels[user.role] || user.role}</div>
-                </div>
-                <div class="digest-stats">
-                  <span class="badge ${overdue > 0 ? "red" : "green"}">${overdue} vencidas</span>
-                  <span class="badge blue">${open} abiertas</span>
-                  <span class="badge amber">${review} rev.</span>
-                  <span class="badge purple">${collaborators} colab.</span>
-                </div>
-                <div class="digest-next">${next ? `${next.id} / ${next.dueDate ? formatDate(next.dueDate) : "Sin fecha"}` : "Sin pendientes"}</div>
-              </div>
-            `,
-          )
-          .join("")}
+        ${
+          rows.length
+            ? rows
+                .map(
+                  ({ user, open, overdue, review, collaborators, next }) => `
+                    <div class="digest-row">
+                      <div>
+                        <strong>${escapeHtml(user?.name || "Sin responsable")}</strong>
+                        <div class="muted">${escapeHtml(roleLabels[user?.role] || user?.role || "Usuario interno")}</div>
+                      </div>
+                      <div class="digest-stats">
+                        <span class="badge ${overdue > 0 ? "red" : "green"}">${overdue} vencidas</span>
+                        <span class="badge blue">${open} abiertas</span>
+                        <span class="badge amber">${review} rev.</span>
+                        <span class="badge purple">${collaborators} colab.</span>
+                      </div>
+                      <div class="digest-next">
+                        ${
+                          next
+                            ? `${escapeHtml(next.id || next.code || next.title || "Sin título")} / ${next.dueDate ? formatDate(next.dueDate) : "Sin fecha"}`
+                            : "Sin pendientes"
+                        }
+                      </div>
+                    </div>
+                  `,
+                )
+                .join("")
+            : `<div class="empty compact-empty">Sin actividad esta semana.</div>`
+        }
       </div>
     </div>
   `;
@@ -6900,27 +6960,95 @@ function emailNotificationSummary(types = []) {
   };
 }
 
+function notificationRuleDescription(rule) {
+  if (rule.id === "assignment") {
+    return "Correo y aviso dentro del sistema para el creador, responsables y destinatarios configurados por marca.";
+  }
+  return `${rule.channel}. Destinatarios: ${rule.recipients}.`;
+}
+
 function renderNotificationRuleStatus(rule) {
   const types = notificationRuleTypeMap[rule.id] || [];
   const summary = emailNotificationSummary(types);
   return `
     <div class="notification-rule">
-      <div>
-        <strong>${rule.title}</strong>
-        <div class="muted">${rule.channel} / ${rule.recipients}</div>
-        <div class="small-muted">
-          Cola: ${types.length ? types.map(escapeHtml).join(", ") : "sin tipo directo"} ·
-          Último evento: ${summary.lastAt ? formatDateTime(summary.lastAt) : "Sin registros recientes"}
+      <div class="notification-rule__content">
+        <strong class="notification-rule__title">${escapeHtml(rule.title)}</strong>
+        <div class="notification-rule__description">${escapeHtml(notificationRuleDescription(rule))}</div>
+        <div class="notification-rule__metadata">
+          <span><strong>Cola</strong>${types.length ? types.map(escapeHtml).join(", ") : "Sin tipo directo"}</span>
+          <span><strong>Último evento</strong>${summary.lastAt ? formatDateTime(summary.lastAt) : "Sin registros recientes"}</span>
         </div>
-        <div class="small-muted">Edición de reglas pendiente: este panel informa estado real, no cambia reglas todavía.</div>
       </div>
-      <div class="row wrap end">
+      <div class="notification-rule__stats">
         <span class="badge ${rule.enabled ? "green" : "amber"}">${rule.enabled ? "Regla activa" : "Regla pausada"}</span>
         <span class="badge blue">Preparados ${summary.prepared}</span>
         <span class="badge green">Enviados ${summary.sent}</span>
         <span class="badge ${summary.failed ? "red" : "neutral"}">Fallidos ${summary.failed}</span>
       </div>
     </div>
+  `;
+}
+
+function latestEmailNotification(statuses = []) {
+  const statusSet = new Set(statuses.map(normalizeEmailStatus));
+  return emailNotifications
+    .filter((item) => !statusSet.size || statusSet.has(normalizeEmailStatus(item.status)))
+    .slice()
+    .sort((a, b) => safeLocaleCompare(b.sentAt || b.createdAt || b.scheduledFor, a.sentAt || a.createdAt || a.scheduledFor))[0] || null;
+}
+
+function renderEmailAutomationTechnicalStatus() {
+  if (!isSystemAdmin() && isSupabaseMode()) return "";
+  const lastRun = weeklyDigestRuns[0] || null;
+  const lastWorkerResult = latestEmailNotification(["sent", "failed"]);
+  const lastFailure = latestEmailNotification(["failed"]);
+  const workerEvidence = emailNotifications.some((item) => normalizeEmailStatus(item.status) === "sent");
+  const automationEvidence = Boolean(lastRun);
+  const lastError = dataState.lastEmailFunctionError;
+  return `
+    <section class="panel section email-technical-status">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Estado técnico del correo</h2>
+          <div class="small-muted">Diagnóstico administrativo sin mostrar credenciales ni secretos.</div>
+        </div>
+        <span class="badge neutral">Solo administración</span>
+      </div>
+      <div class="email-technical-status-grid">
+        <div>
+          <span>Worker configurado</span>
+          <strong>${workerEvidence ? "Sí, hay envíos registrados" : "Sin evidencia de envío"}</strong>
+        </div>
+        <div>
+          <span>Automatización semanal</span>
+          <strong>${automationEvidence ? "Con ejecuciones registradas" : dataState.weeklyDigestRunsReady ? "Sin ejecución registrada" : "No se pudo consultar"}</strong>
+        </div>
+        <div>
+          <span>Última ejecución semanal</span>
+          <strong>${lastRun ? `${formatDateTime(lastRun.createdAt || lastRun.runDate)} · ${escapeHtml(lastRun.status)}` : "Sin registro"}</strong>
+        </div>
+        <div>
+          <span>Último resultado del worker</span>
+          <strong>${lastWorkerResult ? `${formatDateTime(lastWorkerResult.sentAt || lastWorkerResult.createdAt)} · ${escapeHtml(lastWorkerResult.status)}` : "Sin registro"}</strong>
+        </div>
+        <div>
+          <span>Próxima ejecución semanal</span>
+          <strong>Lunes 08:00 · America/Guatemala (14:00 UTC)</strong>
+        </div>
+        <div>
+          <span>Frecuencia esperada del worker</span>
+          <strong>Cada 5 minutos</strong>
+        </div>
+      </div>
+      ${
+        lastError || lastFailure
+          ? `<div class="admin-note">
+              Último error: ${escapeHtml(lastError?.message || lastFailure?.errorMessage || "Error de envío sin detalle")}
+            </div>`
+          : ""
+      }
+    </section>
   `;
 }
 
@@ -6945,10 +7073,6 @@ function renderEmailQueueStatusPanel() {
         ${renderMetric("Fallidos", summary.failed, "Revisar error_message")}
         ${renderMetric("Cancelados", summary.cancelled, "No se enviarán")}
       </section>
-      <div class="admin-note">
-        El envío real requiere email-worker, BREVO_API_KEY, EMAIL_FROM, SUPABASE_SERVICE_ROLE_KEY y CRON_SECRET en Supabase Functions.
-        Si el cron no está instalado, usa "Enviar correos pendientes" manualmente.
-      </div>
       ${
         lastError
           ? `<div class="admin-note">
@@ -6964,6 +7088,7 @@ function renderNotifications() {
   const openOrders = workOrders.filter(isOpenWorkOrder);
   const overdueOrders = openOrders.filter((order) => daysUntil(order.dueDate) < 0);
   const emailSummary = emailNotificationSummary();
+  const canManageEmailAutomation = isSystemAdmin() || !isSupabaseMode();
   return `
     <section class="section">
       <div class="panel brand-hero">
@@ -6972,11 +7097,15 @@ function renderNotifications() {
             <h2>Notificaciones de OTs</h2>
             <span class="badge blue">Cola + worker</span>
           </div>
-          <p class="muted">Las reglas preparan correos en cola. El envío real ocurre cuando corre email-worker con Brevo configurado.</p>
+          <p class="muted">Consulta eventos preparados, entregados y fallidos de las órdenes de trabajo.</p>
         </div>
         <div class="quick-links">
-          <button class="button" data-action="run-daily-digest-now">Preparar y enviar resumen diario</button>
-          <button class="button-ghost" data-action="send-email-queue">Enviar pendientes</button>
+          ${
+            canManageEmailAutomation
+              ? `<button class="button" data-action="run-daily-digest-now">Preparar y enviar resumen diario</button>
+                 <button class="button-ghost" data-action="send-email-queue">Enviar pendientes</button>`
+              : ""
+          }
           <button class="button-ghost" data-module="work-orders">Ver OTs</button>
         </div>
       </div>
@@ -6988,6 +7117,7 @@ function renderNotifications() {
       </section>
       ${renderBrandEmailRecipientManager()}
       ${renderEmailQueueStatusPanel()}
+      ${renderEmailAutomationTechnicalStatus()}
       <section class="grid grid-2 notifications-detail-grid">
         <div class="panel section">
           <div class="section-header">
@@ -7006,62 +7136,70 @@ function renderNotifications() {
               <h2 class="section-title">Resúmenes programados</h2>
               <div class="small-muted">Preparación de digest diario/semanal. El envío depende de email-worker.</div>
             </div>
-            <div class="row wrap">
-              <button class="button-ghost small" data-action="queue-daily-digest">Preparar resumen diario</button>
-              <button class="button-ghost small" data-action="queue-weekly-digest">Preparar resumen semanal</button>
-            </div>
+            ${
+              canManageEmailAutomation
+                ? `<div class="row wrap">
+                    <button class="button-ghost small" data-action="queue-daily-digest">Preparar resumen diario</button>
+                    <button class="button-ghost small" data-action="queue-weekly-digest">Preparar resumen semanal</button>
+                  </div>`
+                : ""
+            }
           </div>
           <div class="small-muted">
-            Preparar solo crea registros queued en email_notifications. Para envío inmediato usa "Enviar pendientes".
-            Si está instalado supabase/schedule_email_automation.sql, el worker corre cada 10 minutos.
+            El resumen semanal se prepara los lunes a las 08:00 de Guatemala y la cola se procesa automáticamente.
+            Los controles manuales son únicamente un respaldo administrativo.
           </div>
           ${renderWeeklyDigestPreview()}
         </div>
       </section>
-      <section class="panel section notification-guide">
-        <div class="section-header">
-          <div>
-            <h2 class="section-title">Como funcionan las notificaciones</h2>
-            <div class="small-muted">Una guia rapida para entender que hace cada boton sin tocar configuraciones tecnicas.</div>
-          </div>
-          <span class="badge amber">Requiere configuracion</span>
-        </div>
-        <div class="notification-guide-grid">
-          <div class="mini-card">
-            <strong>1. Correos preparados</strong>
-            <span class="muted">Las reglas crean registros en email_notifications con status queued o pending.</span>
-          </div>
-          <div class="mini-card">
-            <strong>2. Envio real</strong>
-            <span class="muted">email-worker toma correos queued y los manda por Brevo. Sin worker, quedan preparados.</span>
-          </div>
-          <div class="mini-card">
-            <strong>3. Resumen diario</strong>
-            <span class="muted">daily-activity-digest prepara correos con cambios recientes; no los envia directamente.</span>
-          </div>
-          <div class="mini-card">
-            <strong>4. Resumen semanal</strong>
-            <span class="muted">weekly-digest prepara correos personales; email-worker debe enviarlos despues.</span>
-          </div>
-          <div class="mini-card">
-            <strong>5. Automatizacion</strong>
-            <span class="muted">El cron existe solo si se ejecuto el SQL de schedule_email_automation en Supabase.</span>
-          </div>
-          <div class="mini-card">
-            <strong>6. Matriz mensual</strong>
-            <span class="muted">El 25 se crean OTs para la matriz de contenido del mes objetivo, excepto Proyectos, Pitch, Constructivos, Lumen Podcast y Bonafont.</span>
-            <button class="button-ghost small" data-action="run-monthly-content-matrix">Probar matrices</button>
-          </div>
-          <div class="mini-card">
-            <strong>7. Colocacion de pauta</strong>
-            <span class="muted">Se crean OTs de pauta para marcas activas, excepto Constructivos, Lumen, Proyectos y Pitch.</span>
-            <button class="button-ghost small" data-action="run-monthly-paid-placement">Probar pauta</button>
-          </div>
-        </div>
-        <div class="admin-note">
-          Solo Admin, Dirección y Cuentas pueden disparar correos o automatizaciones desde la app. Las llaves privadas viven en Supabase, nunca en el navegador.
-        </div>
-      </section>
+      ${
+        canManageEmailAutomation
+          ? `<section class="panel section notification-guide">
+              <div class="section-header">
+                <div>
+                  <h2 class="section-title">Como funcionan las notificaciones</h2>
+                  <div class="small-muted">Guia administrativa del flujo de preparación y envío.</div>
+                </div>
+                <span class="badge neutral">Solo administración</span>
+              </div>
+              <div class="notification-guide-grid">
+                <div class="mini-card">
+                  <strong>1. Correos preparados</strong>
+                  <span class="muted">Las reglas crean registros pendientes de procesamiento.</span>
+                </div>
+                <div class="mini-card">
+                  <strong>2. Envio real</strong>
+                  <span class="muted">El worker procesa la cola automáticamente y registra enviados o fallidos.</span>
+                </div>
+                <div class="mini-card">
+                  <strong>3. Resumen diario</strong>
+                  <span class="muted">Prepara correos con los cambios recientes de cada persona.</span>
+                </div>
+                <div class="mini-card">
+                  <strong>4. Resumen semanal</strong>
+                  <span class="muted">Se prepara los lunes y entra en el mismo flujo automático de envío.</span>
+                </div>
+                <div class="mini-card">
+                  <strong>5. Automatizacion</strong>
+                  <span class="muted">El estado técnico superior muestra la evidencia disponible de ejecuciones.</span>
+                </div>
+                <div class="mini-card">
+                  <strong>6. Matriz mensual</strong>
+                  <span class="muted">El 25 se crean OTs para la matriz de contenido del mes objetivo, excepto Proyectos, Pitch, Constructivos, Lumen Podcast y Bonafont.</span>
+                  <button class="button-ghost small" data-action="run-monthly-content-matrix">Probar matrices</button>
+                </div>
+                <div class="mini-card">
+                  <strong>7. Colocacion de pauta</strong>
+                  <span class="muted">Se crean OTs de pauta para marcas activas, excepto Constructivos, Lumen, Proyectos y Pitch.</span>
+                  <button class="button-ghost small" data-action="run-monthly-paid-placement">Probar pauta</button>
+                </div>
+              </div>
+              <div class="admin-note">
+                Los controles manuales son un respaldo. Las credenciales permanecen en Supabase y nunca se muestran en el navegador.
+              </div>
+            </section>`
+          : ""
+      }
     </section>
   `;
 }
