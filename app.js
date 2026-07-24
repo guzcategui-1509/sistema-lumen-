@@ -2026,6 +2026,82 @@ function dedupeUsersByEmail(recipientUsers = []) {
   return [...recipients.values()];
 }
 
+function normalizedRecipientEmail(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function workOrderCreationEmailRecipients({
+  brandId,
+  creatorId,
+  assigneeIds = [],
+  phases = [],
+} = {}) {
+  const recipients = new Map();
+  const sessionUser = dataState.session?.user || null;
+  const creatorProfile = users.find((user) => user.id === creatorId) || null;
+  const currentProfile = dataState.profile?.id === creatorId ? dataState.profile : null;
+  const creatorEmail =
+    normalizedRecipientEmail(creatorProfile?.email) ||
+    normalizedRecipientEmail(currentProfile?.email) ||
+    (sessionUser?.id === creatorId ? normalizedRecipientEmail(sessionUser.email) : "");
+
+  function addRecipient(email, metadata = {}) {
+    const normalizedEmail = normalizedRecipientEmail(email);
+    if (!normalizedEmail) return;
+    const existing = recipients.get(normalizedEmail);
+    recipients.set(normalizedEmail, {
+      email: normalizedEmail,
+      userId: existing?.userId || metadata.userId || null,
+      sources: Array.from(new Set([...(existing?.sources || []), ...(metadata.sources || [])])),
+    });
+  }
+
+  function addUserById(userId, sources = []) {
+    if (!userId) return;
+    const user = users.find((candidate) => candidate.id === userId);
+    const profile = dataState.profile?.id === userId ? dataState.profile : null;
+    const email =
+      normalizedRecipientEmail(user?.email) ||
+      normalizedRecipientEmail(profile?.email) ||
+      (sessionUser?.id === userId ? normalizedRecipientEmail(sessionUser.email) : "");
+    addRecipient(email, { userId, sources });
+  }
+
+  addRecipient(creatorEmail, { userId: creatorId, sources: ["creator"] });
+
+  uniqueUserIds(assigneeIds).forEach((userId, index) => {
+    addUserById(userId, index === 0 ? ["general_assignee", "explicit_participant"] : ["explicit_participant"]);
+  });
+
+  const phaseUserIds = phaseAssigneeIds(phases);
+  phaseUserIds.forEach((userId) => addUserById(userId, ["phase_assignee"]));
+
+  const configuredUserIds = uniqueUserIds(brandEmailRecipientIds(brandId));
+  configuredUserIds.forEach((userId) => addUserById(userId, ["brand_configured"]));
+
+  const finalRecipients = [...recipients.values()];
+  return {
+    recipients: finalRecipients,
+    diagnostics: {
+      creator: {
+        userId: creatorId || null,
+        email: creatorEmail || null,
+        profileFound: Boolean(creatorProfile || currentProfile),
+        usedSessionFallback: Boolean(
+          creatorEmail &&
+          !normalizedRecipientEmail(creatorProfile?.email) &&
+          !normalizedRecipientEmail(currentProfile?.email) &&
+          sessionUser?.id === creatorId,
+        ),
+      },
+      assigneeIds: uniqueUserIds(assigneeIds),
+      phaseAssigneeIds: phaseUserIds,
+      configuredBrandRecipientIds: configuredUserIds,
+      finalRecipients,
+    },
+  };
+}
+
 function brandEmailRecipientSummary(brandId, fallbackUserIds = []) {
   const configuredRecipients = configuredBrandEmailRecipientUsers(brandId);
   const fallbackRecipients = brandEmailRecipientUsers(brandId, fallbackUserIds);
@@ -10342,6 +10418,7 @@ async function createWorkOrderFromForm() {
       return;
     }
 
+    let assigneesError = null;
     if (values.assignees.length) {
       const { error: assigneeError } = await supabaseClient.from("work_order_assignees").insert(
         values.assignees.map((userId) => ({
@@ -10350,6 +10427,7 @@ async function createWorkOrderFromForm() {
           assigned_by: dataState.session?.user?.id,
         })),
       );
+      assigneesError = assigneeError;
       if (assigneeError) {
         showToast(`OT creada, pero fallo responsables: ${assigneeError.message}`);
       }
@@ -10372,12 +10450,26 @@ async function createWorkOrderFromForm() {
       details: { title: values.title, assignees: values.assignees.length, files: uploadedCount, phases: values.phases.length },
     });
 
-    if (values.notifyOnEmail) {
-      const relatedUserIds = uniqueUserIds([
-        dataState.session?.user?.id,
-        ...workOrderRelatedUserIds(state.currentBrandId, values.assignees, values.phases),
-      ]);
-      const recipients = brandEmailRecipientUsers(state.currentBrandId, relatedUserIds);
+    if (!phasesError) {
+      const creatorId = insertedOrder.created_by || orderPayload.created_by;
+      const { recipients, diagnostics } = workOrderCreationEmailRecipients({
+        brandId: state.currentBrandId,
+        creatorId,
+        assigneeIds: assigneesError ? [] : values.assignees,
+        phases: values.phases,
+      });
+      debugInteraction("work-order-created:email-recipients", {
+        workOrderId: insertedOrder.id,
+        code,
+        ...diagnostics,
+      });
+      if (!diagnostics.creator.email) {
+        console.warn("[Lumen email] La OT se creó, pero no se pudo resolver el correo del creador.", {
+          workOrderId: insertedOrder.id,
+          code,
+          creatorId,
+        });
+      }
       if (recipients.length) {
         const htmlBody = buildWorkOrderAssignmentEmail({
           code,
@@ -10387,11 +10479,11 @@ async function createWorkOrderFromForm() {
           uploadedCount,
         });
         const { error: emailError } = await supabaseClient.from("email_notifications").insert(
-          recipients.map((user) => ({
+          recipients.map((recipient) => ({
             brand_id: state.currentBrandId,
             work_order_id: insertedOrder.id,
-            recipient_user_id: user.id,
-            recipient_email: user.email,
+            recipient_user_id: recipient.userId,
+            recipient_email: recipient.email,
             notification_type: "assignment",
             subject: `Nueva OT creada: ${code} - ${values.title}`,
             html_body: htmlBody,
@@ -10399,8 +10491,22 @@ async function createWorkOrderFromForm() {
           })),
         );
         if (emailError) showToast(`OT creada, pero fallo email: ${emailError.message}`);
-        else await invokeEmailFunction("email-worker", (data) => `OT creada y correos procesados: ${data?.processed ?? 0}`, {}, { allowCreators: true });
+        else {
+          debugInteraction("work-order-created:emails-queued", {
+            workOrderId: insertedOrder.id,
+            code,
+            rowsInserted: recipients.length,
+            recipientEmails: recipients.map((recipient) => recipient.email),
+          });
+          await invokeEmailFunction("email-worker", (data) => `OT creada y correos procesados: ${data?.processed ?? 0}`, {}, { allowCreators: true });
+        }
       }
+    } else {
+      console.warn("[Lumen email] No se encoló confirmación porque las fases no se guardaron correctamente.", {
+        workOrderId: insertedOrder.id,
+        code,
+        message: phasesError.message,
+      });
     }
 
     await loadSupabaseData();
