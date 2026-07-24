@@ -2662,7 +2662,7 @@ function weeklyDigestRows(sourceOrders = workOrders) {
       review: workload.review.length,
       next: workload.open
         .slice()
-        .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0],
+        .sort((a, b) => safeLocaleCompare(a?.dueDate, b?.dueDate))[0],
       collaborators: workload.open.filter((order) => orderAssignees(order).length > 1).length,
     };
   });
@@ -2689,6 +2689,15 @@ function getAsset(id) {
 
 function getCanvaDesign(id) {
   return canvaDesigns.find((design) => design.id === id);
+}
+
+function safeLocaleCompare(left, right) {
+  return String(left ?? "")
+    .trim()
+    .localeCompare(String(right ?? "").trim(), "es", {
+      sensitivity: "base",
+      numeric: true,
+    });
 }
 
 function formatDate(value) {
@@ -3991,7 +4000,7 @@ function renderWeeklyDigestPreview() {
                   <span class="badge amber">${review} rev.</span>
                   <span class="badge purple">${collaborators} colab.</span>
                 </div>
-                <div class="digest-next">${next ? `${next.id} / ${formatDate(next.dueDate)}` : "Sin pendientes"}</div>
+                <div class="digest-next">${next ? `${next.id} / ${next.dueDate ? formatDate(next.dueDate) : "Sin fecha"}` : "Sin pendientes"}</div>
               </div>
             `,
           )
