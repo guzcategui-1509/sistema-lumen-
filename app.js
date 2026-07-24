@@ -21,7 +21,7 @@ const modules = [
 const ALL_BRANDS_ID = "all-brands";
 const OPERATIONS_MODE = true;
 const ENABLE_AI_ASSISTANT = false;
-const APP_BUILD_MARKER = "phase-debug-2026-07-24-v7b-no-submit";
+const APP_BUILD_MARKER = "phase-debug-2026-07-24-v7d-fix-next-status";
 const DEBUG_INTERACTIONS =
   typeof window !== "undefined" &&
   (new URLSearchParams(window.location.search).has("debugInteractions") || window.localStorage?.getItem("lumen_debug_interactions") === "1");
@@ -10981,6 +10981,9 @@ function replaceLocalWorkOrderPhase(order, phaseId, updater) {
 }
 
 async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
+  if (!phaseId || !nextStatus) {
+    throw new Error("Falta phaseId o nextStatus para actualizar la fase.");
+  }
   const found = findWorkOrderPhaseById(phaseId);
   if (!found) {
     showToast("No encontré esa fase");
@@ -11027,7 +11030,7 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
     });
     const { data, error } = await supabaseClient.rpc("update_work_order_phase_status", {
       target_phase_id: targetId,
-      next_status,
+      next_status: nextStatus,
     });
     debugInteraction("phase-status:update:response", {
       rpc: "update_work_order_phase_status",
