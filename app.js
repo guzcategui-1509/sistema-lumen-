@@ -581,6 +581,20 @@ const workOrderManagerRoles = ["admin", "directora", "direccion", "dirección", 
 const workOrderCreatorRoles = workOrderManagerRoles;
 const workOrderMaterialRoles = ["admin", "directora", "cuentas", "generador", "creativo", "disenador", "editor"];
 const urgencyManagerRoles = ["admin", "directora", "director", "direccion", "dirección", "jefe", "jefatura", "cuentas", "coordinador", "coordinadora", "coordinacion", "coordinación", "ejecutivo", "ejecutiva"];
+const notificationModuleRoles = new Set([
+  "admin",
+  "directora",
+  "cuentas",
+  "ejecutivo",
+  "operaciones",
+  "medios",
+  "pauta",
+  "community",
+  "creativo",
+  "disenador",
+  "editor",
+  "generador",
+]);
 const productionPlannerRoles = [
   "admin",
   "direccion",
@@ -1665,6 +1679,7 @@ function moduleDisplayLabel(module) {
 
 function canOpenModule(key) {
   if (!ENABLE_AI_ASSISTANT && aiModuleKeys.includes(key)) return false;
+  if (key === "notifications") return canAccessNotificationModule();
   if (key === "production-planner") return canAccessProductionPlanner();
   if (!OPERATIONS_MODE) return true;
   if (!operationalModuleKeys.includes(key)) return false;
@@ -2036,6 +2051,13 @@ function normalizeRoleKey(role = "") {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function canAccessNotificationModule(role = dataState.profile?.role) {
+  if (!isSupabaseMode() && !role) return true;
+  const normalizedRole = normalizeRoleKey(role);
+  const accessRole = ["direccion", "director"].includes(normalizedRole) ? "directora" : normalizedRole;
+  return notificationModuleRoles.has(accessRole);
 }
 
 function canManageUrgency() {
