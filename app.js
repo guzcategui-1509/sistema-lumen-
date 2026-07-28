@@ -2084,78 +2084,6 @@ function isValidRecipientEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedRecipientEmail(value));
 }
 
-function workOrderCreationEmailRecipients({
-  brandId,
-  creatorId,
-  assigneeIds = [],
-  phases = [],
-} = {}) {
-  const recipients = new Map();
-  const sessionUser = dataState.session?.user || null;
-  const creatorProfile = users.find((user) => user.id === creatorId) || null;
-  const currentProfile = dataState.profile?.id === creatorId ? dataState.profile : null;
-  const creatorEmail =
-    normalizedRecipientEmail(creatorProfile?.email) ||
-    normalizedRecipientEmail(currentProfile?.email) ||
-    (sessionUser?.id === creatorId ? normalizedRecipientEmail(sessionUser.email) : "");
-
-  function addRecipient(email, metadata = {}) {
-    const normalizedEmail = normalizedRecipientEmail(email);
-    if (!normalizedEmail) return;
-    const existing = recipients.get(normalizedEmail);
-    recipients.set(normalizedEmail, {
-      email: normalizedEmail,
-      userId: existing?.userId || metadata.userId || null,
-      sources: Array.from(new Set([...(existing?.sources || []), ...(metadata.sources || [])])),
-    });
-  }
-
-  function addUserById(userId, sources = []) {
-    if (!userId) return;
-    const user = users.find((candidate) => candidate.id === userId);
-    const profile = dataState.profile?.id === userId ? dataState.profile : null;
-    const email =
-      normalizedRecipientEmail(user?.email) ||
-      normalizedRecipientEmail(profile?.email) ||
-      (sessionUser?.id === userId ? normalizedRecipientEmail(sessionUser.email) : "");
-    addRecipient(email, { userId, sources });
-  }
-
-  addRecipient(creatorEmail, { userId: creatorId, sources: ["creator"] });
-
-  uniqueUserIds(assigneeIds).forEach((userId, index) => {
-    addUserById(userId, index === 0 ? ["general_assignee", "explicit_participant"] : ["explicit_participant"]);
-  });
-
-  const phaseUserIds = phaseAssigneeIds(phases);
-  phaseUserIds.forEach((userId) => addUserById(userId, ["phase_assignee"]));
-
-  const configuredUserIds = uniqueUserIds(brandEmailRecipientIds(brandId));
-  configuredUserIds.forEach((userId) => addUserById(userId, ["brand_configured"]));
-
-  const finalRecipients = [...recipients.values()];
-  return {
-    recipients: finalRecipients,
-    diagnostics: {
-      creator: {
-        userId: creatorId || null,
-        email: creatorEmail || null,
-        profileFound: Boolean(creatorProfile || currentProfile),
-        usedSessionFallback: Boolean(
-          creatorEmail &&
-          !normalizedRecipientEmail(creatorProfile?.email) &&
-          !normalizedRecipientEmail(currentProfile?.email) &&
-          sessionUser?.id === creatorId,
-        ),
-      },
-      assigneeIds: uniqueUserIds(assigneeIds),
-      phaseAssigneeIds: phaseUserIds,
-      configuredBrandRecipientIds: configuredUserIds,
-      finalRecipients,
-    },
-  };
-}
-
 function brandEmailRecipientSummary(brandId, fallbackUserIds = []) {
   const configuredRecipients = configuredBrandEmailRecipientUsers(brandId);
   const fallbackRecipients = brandEmailRecipientUsers(brandId, fallbackUserIds);
@@ -10082,114 +10010,22 @@ async function replaceSupabaseWorkOrderPhases(orderDbId, phases = []) {
   return { error };
 }
 
-function buildWorkOrderAssignmentEmail({ code, brandId, title, values, uploadedCount }) {
-  const brand = getBrand(brandId);
-  const client = getClient(brand.clientId);
-  const workOrderUrl = buildWorkOrderUrl(code, brandId);
-  const assigneeNames = values.assignees.map((userId) => userName(userId)).join(", ");
-  const creatorName = dataState.profile?.full_name || "Lumen Workspace";
-  const parsedDescription = splitWorkOrderDescription(values.description);
-  const description = plainText(parsedDescription.description);
-  const phaseAssigneeNames = phaseAssigneeIds(values.phases).map((userId) => userName(userId)).join(", ");
-  const fileLabel =
-    uploadedCount === 0 ? "Sin archivos adjuntos" : uploadedCount === 1 ? "1 archivo adjunto" : `${uploadedCount} archivos adjuntos`;
-
-  return `
-    <div style="margin:0;background:#f6f6f3;padding:28px 16px;font-family:Arial,Helvetica,sans-serif;color:#2d2d2d;">
-      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #deded8;border-radius:14px;overflow:hidden;">
-        <div style="padding:26px 28px 20px;border-left:7px solid #49ee8c;">
-          <div style="font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#5f6b61;margin-bottom:10px;">
-            Nueva orden para seguimiento
-          </div>
-          <h1 style="margin:0 0 8px;font-size:28px;line-height:1.15;color:#2d2d2d;">${escapeHtml(code)}</h1>
-          <p style="margin:0;color:#5f6760;font-size:17px;line-height:1.45;">${escapeHtml(title)}</p>
-        </div>
-
-        <div style="padding:0 28px 24px;">
-          <table role="presentation" style="width:100%;border-collapse:collapse;margin:10px 0 22px;">
-            <tr>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Cliente / marca</td>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(client?.name || "Cliente")} / ${escapeHtml(brand.name)}</td>
-            </tr>
-            <tr>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Deadline</td>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(formatDate(values.dueDate))}</td>
-            </tr>
-            <tr>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Prioridad</td>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(workOrderPriorityLabels[values.priority] || values.priority)}</td>
-            </tr>
-            <tr>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Estado</td>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(workOrderStatusLabels[values.status] || values.status)}</td>
-            </tr>
-            <tr>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Categoria</td>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(workOrderCategoryLabels[values.category] || values.category)}</td>
-            </tr>
-            ${
-              values.artCount !== null && values.artCount !== undefined
-                ? `
-                  <tr>
-                    <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Cantidad de artes</td>
-                    <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(String(values.artCount))}</td>
-                  </tr>
-                `
-                : ""
-            }
-          </table>
-
-          <div style="margin-bottom:18px;">
-            <div style="font-size:13px;font-weight:700;text-transform:uppercase;color:#6b726c;margin-bottom:6px;">Responsables</div>
-            <div style="font-size:16px;line-height:1.45;">${escapeHtml(assigneeNames || "Sin responsables")}</div>
-          </div>
-
-          <div style="margin-bottom:18px;">
-            <div style="font-size:13px;font-weight:700;text-transform:uppercase;color:#6b726c;margin-bottom:6px;">Responsables por fase</div>
-            <div style="font-size:16px;line-height:1.45;">${escapeHtml(phaseAssigneeNames || "Fases sin responsables asignados")}</div>
-          </div>
-
-          <div style="margin-bottom:22px;">
-            <div style="font-size:13px;font-weight:700;text-transform:uppercase;color:#6b726c;margin-bottom:6px;">Contexto</div>
-            <div style="font-size:16px;line-height:1.55;color:#3c403d;">${escapeHtml(description || "Sin descripcion agregada.")}</div>
-          </div>
-
-          ${
-            parsedDescription.subtasks.length || parsedDescription.materialChanges.length
-              ? `
-                <div style="margin-bottom:22px;border:1px solid #ecece8;border-radius:12px;padding:14px 16px;background:#fafaf8;">
-                  ${
-                    parsedDescription.subtasks.length
-                      ? `<div style="font-size:14px;line-height:1.55;margin-bottom:8px;"><strong>Subtareas:</strong> ${escapeHtml(parsedDescription.subtasks.join(" / "))}</div>`
-                      : ""
-                  }
-                  ${
-                    parsedDescription.materialChanges.length
-                      ? `<div style="font-size:14px;line-height:1.55;"><strong>Cambios en materiales:</strong> ${escapeHtml(parsedDescription.materialChanges.join(" / "))}</div>`
-                      : ""
-                  }
-                </div>
-              `
-              : ""
-          }
-
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px;">
-            <span style="display:inline-block;background:#e9fff1;color:#176339;border-radius:999px;padding:8px 12px;font-weight:700;">${escapeHtml(fileLabel)}</span>
-            <span style="display:inline-block;background:#f0f1ee;color:#555b56;border-radius:999px;padding:8px 12px;">Creada por ${escapeHtml(creatorName)}</span>
-          </div>
-
-          <a href="${escapeHtml(workOrderUrl)}" style="display:inline-block;background:#2d2d2d;color:#ffffff;text-decoration:none;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:800;">
-            Ver orden en Lumen
-          </a>
-
-          <p style="margin:20px 0 0;color:#7a817b;font-size:13px;line-height:1.45;">
-            Si el boton no abre, copia este link en tu navegador:<br/>
-            <a href="${escapeHtml(workOrderUrl)}" style="color:#2d2d2d;">${escapeHtml(workOrderUrl)}</a>
-          </p>
-        </div>
-      </div>
-    </div>
-  `;
+async function queueWorkOrderAssignmentNotifications(orderId, code) {
+  const { data, error } = await supabaseClient.rpc("queue_work_order_assignment_notifications", {
+    target_work_order_id: orderId,
+  });
+  debugInteraction("work-order-created:assignment-rpc", {
+    orderId,
+    code,
+    result: data || null,
+    error: error
+      ? {
+          code: error.code || null,
+          message: error.message || "unknown_error",
+        }
+      : null,
+  });
+  return { data, error };
 }
 
 function workOrderRecipientUsers(order, assigneeIds = orderAssignees(order)) {
@@ -10739,62 +10575,25 @@ async function createWorkOrderFromForm() {
       details: { title: values.title, assignees: values.assignees.length, files: uploadedCount, phases: values.phases.length },
     });
 
-    if (!phasesError) {
-      const creatorId = insertedOrder.created_by || orderPayload.created_by;
-      const { recipients, diagnostics } = workOrderCreationEmailRecipients({
-        brandId: state.currentBrandId,
-        creatorId,
-        assigneeIds: assigneesError ? [] : values.assignees,
-        phases: values.phases,
-      });
-      debugInteraction("work-order-created:email-recipients", {
-        workOrderId: insertedOrder.id,
+    let assignmentNotificationWarning = "";
+    if (!assigneesError && !phasesError) {
+      const { error: assignmentNotificationError } = await queueWorkOrderAssignmentNotifications(
+        insertedOrder.id,
         code,
-        ...diagnostics,
-      });
-      if (!diagnostics.creator.email) {
-        console.warn("[Lumen email] La OT se creó, pero no se pudo resolver el correo del creador.", {
-          workOrderId: insertedOrder.id,
-          code,
-          creatorId,
-        });
-      }
-      if (recipients.length) {
-        const htmlBody = buildWorkOrderAssignmentEmail({
-          code,
-          brandId: state.currentBrandId,
-          title: values.title,
-          values,
-          uploadedCount,
-        });
-        const { error: emailError } = await supabaseClient.from("email_notifications").insert(
-          recipients.map((recipient) => ({
-            brand_id: state.currentBrandId,
-            work_order_id: insertedOrder.id,
-            recipient_user_id: recipient.userId,
-            recipient_email: recipient.email,
-            notification_type: "assignment",
-            subject: `Nueva OT creada: ${code} - ${values.title}`,
-            html_body: htmlBody,
-            status: "queued",
-          })),
-        );
-        if (emailError) showToast(`OT creada, pero fallo email: ${emailError.message}`);
-        else {
-          debugInteraction("work-order-created:emails-queued", {
-            workOrderId: insertedOrder.id,
-            code,
-            rowsInserted: recipients.length,
-            recipientEmails: recipients.map((recipient) => recipient.email),
-          });
-          await invokeEmailFunction("email-worker", (data) => `OT creada y correos procesados: ${data?.processed ?? 0}`, {}, { allowCreators: true });
-        }
+      );
+      if (assignmentNotificationError) {
+        assignmentNotificationWarning =
+          `OT ${code} creada, pero no se pudieron preparar los correos de asignación. La orden y sus responsables quedaron guardados.`;
       }
     } else {
-      console.warn("[Lumen email] No se encoló confirmación porque las fases no se guardaron correctamente.", {
-        workOrderId: insertedOrder.id,
+      debugInteraction("work-order-created:assignment-rpc-skipped", {
+        orderId: insertedOrder.id,
         code,
-        message: phasesError.message,
+        result: null,
+        error: {
+          code: "related_data_not_saved",
+          message: assigneesError?.message || phasesError?.message || "unknown_related_data_error",
+        },
       });
     }
 
@@ -10803,7 +10602,7 @@ async function createWorkOrderFromForm() {
     state.workOrderSubmitting = false;
     state.workOrderDraftPhases = [];
     resetWorkOrderFormDraft();
-    showToast(`OT creada en Supabase: ${code}`);
+    showToast(assignmentNotificationWarning || `OT creada en Supabase: ${code}`);
     render();
     return;
   }
