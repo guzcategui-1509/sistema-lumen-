@@ -53,6 +53,8 @@ function iconSvg(name, className = "ui-icon") {
     archive: '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M6 7v13h12V7"/><path d="M8 3h8l2 4H6l2-4z"/><path d="M10 12h4"/></svg>',
     brand: '<svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4v10l-8 4-8-4V7z"/><path d="M12 3v18"/><path d="M4 7l8 4 8-4"/></svg>',
     brands: '<svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4v10l-8 4-8-4V7z"/><path d="M12 3v18"/><path d="M4 7l8 4 8-4"/></svg>',
+    menu: '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg>',
+    close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>',
   };
   return `<span class="${className}" aria-hidden="true">${icons[name] || icons.dashboard}</span>`;
 }
@@ -583,6 +585,7 @@ const weeklyDigestConfig = {
 
 const workOrderManagerRoles = ["admin", "directora", "direccion", "dirección", "jefe", "jefatura", "cuentas", "coordinador", "coordinacion", "coordinación", "ejecutivo"];
 const workOrderCreatorRoles = workOrderManagerRoles;
+const createdOrdersDashboardRoles = new Set(["admin", "cuentas", "directora", "direccion"]);
 const workOrderMaterialRoles = ["admin", "directora", "cuentas", "generador", "creativo", "disenador", "editor"];
 const urgencyManagerRoles = ["admin", "directora", "director", "direccion", "dirección", "jefe", "jefatura", "cuentas", "coordinador", "coordinadora", "coordinacion", "coordinación", "ejecutivo", "ejecutiva"];
 const notificationModuleRoles = new Set([
@@ -999,6 +1002,17 @@ const state = {
   dashboardKpiFilter: "open",
   dashboardBrandOpenId: "",
   dashboardMonth: "",
+  dashboardOrderScope: "created",
+  dashboardOrderFiltersOpen: false,
+  dashboardOrderFilters: {
+    brand: "",
+    status: "",
+    priority: "",
+    createdDate: "",
+    dueDate: "",
+    archive: "active",
+  },
+  mobileNavOpen: false,
   workOrderMonth: "",
   workOrderView: "priority",
   workOrderGroupLimits: {},
@@ -2209,6 +2223,11 @@ function isManagementDashboardRole(role = dataState.profile?.role) {
   return workOrderManagerRoles.includes(role);
 }
 
+function usesCreatedOrdersDashboard(role = dataState.profile?.role) {
+  if (!isSupabaseMode() && !role) return true;
+  return createdOrdersDashboardRoles.has(normalizeRoleKey(role));
+}
+
 function isOperationalUserRole(role = dataState.profile?.role) {
   return !isManagementDashboardRole(role) && role !== "cliente";
 }
@@ -2890,7 +2909,13 @@ function render() {
   document.documentElement.style.setProperty("--brand-color", allBrands ? "#2d2d2d" : brand.color);
   document.getElementById("app").innerHTML = `
     <div class="workspace">
-      <aside class="sidebar">
+      <aside id="workspace-sidebar" class="sidebar ${state.mobileNavOpen ? "open" : ""}" aria-label="Navegación principal">
+        <div class="sidebar-mobile-header">
+          <strong>Menú</strong>
+          <button class="sidebar-close-button" type="button" data-action="close-mobile-nav" aria-label="Cerrar menú">
+            ${iconSvg("close")}
+          </button>
+        </div>
         <div class="brand-mark">
           ${renderLumenLogo("brand-logo-img")}
         </div>
@@ -2914,6 +2939,16 @@ function render() {
       </aside>
       <main class="main">
         <header class="topbar">
+          <button
+            class="mobile-menu-button"
+            type="button"
+            data-action="toggle-mobile-nav"
+            aria-label="Abrir menú"
+            aria-controls="workspace-sidebar"
+            aria-expanded="${state.mobileNavOpen ? "true" : "false"}"
+          >
+            ${iconSvg("menu")}
+          </button>
           <div class="topbar-title">
             <h1>${moduleDisplayLabel(getModuleMeta())}</h1>
             <div class="topbar-subtitle">${getScopeSubtitle()}</div>
@@ -2932,6 +2967,7 @@ function render() {
         </div>
       </main>
     </div>
+    ${state.mobileNavOpen ? `<button class="mobile-nav-backdrop" type="button" data-action="close-mobile-nav" aria-label="Cerrar menú"></button>` : ""}
     ${state.toast ? `<div class="toast">${state.toast}</div>` : ""}
     ${renderDebugInteractionsPanel()}
   `;
@@ -3119,12 +3155,322 @@ function renderAllBrandCard(snapshot) {
   `;
 }
 
-function dashboardScopedOrders() {
-  return brandOrders(state.currentBrandId);
+function dashboardScopedOrders(options = {}) {
+  return brandOrders(state.currentBrandId, options);
 }
 
 function dashboardScopedBrands() {
   return isAllBrandsScope() ? brands.filter((brand) => brand.isActive !== false) : [getBrand()];
+}
+
+function createdOrdersDashboardSourceOrders() {
+  const currentUserId = dataState.session?.user?.id || "";
+  const scope = state.dashboardOrderScope === "all" ? "all" : "created";
+  const sourceOrders = brandOrders(ALL_BRANDS_ID, { includeArchived: true });
+  if (scope === "all") return sourceOrders;
+  return sourceOrders.filter((order) => order.createdBy === currentUserId);
+}
+
+function createdOrdersDashboardFilters() {
+  return {
+    brand: state.dashboardOrderFilters?.brand || "",
+    status: state.dashboardOrderFilters?.status || "",
+    priority: state.dashboardOrderFilters?.priority || "",
+    createdDate: state.dashboardOrderFilters?.createdDate || "",
+    dueDate: state.dashboardOrderFilters?.dueDate || "",
+    archive: state.dashboardOrderFilters?.archive || "active",
+  };
+}
+
+function createdOrderAssigneeIds(order) {
+  return Array.from(
+    new Set([
+      ...orderAssignees(order),
+      ...workOrderPhases(order).map((phase) => phase.assignedTo).filter(Boolean),
+    ]),
+  );
+}
+
+function createdOrderPhaseProgress(order) {
+  const phases = workOrderPhases(order);
+  if (!phases.length) return "Sin fases";
+  const completed = phases.filter((phase) => phase.status === "completed").length;
+  return `${completed}/${phases.length} fases`;
+}
+
+function sortCreatedOrdersDashboardRows(left, right) {
+  const urgentComparison = Number(isUrgentWorkOrder(right)) - Number(isUrgentWorkOrder(left));
+  if (urgentComparison) return urgentComparison;
+
+  const leftDueDate = workOrderEffectiveDueDate(left);
+  const rightDueDate = workOrderEffectiveDueDate(right);
+  const leftOverdue = Boolean(leftDueDate) && isOpenWorkOrder(left) && daysUntil(leftDueDate) < 0;
+  const rightOverdue = Boolean(rightDueDate) && isOpenWorkOrder(right) && daysUntil(rightDueDate) < 0;
+  const overdueComparison = Number(rightOverdue) - Number(leftOverdue);
+  if (overdueComparison) return overdueComparison;
+
+  if (leftDueDate || rightDueDate) {
+    if (!leftDueDate) return 1;
+    if (!rightDueDate) return -1;
+    const dueComparison = String(leftDueDate).localeCompare(String(rightDueDate));
+    if (dueComparison) return dueComparison;
+  }
+
+  return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
+}
+
+function filteredCreatedOrdersDashboardRows() {
+  const filters = createdOrdersDashboardFilters();
+  return createdOrdersDashboardSourceOrders()
+    .filter((order) => {
+      const effectiveDueDate = workOrderEffectiveDueDate(order);
+      if (filters.archive === "active" && isArchivedWorkOrder(order)) return false;
+      if (filters.archive === "archived" && !isArchivedWorkOrder(order)) return false;
+      if (filters.brand && order.brandId !== filters.brand) return false;
+      if (filters.status && order.status !== filters.status) return false;
+      if (filters.priority && order.priority !== filters.priority) return false;
+      if (filters.createdDate && String(order.createdAt || "").slice(0, 10) !== filters.createdDate) return false;
+      if (filters.dueDate && String(effectiveDueDate || "").slice(0, 10) !== filters.dueDate) return false;
+      return true;
+    })
+    .sort(sortCreatedOrdersDashboardRows);
+}
+
+function createdOrdersDashboardCounts(orders) {
+  const open = orders.filter(isOpenWorkOrder);
+  return {
+    open: open.length,
+    urgent: open.filter(isUrgentWorkOrder).length,
+    overdue: open.filter((order) => {
+      const dueDate = workOrderEffectiveDueDate(order);
+      return Boolean(dueDate) && daysUntil(dueDate) < 0;
+    }).length,
+    review: open.filter(
+      (order) => order.status === "in_review" || workOrderPhases(order).some((phase) => phase.status === "in_review"),
+    ).length,
+  };
+}
+
+function renderCreatedOrderDashboardCard(order) {
+  const brand = getBrand(order.brandId);
+  const dueDate = workOrderEffectiveDueDate(order);
+  const urgency = workOrderUrgency(order);
+  const assigneeNames = createdOrderAssigneeIds(order).map(userName);
+  return `
+    <article class="created-order-card ${isUrgentWorkOrder(order) ? "urgent" : ""}">
+      <div class="created-order-card-head">
+        <div>
+          <div class="created-order-code-row">
+            <span class="badge blue">${escapeHtml(order.id)}</span>
+            ${isUrgentWorkOrder(order) ? `<span class="badge red">Urgente</span>` : ""}
+            ${isArchivedWorkOrder(order) ? `<span class="badge neutral">Archivada</span>` : ""}
+          </div>
+          <h3>${escapeHtml(order.title || "Sin título")}</h3>
+          <span>${escapeHtml(brand?.shortName || brand?.name || "Sin marca")}</span>
+        </div>
+        <span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>
+      </div>
+      <dl class="created-order-facts">
+        <div>
+          <dt>Creada</dt>
+          <dd>${escapeHtml(formatDate(order.createdAt))}</dd>
+        </div>
+        <div>
+          <dt>Entrega</dt>
+          <dd>${escapeHtml(dueDate ? formatDate(dueDate) : "Sin fecha")}</dd>
+        </div>
+        <div>
+          <dt>Prioridad</dt>
+          <dd>${escapeHtml(workOrderPriorityLabels[order.priority] || order.priority || "Sin prioridad")}</dd>
+        </div>
+        <div>
+          <dt>Estado</dt>
+          <dd>${escapeHtml(workOrderStatusLabels[order.status] || order.status || "Sin estado")}</dd>
+        </div>
+        <div>
+          <dt>Progreso</dt>
+          <dd>${escapeHtml(createdOrderPhaseProgress(order))}</dd>
+        </div>
+      </dl>
+      <div class="created-order-assignees">
+        <span>Responsables</span>
+        <strong>${escapeHtml(assigneeNames.join(", ") || "Sin responsable")}</strong>
+      </div>
+      <button class="button-ghost small created-order-open" type="button" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
+        Abrir orden
+      </button>
+    </article>
+  `;
+}
+
+function renderCreatedOrdersDashboardFilters() {
+  const filters = createdOrdersDashboardFilters();
+  const activeBrands = brands.filter((brand) => brand.isActive !== false);
+  return `
+    <button
+      class="button-ghost created-orders-filter-toggle"
+      type="button"
+      data-action="toggle-created-orders-filters"
+      aria-expanded="${state.dashboardOrderFiltersOpen ? "true" : "false"}"
+    >
+      Filtros
+    </button>
+    <div class="created-orders-filters ${state.dashboardOrderFiltersOpen ? "is-open" : ""}">
+      <label>
+        <span>Marca</span>
+        <select class="input" data-created-order-filter="brand">
+          <option value="">Todas</option>
+          ${activeBrands
+            .map(
+              (brand) =>
+                `<option value="${escapeHtml(brand.id)}" ${filters.brand === brand.id ? "selected" : ""}>${escapeHtml(brand.shortName || brand.name)}</option>`,
+            )
+            .join("")}
+        </select>
+      </label>
+      <label>
+        <span>Estado</span>
+        <select class="input" data-created-order-filter="status">
+          <option value="">Todos</option>
+          ${Object.entries(workOrderStatusLabels)
+            .map(([value, label]) => `<option value="${value}" ${filters.status === value ? "selected" : ""}>${escapeHtml(label)}</option>`)
+            .join("")}
+        </select>
+      </label>
+      <label>
+        <span>Prioridad</span>
+        <select class="input" data-created-order-filter="priority">
+          <option value="">Todas</option>
+          ${Object.entries(workOrderPriorityLabels)
+            .map(([value, label]) => `<option value="${value}" ${filters.priority === value ? "selected" : ""}>${escapeHtml(label)}</option>`)
+            .join("")}
+        </select>
+      </label>
+      <label>
+        <span>Fecha de creación</span>
+        <input class="input" type="date" value="${escapeHtml(filters.createdDate)}" data-created-order-filter="createdDate" />
+      </label>
+      <label>
+        <span>Fecha de entrega</span>
+        <input class="input" type="date" value="${escapeHtml(filters.dueDate)}" data-created-order-filter="dueDate" />
+      </label>
+      <label>
+        <span>Visibilidad</span>
+        <select class="input" data-created-order-filter="archive">
+          <option value="active" ${filters.archive === "active" ? "selected" : ""}>Activas</option>
+          <option value="archived" ${filters.archive === "archived" ? "selected" : ""}>Archivadas</option>
+          <option value="all" ${filters.archive === "all" ? "selected" : ""}>Todas</option>
+        </select>
+      </label>
+      <button class="button-ghost created-orders-clear" type="button" data-action="clear-created-orders-filters">Limpiar filtros</button>
+    </div>
+  `;
+}
+
+function renderCreatedOrdersPrimaryBlock() {
+  const scope = state.dashboardOrderScope === "all" ? "all" : "created";
+  const sourceOrders = createdOrdersDashboardSourceOrders();
+  const orders = filteredCreatedOrdersDashboardRows();
+  const counts = createdOrdersDashboardCounts(orders);
+  const canCreate = canCreateWorkOrders();
+  const emptyState =
+    scope === "created" && !sourceOrders.length
+      ? {
+          title: "No has creado órdenes todavía",
+          detail: "Cuando crees una orden, podrás darle seguimiento desde este espacio.",
+        }
+      : {
+          title: "No hay órdenes con estos filtros",
+          detail: "Ajusta o limpia los filtros para volver a ver las órdenes disponibles.",
+        };
+  return `
+    <section class="created-orders-workspace">
+      <div class="created-orders-toolbar">
+        <div>
+          <span class="eyebrow">Prioridad personal</span>
+          <h2>${scope === "created" ? "Órdenes creadas por mí" : "Todas las órdenes"}</h2>
+          <p>${scope === "created" ? "Seguimiento directo de las órdenes que has creado." : "Vista general de las órdenes permitidas por tus accesos actuales."}</p>
+        </div>
+        <div class="created-orders-toolbar-actions">
+          <div class="segmented created-orders-scope" aria-label="Alcance de órdenes">
+            <button type="button" class="${scope === "created" ? "active" : ""}" data-created-order-scope="created">Creadas por mí</button>
+            <button type="button" class="${scope === "all" ? "active" : ""}" data-created-order-scope="all">Todas las órdenes</button>
+          </div>
+          ${canCreate ? `<button class="button" type="button" data-action="open-create-work-order">+ Crear OT</button>` : ""}
+        </div>
+      </div>
+      ${renderCreatedOrdersDashboardFilters()}
+      <section class="created-orders-kpis" aria-label="Resumen de órdenes">
+        ${renderKpiCard("Abiertas", counts.open, "Trabajo activo", "dark")}
+        ${renderKpiCard("Urgentes", counts.urgent, "Atención inmediata", counts.urgent ? "danger" : "neutral")}
+        ${renderKpiCard("Vencidas", counts.overdue, "Fuera de fecha", counts.overdue ? "danger" : "neutral")}
+        ${renderKpiCard("En revisión", counts.review, "Validación pendiente", "warning")}
+      </section>
+      <div class="created-orders-results-line">
+        <strong>${orders.length} orden${orders.length === 1 ? "" : "es"}</strong>
+        <span>Ordenadas por urgencia, vencimiento y fecha de entrega.</span>
+      </div>
+      ${
+        orders.length
+          ? `<div class="created-orders-grid">${orders.map(renderCreatedOrderDashboardCard).join("")}</div>`
+          : `<div class="created-orders-empty">
+              <h3>${escapeHtml(emptyState.title)}</h3>
+              <p>${escapeHtml(emptyState.detail)}</p>
+              ${
+                scope === "created" && !sourceOrders.length && canCreate
+                  ? `<button class="button" type="button" data-action="open-create-work-order">+ Crear OT</button>`
+                  : `<button class="button-ghost" type="button" data-action="clear-created-orders-filters">Limpiar filtros</button>`
+              }
+            </div>`
+      }
+    </section>
+  `;
+}
+
+function renderPriorityCreatedOrdersDashboard() {
+  const activeOrders = brandOrders(ALL_BRANDS_ID);
+  const urgentAndOverdue = activeOrders
+    .filter((order) => {
+      const dueDate = workOrderEffectiveDueDate(order);
+      return isUrgentWorkOrder(order) || (dueDate && daysUntil(dueDate) < 0);
+    })
+    .sort(sortCreatedOrdersDashboardRows)
+    .slice(0, 6);
+  const reviewOrders = activeOrders
+    .filter((order) => order.status === "in_review" || workOrderPhases(order).some((phase) => phase.status === "in_review"))
+    .sort(sortCreatedOrdersDashboardRows)
+    .slice(0, 6);
+
+  return `
+    ${renderCreatedOrdersPrimaryBlock()}
+    <section class="created-orders-secondary-grid">
+      <section class="panel executive-panel">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Urgentes y vencidas</h2>
+            <div class="small-muted">Órdenes permitidas que requieren atención.</div>
+          </div>
+          <span class="badge ${urgentAndOverdue.length ? "red" : "neutral"}">${urgentAndOverdue.length}</span>
+        </div>
+        <div class="dashboard-mini-list">
+          ${urgentAndOverdue.length ? urgentAndOverdue.map(renderDashboardMiniOrderRow).join("") : `<div class="empty compact-empty">No hay órdenes urgentes o vencidas.</div>`}
+        </div>
+      </section>
+      <section class="panel executive-panel">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">En revisión</h2>
+            <div class="small-muted">Órdenes o fases en validación interna.</div>
+          </div>
+          <span class="badge ${reviewOrders.length ? "amber" : "neutral"}">${reviewOrders.length}</span>
+        </div>
+        <div class="dashboard-mini-list">
+          ${reviewOrders.length ? reviewOrders.map(renderDashboardMiniOrderRow).join("") : `<div class="empty compact-empty">No hay órdenes en revisión.</div>`}
+        </div>
+      </section>
+    </section>
+    ${renderManagementBrandsDashboard(activeOrders, brands.filter((brand) => brand.isActive !== false))}
+  `;
 }
 
 function workOrderCriticalScore(order) {
@@ -4079,6 +4425,7 @@ function renderBrandsWorkspace() {
 }
 
 function renderDashboard() {
+  if (usesCreatedOrdersDashboard()) return renderPriorityCreatedOrdersDashboard();
   return isManagementDashboardRole() ? renderExecutiveDashboard() : renderOperationalDashboard();
 }
 
@@ -8611,6 +8958,7 @@ function bindEvents() {
         showToast("Esta vista no esta disponible en el workspace operativo");
         return;
       }
+      state.mobileNavOpen = false;
       state.currentModule = button.dataset.module;
       if (state.currentModule !== "work-orders") {
         syncWorkOrderFormDraftFromForm();
@@ -8696,6 +9044,25 @@ function bindEvents() {
   document.querySelectorAll("[data-dashboard-kpi]").forEach((button) => {
     button.addEventListener("click", () => {
       state.dashboardKpiFilter = button.dataset.dashboardKpi || "open";
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-created-order-scope]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.dashboardOrderScope = button.dataset.createdOrderScope === "all" ? "all" : "created";
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-created-order-filter]").forEach((field) => {
+    field.addEventListener("change", () => {
+      const key = field.dataset.createdOrderFilter;
+      if (!key) return;
+      state.dashboardOrderFilters = {
+        ...createdOrdersDashboardFilters(),
+        [key]: field.value,
+      };
       render();
     });
   });
@@ -9193,6 +9560,37 @@ async function handleDocumentActionClick(event) {
   const actionTarget = event.target.closest?.("[data-action]");
   if (!actionTarget) return;
   const action = actionTarget.dataset.action;
+
+  if (action === "toggle-mobile-nav" || action === "close-mobile-nav") {
+    event.preventDefault();
+    event.stopPropagation();
+    state.mobileNavOpen = action === "toggle-mobile-nav" ? !state.mobileNavOpen : false;
+    render();
+    return;
+  }
+
+  if (action === "toggle-created-orders-filters") {
+    event.preventDefault();
+    event.stopPropagation();
+    state.dashboardOrderFiltersOpen = !state.dashboardOrderFiltersOpen;
+    render();
+    return;
+  }
+
+  if (action === "clear-created-orders-filters") {
+    event.preventDefault();
+    event.stopPropagation();
+    state.dashboardOrderFilters = {
+      brand: "",
+      status: "",
+      priority: "",
+      createdDate: "",
+      dueDate: "",
+      archive: "active",
+    };
+    render();
+    return;
+  }
 
   if (action === "set-phase-status") {
     event.preventDefault();
