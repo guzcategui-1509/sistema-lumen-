@@ -5028,7 +5028,7 @@ function renderWorkOrderPhaseProgress(order) {
                 <span class="phase-dot">${index + 1}</span>
                 <div>
                   <strong>${escapeHtml(phase.title)}</strong>
-                  <p>${escapeHtml(phase.description || "Sin descripción")}</p>
+                  <p>${renderLinkedText(phase.description || "Sin descripción")}</p>
                   <div class="phase-meta">
                     <span>${escapeHtml(phase.assignedTo ? userName(phase.assignedTo) : "Sin responsable asignado")}</span>
                     <span>${phase.dueDate ? escapeHtml(formatDate(phase.dueDate)) : "Sin deadline"}</span>
@@ -5870,7 +5870,7 @@ function renderWorkOrderDetailPanel(order) {
       <div class="grid grid-2 top-aligned-grid">
         <div class="detail-readable-block">
           <h3>Brief</h3>
-          <p>${escapeHtml(parsedDescription.description || "Sin descripcion")}</p>
+          <p>${renderLinkedText(parsedDescription.description || "Sin descripcion")}</p>
         </div>
         <div class="detail-readable-block">
           <h3>Archivos y materiales</h3>
@@ -5900,7 +5900,7 @@ function renderWorkOrderDetailPanel(order) {
                 <h3>Subtareas</h3>
                 ${
                   parsedDescription.subtasks.length
-                    ? `<ul class="subtask-list">${parsedDescription.subtasks.map((task) => `<li>${escapeHtml(task)}</li>`).join("")}</ul>`
+                    ? `<ul class="subtask-list">${parsedDescription.subtasks.map((task) => `<li>${renderLinkedText(task)}</li>`).join("")}</ul>`
                     : `<span class="muted">Sin subtareas</span>`
                 }
               </div>
@@ -5908,7 +5908,7 @@ function renderWorkOrderDetailPanel(order) {
                 <h3>Cambios en materiales</h3>
                 ${
                   parsedDescription.materialChanges.length
-                    ? `<ul class="subtask-list">${parsedDescription.materialChanges.map((change) => `<li>${escapeHtml(change)}</li>`).join("")}</ul>`
+                    ? `<ul class="subtask-list">${parsedDescription.materialChanges.map((change) => `<li>${renderLinkedText(change)}</li>`).join("")}</ul>`
                     : `<span class="muted">Sin cambios registrados</span>`
                 }
               </div>

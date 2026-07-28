@@ -3906,6 +3906,24 @@ tr:last-child td {
   white-space: pre-wrap;
 }
 
+.work-order-detail-drawer .detail-readable-block a,
+.work-order-detail-drawer .phase-progress-step p a,
+.work-order-detail-drawer .phase-comment a,
+.work-order-detail-drawer .subtask-list a {
+  color: var(--green-deep);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.work-order-detail-drawer .detail-readable-block a:hover,
+.work-order-detail-drawer .phase-progress-step p a:hover,
+.work-order-detail-drawer .phase-comment a:hover,
+.work-order-detail-drawer .subtask-list a:hover {
+  color: var(--green-ink);
+}
+
 .inline-upload {
   margin-top: 10px;
 }
