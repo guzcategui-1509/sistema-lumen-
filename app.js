@@ -2225,10 +2225,57 @@ function todayAtNoon() {
   return today;
 }
 
+const dateOnlyMonthLabels = [
+  "ene",
+  "feb",
+  "mar",
+  "abr",
+  "may",
+  "jun",
+  "jul",
+  "ago",
+  "sep",
+  "oct",
+  "nov",
+  "dic",
+];
+
+function dateOnlyParts(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || "").trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12) return null;
+  const lastDayOfMonth = new Date(year, month, 0).getDate();
+  if (day < 1 || day > lastDayOfMonth) return null;
+  return { year, month, day };
+}
+
+function formatDateOnly(value) {
+  const parts = dateOnlyParts(value);
+  if (!parts) return "";
+  return `${parts.day} ${dateOnlyMonthLabels[parts.month - 1]} ${parts.year}`;
+}
+
 function parseDateValue(value, fallbackTime = "T12:00:00") {
   if (!value) return null;
-  const text = String(value);
-  const date = new Date(text.includes("T") ? text : `${text}${fallbackTime}`);
+  const text = String(value).trim();
+  const dateOnly = dateOnlyParts(text);
+  if (dateOnly) {
+    const timeMatch = /^T(\d{2})(?::(\d{2}))?(?::(\d{2}))?/.exec(String(fallbackTime || ""));
+    const date = new Date(
+      dateOnly.year,
+      dateOnly.month - 1,
+      dateOnly.day,
+      Number(timeMatch?.[1] || 12),
+      Number(timeMatch?.[2] || 0),
+      Number(timeMatch?.[3] || 0),
+      0,
+    );
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const date = new Date(text);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -2779,7 +2826,10 @@ function safeLocaleCompare(left, right) {
 
 function formatDate(value) {
   if (!value) return "Sin fecha";
+  const dateOnlyLabel = formatDateOnly(value);
+  if (dateOnlyLabel) return dateOnlyLabel;
   const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Sin fecha";
   return date.toLocaleDateString("es-GT", {
     day: "2-digit",
     month: "short",
