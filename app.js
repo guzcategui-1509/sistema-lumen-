@@ -10480,260 +10480,6 @@ function workOrderRecipientUsers(order, assigneeIds = orderAssignees(order)) {
   return brandEmailRecipientUsers(order.brandId, workOrderRelatedUserIds(order.brandId, assigneeIds, workOrderPhases(order)));
 }
 
-function nextWorkOrderPhase(order, currentPhase) {
-  const phases = workOrderPhases(order);
-  const currentIndex = phases.findIndex((phase) => phase.id === currentPhase.id || phase.dbId === currentPhase.dbId);
-  return currentIndex >= 0 ? phases[currentIndex + 1] || null : null;
-}
-
-function buildPhaseCompletedEmail({ order, phase, nextPhase, completedBy }) {
-  const brand = getBrand(order.brandId);
-  const client = getClient(brand.clientId);
-  const workOrderUrl = buildWorkOrderUrl(order.id, order.brandId);
-  return `
-    <div style="margin:0;background:#f6f6f3;padding:28px 16px;font-family:Arial,Helvetica,sans-serif;color:#2d2d2d;">
-      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #deded8;border-radius:14px;overflow:hidden;">
-        <div style="padding:26px 28px 20px;border-left:7px solid #49ee8c;">
-          <div style="font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#176339;margin-bottom:10px;">
-            Fase completada
-          </div>
-          <h1 style="margin:0 0 8px;font-size:28px;line-height:1.15;color:#2d2d2d;">${escapeHtml(phase.title)}</h1>
-          <p style="margin:0;color:#5f6760;font-size:17px;line-height:1.45;">${escapeHtml(order.id)} · ${escapeHtml(order.title)}</p>
-        </div>
-        <div style="padding:0 28px 26px;">
-          <table role="presentation" style="width:100%;border-collapse:collapse;margin:10px 0 22px;">
-            <tr>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Cliente / marca</td>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(client?.name || "Cliente")} / ${escapeHtml(brand.name)}</td>
-            </tr>
-            <tr>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Completada por</td>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(completedBy || "Equipo Lumen")}</td>
-            </tr>
-            <tr>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Siguiente fase</td>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(nextPhase?.title || "Sin siguiente fase")}</td>
-            </tr>
-            <tr>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;color:#6b726c;">Responsable siguiente</td>
-              <td style="padding:11px 0;border-bottom:1px solid #ecece8;text-align:right;font-weight:700;">${escapeHtml(nextPhase?.assignedTo ? userName(nextPhase.assignedTo) : "Sin asignar")}</td>
-            </tr>
-          </table>
-          <a href="${escapeHtml(workOrderUrl)}" style="display:inline-block;background:#2d2d2d;color:#ffffff;text-decoration:none;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:800;">
-            Ver orden en Lumen
-          </a>
-          <p style="margin:20px 0 0;color:#7a817b;font-size:13px;line-height:1.45;">
-            Si el boton no abre, copia este link en tu navegador:<br/>
-            <a href="${escapeHtml(workOrderUrl)}" style="color:#2d2d2d;">${escapeHtml(workOrderUrl)}</a>
-          </p>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-async function resolvePhaseCompletedEmailRecipientsFromSupabase(orderDbId, phaseId) {
-  const { data: persistedOrder, error: orderError } = await supabaseClient
-    .from("work_orders")
-    .select("id,brand_id,created_by,notify_on_email")
-    .eq("id", orderDbId)
-    .maybeSingle();
-  if (orderError) return { recipients: [], error: orderError };
-  if (!persistedOrder) {
-    return { recipients: [], error: new Error("No se encontró la orden para resolver destinatarios.") };
-  }
-  if (persistedOrder.notify_on_email === false) {
-    return { recipients: [], persistedOrder, skipped: true, error: null };
-  }
-
-  const configuredRecipientsQuery = persistedOrder.brand_id
-    ? supabaseClient
-        .from("brand_notification_recipients")
-        .select("user_id")
-        .eq("brand_id", persistedOrder.brand_id)
-    : Promise.resolve({ data: [], error: null });
-  const [assigneesResult, phasesResult, configuredRecipientsResult] = await Promise.all([
-    supabaseClient
-      .from("work_order_assignees")
-      .select("user_id")
-      .eq("work_order_id", persistedOrder.id),
-    supabaseClient
-      .from("work_order_phases")
-      .select("id,title,assigned_to,sort_order")
-      .eq("work_order_id", persistedOrder.id)
-      .order("sort_order", { ascending: true }),
-    configuredRecipientsQuery,
-  ]);
-  const relationshipsError =
-    assigneesResult.error ||
-    phasesResult.error ||
-    configuredRecipientsResult.error;
-  if (relationshipsError) return { recipients: [], error: relationshipsError };
-
-  const persistedPhases = phasesResult.data || [];
-  const completedPhaseIndex = persistedPhases.findIndex((candidate) => candidate.id === phaseId);
-  if (completedPhaseIndex < 0) {
-    return { recipients: [], error: new Error("No se encontró la fase completada para resolver destinatarios.") };
-  }
-  const completedPhase = persistedPhases[completedPhaseIndex];
-  const nextPhaseRow = persistedPhases[completedPhaseIndex + 1] || null;
-  const sourcesByUserId = new Map();
-
-  function addRecipientSource(userId, source) {
-    if (!userId) return;
-    const currentSources = sourcesByUserId.get(userId) || [];
-    if (!currentSources.includes(source)) currentSources.push(source);
-    sourcesByUserId.set(userId, currentSources);
-  }
-
-  addRecipientSource(persistedOrder.created_by, "creator");
-  (assigneesResult.data || []).forEach((row) => addRecipientSource(row.user_id, "work_order_assignee"));
-  addRecipientSource(completedPhase.assigned_to, "completed_phase_assignee");
-  addRecipientSource(nextPhaseRow?.assigned_to, "next_phase_assignee");
-  (configuredRecipientsResult.data || []).forEach((row) => addRecipientSource(row.user_id, "brand_configured"));
-
-  const recipientIds = [...sourcesByUserId.keys()];
-  if (!recipientIds.length) {
-    return {
-      recipients: [],
-      persistedOrder,
-      completedPhase,
-      nextPhase: nextPhaseRow,
-      diagnostics: { recipientIds: [], omittedProfiles: [] },
-      error: null,
-    };
-  }
-
-  const { data: profiles, error: profilesError } = await supabaseClient
-    .from("profiles")
-    .select("id,full_name,email,is_active")
-    .in("id", recipientIds);
-  if (profilesError) return { recipients: [], error: profilesError };
-
-  const recipientsByEmail = new Map();
-  const omittedProfiles = [];
-  (profiles || []).forEach((profile) => {
-    const email = normalizedRecipientEmail(profile.email);
-    if (profile.is_active === false || !isValidRecipientEmail(email)) {
-      omittedProfiles.push({
-        userId: profile.id,
-        reason: profile.is_active === false ? "inactive" : "invalid_email",
-      });
-      return;
-    }
-    const existing = recipientsByEmail.get(email);
-    recipientsByEmail.set(email, {
-      id: existing?.id || profile.id,
-      name: existing?.name || profile.full_name || email,
-      email,
-      sources: Array.from(
-        new Set([
-          ...(existing?.sources || []),
-          ...(sourcesByUserId.get(profile.id) || []),
-        ]),
-      ),
-    });
-  });
-
-  const loadedProfileIds = new Set((profiles || []).map((profile) => profile.id));
-  recipientIds
-    .filter((userId) => !loadedProfileIds.has(userId))
-    .forEach((userId) => omittedProfiles.push({ userId, reason: "profile_not_found" }));
-
-  return {
-    recipients: [...recipientsByEmail.values()],
-    persistedOrder,
-    completedPhase,
-    nextPhase: nextPhaseRow
-      ? {
-          id: nextPhaseRow.id,
-          dbId: nextPhaseRow.id,
-          title: nextPhaseRow.title,
-          assignedTo: nextPhaseRow.assigned_to,
-        }
-      : null,
-    diagnostics: {
-      recipientIds,
-      omittedProfiles,
-      recipients: [...recipientsByEmail.values()].map((recipient) => ({
-        userId: recipient.id,
-        email: recipient.email,
-        sources: recipient.sources,
-      })),
-    },
-    error: null,
-  };
-}
-
-async function queuePhaseCompletedEmail(order, phase) {
-  if (!isSupabaseMode() || !order?.dbId) return { count: 0, error: null };
-  const currentUserId = dataState.session?.user?.id || "";
-  const recipientResult = await resolvePhaseCompletedEmailRecipientsFromSupabase(
-    order.dbId,
-    phase.dbId || phase.id,
-  );
-  if (recipientResult.error) {
-    console.warn("No se pudieron resolver destinatarios phase_completed desde Supabase.", {
-      workOrderId: order.id,
-      phaseId: phase.id,
-      message: recipientResult.error.message,
-    });
-    return { count: 0, error: recipientResult.error };
-  }
-  if (recipientResult.skipped) return { count: 0, error: null };
-
-  const recipients = recipientResult.recipients;
-  const nextPhase = recipientResult.nextPhase;
-  const persistedPhase = {
-    ...phase,
-    id: recipientResult.completedPhase.id,
-    dbId: recipientResult.completedPhase.id,
-    title: recipientResult.completedPhase.title,
-    assignedTo: recipientResult.completedPhase.assigned_to,
-  };
-  debugInteraction("phase-completed:email-recipients", {
-    workOrderId: order.id,
-    phaseId: persistedPhase.id,
-    ...recipientResult.diagnostics,
-  });
-  if (!recipients.length) {
-    console.warn("phase_completed no se pudo encolar: no hay destinatarios con email.", {
-      workOrderId: order.id,
-      phaseId: persistedPhase.id,
-      recipientIds: recipientResult.diagnostics.recipientIds,
-    });
-    return { count: 0, error: null };
-  }
-
-  const htmlBody = buildPhaseCompletedEmail({
-    order,
-    phase: persistedPhase,
-    nextPhase,
-    completedBy: dataState.profile?.full_name || userName(currentUserId),
-  });
-  const { error } = await supabaseClient.from("email_notifications").insert(
-    recipients.map((user) => ({
-      brand_id: recipientResult.persistedOrder.brand_id,
-      work_order_id: recipientResult.persistedOrder.id,
-      recipient_user_id: user.id,
-      recipient_email: user.email,
-      notification_type: "phase_completed",
-      subject: `Fase completada: ${persistedPhase.title} · ${order.id}`,
-      html_body: htmlBody,
-      status: "queued",
-      scheduled_for: new Date().toISOString(),
-    })),
-  );
-  if (error) {
-    console.warn("No se pudo encolar email phase_completed.", {
-      workOrderId: order.id,
-      phaseId: persistedPhase.id,
-      message: error.message,
-    });
-  }
-  return { count: recipients.length, error };
-}
-
 function phaseAssigneeIds(phases = []) {
   return Array.from(new Set(phases.map((phase) => phase.assignedTo).filter(Boolean)));
 }
@@ -11013,7 +10759,7 @@ async function createWorkOrderFromForm() {
       phasesError = result.error;
     }
     if (phasesError) {
-      showToast("OT creada, pero falta activar guardado seguro de fases: ejecuta supabase/patch_work_order_phase_safe_save.sql");
+      showToast(`OT creada, pero no se guardaron las fases: ${phasesError.message || "error de Supabase"}`);
     }
 
     await supabaseClient.from("work_order_activity").insert({
@@ -11343,7 +11089,8 @@ async function updateWorkOrderFromForm() {
     const uploadedCount = await uploadWorkOrderFiles(order.dbId, order.brandId, values.fileUploads);
     const { error: phasesError } = await replaceSupabaseWorkOrderPhases(order.dbId, values.phases);
     if (phasesError) {
-      showToast(`OT actualizada, pero no se guardaron fases: ejecuta supabase/patch_work_order_phase_safe_save.sql`);
+      showToast(`No se guardaron las fases: ${phasesError.message || "error de Supabase"}`);
+      render();
       return;
     }
     const changes = describeWorkOrderChanges(order, values, uploadedCount);
@@ -11677,7 +11424,6 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
   }
   if (phase.status === nextStatus) return false;
 
-  const wasCompleted = phase.status === "completed";
   const previousStatus = phase.status;
   const completedAt = nextStatus === "completed" ? phase.completedAt || new Date().toISOString() : null;
   debugInteraction("phase-status:before-rpc", {
@@ -11744,16 +11490,6 @@ async function updateWorkOrderPhaseStatus(phaseId, nextStatus) {
       localPhaseBefore,
       localPhaseAfter,
     });
-    if (nextStatus === "completed" && !wasCompleted) {
-      const emailResult = await queuePhaseCompletedEmail(order, {
-        ...phase,
-        status: "completed",
-        completedAt: updatedCompletedAt || completedAt,
-      });
-      if (emailResult.error) {
-        showToast(`Fase actualizada, pero no se pudo preparar email: ${emailResult.error.message}`);
-      }
-    }
     await refreshSupabaseData({ silent: true, preserveNavigation: true });
   } else {
     replaceLocalWorkOrderPhase(order, phase.id, {
@@ -11806,10 +11542,6 @@ async function completeWorkOrderPhase(phaseId) {
     if (error) {
       showToast(phasePermissionMessage(error.message || "") || `No se pudo completar la fase: ${error.message}`);
       return;
-    }
-    const emailResult = await queuePhaseCompletedEmail(order, phase);
-    if (emailResult.error) {
-      showToast(`Fase completada, pero no se pudo preparar email: ${emailResult.error.message}`);
     }
     await loadSupabaseData();
   } else {
