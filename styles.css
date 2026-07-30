@@ -5454,6 +5454,10 @@ tr:last-child td {
     min-height: 44px;
   }
 
+  .work-order-detail-drawer .complete-without-phases-button {
+    width: 100%;
+  }
+
   .grid-2,
   .grid-3,
   .grid-4,
