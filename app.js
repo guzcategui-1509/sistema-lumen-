@@ -68,6 +68,7 @@ const dataState = {
   profile: null,
   brandNotificationRecipientsReady: false,
   emailNotificationsReady: true,
+  workOrderPhasesReady: false,
   phaseCommentsReady: true,
   phaseComments: [],
   lastEmailFunctionError: null,
@@ -995,6 +996,7 @@ const state = {
   focusedWorkOrderId: "",
   creatingWorkOrder: false,
   workOrderSubmitting: false,
+  completingWorkOrderId: "",
   workOrderDraftPhases: [],
   workOrderFormDraft: null,
   workOrderUsesPhases: true,
@@ -1510,7 +1512,14 @@ async function loadSupabaseData() {
   dataState.emailNotificationsReady = !emailNotificationsResult.error;
   dataState.weeklyDigestRunsReady = !weeklyDigestRunsResult.error;
   dataState.notificationRulesReady = !notificationRulesResult.error;
+  dataState.workOrderPhasesReady = !phasesResult.error;
   dataState.phaseCommentsReady = !phaseCommentsResult.error;
+  if (phasesResult.error) {
+    debugInteraction("work-order-phases:load:error", {
+      message: phasesResult.error.message || "",
+      details: phasesResult.error.details || "",
+    });
+  }
   if (phaseCommentsResult.error) {
     debugInteraction("phase-comments:load:error", {
       message: phaseCommentsResult.error.message || "",
@@ -2563,6 +2572,24 @@ function canCompleteWorkOrderPhase(phase, order = null) {
   if (canManageWorkOrders()) return true;
   const currentId = currentProfileId();
   return Boolean(currentId && (phase.assignedTo === currentId || phase.assigned_to === currentId));
+}
+
+function canCompleteWorkOrderWithoutPhases(order) {
+  if (!order) return false;
+  if (!isSupabaseMode() || !dataState.workOrderPhasesReady) return false;
+  if (isArchivedWorkOrder(order)) return false;
+  if (!["new", "in_progress", "in_review"].includes(order.status)) return false;
+  if (workOrderPhases(order).length !== 0) return false;
+
+  const currentId = currentProfileId();
+  if (!currentId || !internalUsers().some((user) => user.id === currentId)) return false;
+  if (!canOpenWorkOrder(order)) return false;
+
+  return (
+    canManageWorkOrders()
+    || order.createdBy === currentId
+    || orderAssignees(order).includes(currentId)
+  );
 }
 
 function canUpdateWorkOrderPhaseStatus(phase, order = null) {
@@ -5833,6 +5860,8 @@ function renderWorkOrderDetailPanel(order) {
   const isArchived = Boolean(order.archivedAt || order.archived_at);
   const isUrgent = Boolean(order.isUrgent || order.is_urgent);
   const showUrgencyButton = canManageUrgencyFlag && !isArchived;
+  const showCompleteWithoutPhasesButton = canCompleteWorkOrderWithoutPhases(order);
+  const isCompletingWithoutPhases = state.completingWorkOrderId === (order.dbId || order.id);
   debugInteraction("urgency-render-actions", {
     normalizedRole: normalizeRoleKey(dataState.profile?.role || ""),
     canManageUrgency: canManageUrgencyFlag,
@@ -5881,6 +5910,21 @@ function renderWorkOrderDetailPanel(order) {
               ? isArchived
                 ? `<button class="button-ghost small" data-action="unarchive-work-order" data-id="${order.id}">Restaurar</button>`
                 : `<button class="button-danger small" data-action="archive-work-order" data-id="${order.id}">Archivar</button>`
+              : ""
+          }
+          ${
+            showCompleteWithoutPhasesButton
+              ? `
+                <button
+                  type="button"
+                  class="button complete-without-phases-button"
+                  data-action="complete-work-order-without-phases"
+                  data-id="${escapeHtml(order.id)}"
+                  ${isCompletingWithoutPhases ? 'disabled aria-busy="true"' : ""}
+                >
+                  ${isCompletingWithoutPhases ? "Terminando..." : "Marcar orden como terminada"}
+                </button>
+              `
               : ""
           }
           <button class="button-ghost small" data-action="close-work-order-detail">Cerrar</button>
@@ -9683,6 +9727,7 @@ async function handleAction(action, id, actionElement = null) {
     "update-work-order": () => updateWorkOrderFromForm(),
     "update-order-status": () => updateOrderStatusFromSelect(id),
     "set-order-status": () => setOrderStatusFromButton(id),
+    "complete-work-order-without-phases": () => completeWorkOrderWithoutPhases(id),
     "advance-order": () => advanceWorkOrder(id),
     "archive-work-order": () => archiveWorkOrder(id),
     "unarchive-work-order": () => unarchiveWorkOrder(id),
@@ -11352,6 +11397,59 @@ async function setWorkOrderStatus(order, nextStatus) {
   state.focusedWorkOrderId = order.id;
   showToast(`${order.id} cambió a ${workOrderStatusLabels[order.status]}`);
   render();
+}
+
+async function completeWorkOrderWithoutPhases(id) {
+  const order = workOrders.find((candidate) =>
+    candidate.id === id || candidate.dbId === id
+  );
+  if (!order || !canCompleteWorkOrderWithoutPhases(order)) {
+    showToast("No tienes permiso para terminar esta orden o la orden contiene fases.");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `${order.id} no tiene fases. ¿Marcar esta orden como terminada?`,
+  );
+  if (!confirmed) return;
+
+  const targetOrderId = order.dbId || order.id;
+  state.completingWorkOrderId = targetOrderId;
+  render();
+
+  try {
+    const { data, error } = await supabaseClient
+      .rpc("complete_work_order_without_phases", {
+        target_work_order_id: targetOrderId,
+      })
+      .single();
+
+    if (error) {
+      debugInteraction("work-order-without-phases:complete:error", {
+        orderId: targetOrderId,
+        code: order.id,
+        errorCode: error.code || "",
+        message: error.message || "",
+        details: error.details || "",
+      });
+      showToast(error.message || "No se pudo terminar la orden.");
+      return;
+    }
+
+    order.status = data?.status || "completed";
+    order.updatedAt = data?.updated_at || new Date().toISOString();
+    state.viewingWorkOrderId = order.id;
+    state.focusedWorkOrderId = order.id;
+    debugInteraction("work-order-without-phases:complete:success", {
+      orderId: targetOrderId,
+      code: order.id,
+      status: order.status,
+    });
+    showToast(`${order.id} fue marcada como terminada.`);
+  } finally {
+    state.completingWorkOrderId = "";
+    render();
+  }
 }
 
 async function updateOrderStatusFromSelect(id) {
