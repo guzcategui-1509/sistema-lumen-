@@ -587,6 +587,7 @@ const weeklyDigestConfig = {
 const workOrderManagerRoles = ["admin", "directora", "direccion", "dirección", "jefe", "jefatura", "cuentas", "coordinador", "coordinacion", "coordinación", "ejecutivo"];
 const workOrderCreatorRoles = workOrderManagerRoles;
 const createdOrdersDashboardRoles = new Set(["admin", "cuentas", "directora", "direccion"]);
+const calendarManagementRoles = new Set(["admin", "directora", "director", "direccion", "cuentas"]);
 const workOrderMaterialRoles = ["admin", "directora", "cuentas", "generador", "creativo", "disenador", "editor"];
 const urgencyManagerRoles = ["admin", "directora", "director", "direccion", "dirección", "jefe", "jefatura", "cuentas", "coordinador", "coordinadora", "coordinacion", "coordinación", "ejecutivo", "ejecutiva"];
 const notificationModuleRoles = new Set([
@@ -4464,56 +4465,155 @@ function renderAllBrandsDashboard() {
   return renderExecutiveDashboard();
 }
 
-function renderDashboardDeadlineCalendar(sourceOrders, title = "Calendario mensual de deadlines", scopeLabel = "") {
+function calendarAccessScope(role = dataState.profile?.role) {
+  if (!isSupabaseMode()) return "management";
+  const normalizedRole = normalizeRoleKey(role);
+  if (normalizedRole === "cliente") return "client";
+  return calendarManagementRoles.has(normalizedRole) ? "management" : "operational";
+}
+
+function calendarEventFromOrder(order) {
+  if (!order?.dueDate) return null;
+  const responsibleIds = orderAssignees(order);
+  return {
+    id: `order:${order.dbId || order.id}`,
+    type: "order",
+    typeLabel: "OT",
+    order,
+    orderId: order.id,
+    code: order.id,
+    title: order.title,
+    brandId: order.brandId,
+    date: order.dueDate,
+    status: order.status,
+    statusLabel: workOrderStatusLabels[order.status] || order.status || "Sin estado",
+    responsibleIds,
+  };
+}
+
+function calendarEventFromPhase(order, phase) {
+  if (!phase?.dueDate || !phase.assignedTo) return null;
+  return {
+    id: `phase:${phase.id}`,
+    type: "phase",
+    typeLabel: "Fase",
+    order,
+    orderId: order.id,
+    code: order.id,
+    title: phase.title || workOrderPhaseTitle(phase.phaseKey),
+    brandId: order.brandId,
+    date: phase.dueDate,
+    status: phase.status,
+    statusLabel: phaseStatusLabel(phase.status),
+    responsibleIds: [phase.assignedTo],
+  };
+}
+
+function calendarEventsForCurrentScope() {
+  const sourceOrders = brandOrders();
+  const scope = calendarAccessScope();
+  if (scope !== "operational") {
+    return sourceOrders.map(calendarEventFromOrder).filter(Boolean);
+  }
+
+  const currentUserId = currentProfileId();
+  if (!currentUserId) return [];
+
+  return sourceOrders
+    .flatMap((order) => {
+      const events = [];
+      if (orderAssignees(order).includes(currentUserId)) {
+        const orderEvent = calendarEventFromOrder(order);
+        if (orderEvent) events.push(orderEvent);
+      }
+      workOrderPhases(order).forEach((phase) => {
+        if (phase.assignedTo !== currentUserId) return;
+        const phaseEvent = calendarEventFromPhase(order, phase);
+        if (phaseEvent) events.push(phaseEvent);
+      });
+      return events;
+    })
+    .sort((left, right) =>
+      String(left.date || "").localeCompare(String(right.date || ""))
+      || left.type.localeCompare(right.type)
+      || String(left.code || "").localeCompare(String(right.code || "")),
+    );
+}
+
+function calendarEventVisual(event) {
+  if (event.type === "order") return workOrderUrgency(event.order);
+  if (["blocked", "changes_requested", "cancelled"].includes(event.status)) return { cls: "red", label: event.statusLabel };
+  if (event.status === "completed") return { cls: "green", label: event.statusLabel };
+  if (event.status === "in_review") return { cls: "amber", label: event.statusLabel };
+  return { cls: "blue", label: event.statusLabel };
+}
+
+function calendarEventResponsibleLabel(event) {
+  return event.responsibleIds.map(userName).filter(Boolean).join(", ") || "Sin asignar";
+}
+
+function isOpenCalendarEvent(event) {
+  if (event.type === "order") return isOpenWorkOrder(event.order);
+  return !isArchivedWorkOrder(event.order) && !["completed", "cancelled"].includes(event.status);
+}
+
+function calendarEventCountLabel(count) {
+  if (calendarAccessScope() === "operational") {
+    return `${count} elemento${count === 1 ? "" : "s"}`;
+  }
+  return `${count} OT${count === 1 ? "" : "s"}`;
+}
+
+function renderDashboardDeadlineCalendar(sourceEvents, title = "Calendario mensual de deadlines", scopeLabel = "") {
   const monthKey = state.dashboardMonth || monthKeyFromDate();
   const days = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sab", "Dom"];
   const cells = monthCalendarDays(monthKey);
-  const monthOrders = sourceOrders
-    .filter((order) => dateMatchesMonth(order.dueDate, monthKey))
-    .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
-  const openMonthOrders = monthOrders.filter(isOpenWorkOrder);
-  const overdueMonthOrders = openMonthOrders.filter((order) => daysUntil(order.dueDate) < 0);
+  const monthEvents = sourceEvents
+    .filter((event) => dateMatchesMonth(event.date, monthKey))
+    .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  const openMonthEvents = monthEvents.filter(isOpenCalendarEvent);
+  const overdueMonthEvents = openMonthEvents.filter((event) => daysUntil(event.date) < 0);
 
   return `
     <section class="panel section dashboard-calendar-panel">
       <div class="section-header">
         <div>
           <h2 class="section-title">${title}</h2>
-          <div class="small-muted">${scopeLabel || "Órdenes"} con deadline en el mes seleccionado.</div>
+          <div class="small-muted">${scopeLabel || "Elementos"} con fecha en el mes seleccionado.</div>
         </div>
         <div class="row wrap">
           <input class="input month-input" type="month" data-dashboard-month value="${escapeHtml(monthKey)}" />
-          <span class="badge blue">${monthOrders.length} OTs</span>
-          <span class="badge ${overdueMonthOrders.length ? "red" : "green"}">${overdueMonthOrders.length} vencidas</span>
+          <span class="badge blue">${calendarEventCountLabel(monthEvents.length)}</span>
+          <span class="badge ${overdueMonthEvents.length ? "red" : "green"}">${overdueMonthEvents.length} vencido${overdueMonthEvents.length === 1 ? "" : "s"}</span>
         </div>
       </div>
       <div class="deadline-calendar-grid">
         ${days.map((day) => `<div class="deadline-calendar-head">${day}</div>`).join("")}
         ${cells
           .map((cell) => {
-            const dayOrders = monthOrders.filter((order) => String(order.dueDate || "").slice(0, 10) === cell.iso);
+            const dayEvents = monthEvents.filter((event) => String(event.date || "").slice(0, 10) === cell.iso);
             return `
               <div class="deadline-calendar-day ${cell.isCurrentMonth ? "" : "muted-month"} ${cell.isToday ? "today" : ""}">
                 <div class="deadline-day-number">
                   <span>${cell.day}</span>
-                  ${dayOrders.length ? `<strong>${dayOrders.length}</strong>` : ""}
+                  ${dayEvents.length ? `<strong>${dayEvents.length}</strong>` : ""}
                 </div>
                 <div class="deadline-day-items">
-                  ${dayOrders
+                  ${dayEvents
                     .slice(0, 4)
-                    .map((order) => {
-                      const urgency = workOrderUrgency(order);
-                      const brand = getBrand(order.brandId);
+                    .map((event) => {
+                      const visual = calendarEventVisual(event);
+                      const brand = getBrand(event.brandId);
                       return `
-                        <button class="deadline-chip ${urgency.cls}" data-action="view-work-order" data-id="${order.id}">
-                          <strong>${escapeHtml(order.id)}</strong>
-                          <span>${escapeHtml(order.title)}</span>
-                          <small>${escapeHtml(isAllBrandsScope() ? brand.shortName : orderAssignees(order).map(userName).join(", ") || "Sin asignar")}</small>
+                        <button class="deadline-chip ${visual.cls}" data-action="view-work-order" data-id="${escapeHtml(event.orderId)}">
+                          <strong>${escapeHtml(event.code)} · ${escapeHtml(event.typeLabel)}</strong>
+                          <span>${escapeHtml(event.title)}</span>
+                          <small>${escapeHtml(isAllBrandsScope() ? `${brand.shortName} · ${calendarEventResponsibleLabel(event)}` : calendarEventResponsibleLabel(event))}</small>
                         </button>
                       `;
                     })
                     .join("")}
-                  ${dayOrders.length > 4 ? `<span class="deadline-more">+${dayOrders.length - 4} mas</span>` : ""}
+                  ${dayEvents.length > 4 ? `<span class="deadline-more">+${dayEvents.length - 4} más</span>` : ""}
                 </div>
               </div>
             `;
@@ -4541,21 +4641,23 @@ function weekDaysFromToday() {
   });
 }
 
-function renderWeeklyDeadlineCalendar(sourceOrders) {
+function renderWeeklyDeadlineCalendar(sourceEvents) {
   const days = weekDaysFromToday();
+  const weekEventCount = sourceEvents.filter((event) => days.some((day) => day.iso === String(event.date || "").slice(0, 10))).length;
+  const personalCalendar = calendarAccessScope() === "operational";
   return `
     <section class="panel section dashboard-calendar-panel">
       <div class="section-header">
         <div>
           <h2 class="section-title">Semana de deadlines</h2>
-          <div class="small-muted">Vista rápida de lunes a domingo con las OTs del periodo.</div>
+          <div class="small-muted">${personalCalendar ? "Vista rápida de lunes a domingo con tus elementos del periodo." : "Vista rápida de lunes a domingo con las OTs del periodo."}</div>
         </div>
-        <span class="badge blue">${sourceOrders.filter((order) => days.some((day) => day.iso === String(order.dueDate || "").slice(0, 10))).length} OTs</span>
+        <span class="badge blue">${calendarEventCountLabel(weekEventCount)}</span>
       </div>
       <div class="deadline-week-grid">
         ${days
           .map((day) => {
-            const dayOrders = sourceOrders.filter((order) => String(order.dueDate || "").slice(0, 10) === day.iso);
+            const dayEvents = sourceEvents.filter((event) => String(event.date || "").slice(0, 10) === day.iso);
             return `
               <article class="deadline-week-day ${day.isToday ? "today" : ""}">
                 <div class="deadline-week-head">
@@ -4564,22 +4666,22 @@ function renderWeeklyDeadlineCalendar(sourceOrders) {
                 </div>
                 <div class="deadline-week-items">
                   ${
-                    dayOrders.length
-                      ? dayOrders
+                    dayEvents.length
+                      ? dayEvents
                           .slice(0, 6)
-                          .map((order) => {
-                            const urgency = workOrderUrgency(order);
+                          .map((event) => {
+                            const visual = calendarEventVisual(event);
                             return `
-                              <button class="deadline-week-item ${urgency.cls}" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
-                                <strong>${escapeHtml(order.id)}</strong>
-                                <span>${escapeHtml(order.title)}</span>
+                              <button class="deadline-week-item ${visual.cls}" data-action="view-work-order" data-id="${escapeHtml(event.orderId)}">
+                                <strong>${escapeHtml(event.code)} · ${escapeHtml(event.typeLabel)}</strong>
+                                <span>${escapeHtml(event.title)} · ${escapeHtml(calendarEventResponsibleLabel(event))}</span>
                               </button>
                             `;
                           })
                           .join("")
-                      : `<span class="muted">Sin OTs</span>`
+                      : `<span class="muted">Sin elementos</span>`
                   }
-                  ${dayOrders.length > 6 ? `<span class="deadline-more">+${dayOrders.length - 6} más</span>` : ""}
+                  ${dayEvents.length > 6 ? `<span class="deadline-more">+${dayEvents.length - 6} más</span>` : ""}
                 </div>
               </article>
             `;
@@ -4590,26 +4692,51 @@ function renderWeeklyDeadlineCalendar(sourceOrders) {
   `;
 }
 
-function renderDeadlineList(sourceOrders) {
-  const ordered = sourceOrders
+function renderCalendarListEvent(event) {
+  const visual = calendarEventVisual(event);
+  const brand = getBrand(event.brandId);
+  return `
+    <article class="operation-order-row compact-order-row calendar-event-row">
+      <button class="operation-order-main compact-order-main" data-action="view-work-order" data-id="${escapeHtml(event.orderId)}">
+        <span class="status-dot ${visual.cls}"></span>
+        <span>
+          <strong>${escapeHtml(event.code)} · ${escapeHtml(event.typeLabel)}</strong>
+          <small>${escapeHtml(event.title)}</small>
+          <em>${escapeHtml(brand.shortName)} · ${escapeHtml(calendarEventResponsibleLabel(event))}</em>
+        </span>
+      </button>
+      <div class="operation-meta">
+        <span class="badge ${visual.cls}">${escapeHtml(event.statusLabel)}</span>
+        <span class="muted">${escapeHtml(formatDate(event.date))}</span>
+      </div>
+      <div class="operation-status-control">
+        <button class="button-ghost small" data-action="view-work-order" data-id="${escapeHtml(event.orderId)}">Ver OT</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderDeadlineList(sourceEvents) {
+  const ordered = sourceEvents
     .slice()
-    .filter((order) => order.dueDate)
-    .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
-  const grouped = ordered.reduce((acc, order) => {
-    const key = String(order.dueDate || "").slice(0, 10);
+    .filter((event) => event.date)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const grouped = ordered.reduce((acc, event) => {
+    const key = String(event.date || "").slice(0, 10);
     if (!acc[key]) acc[key] = [];
-    acc[key].push(order);
+    acc[key].push(event);
     return acc;
   }, {});
   const days = Object.keys(grouped);
+  const personalCalendar = calendarAccessScope() === "operational";
   return `
     <section class="panel section dashboard-calendar-panel">
       <div class="section-header">
         <div>
           <h2 class="section-title">Lista por fecha</h2>
-          <div class="small-muted">Deadlines agrupados por día para revisar sin calendario visual.</div>
+          <div class="small-muted">${personalCalendar ? "Tus OTs y fases agrupadas por día para revisar sin calendario visual." : "OTs agrupadas por día para revisar sin calendario visual."}</div>
         </div>
-        <span class="badge blue">${ordered.length} OTs</span>
+        <span class="badge blue">${calendarEventCountLabel(ordered.length)}</span>
       </div>
       <div class="deadline-list">
         ${
@@ -4620,10 +4747,10 @@ function renderDeadlineList(sourceOrders) {
                     <details class="deadline-list-group" ${days.indexOf(day) === 0 ? "open" : ""}>
                       <summary>
                         <strong>${escapeHtml(formatDate(day))}</strong>
-                        <span>${grouped[day].length} OTs</span>
+                        <span>${calendarEventCountLabel(grouped[day].length)}</span>
                       </summary>
                       <div class="deadline-list-items">
-                        ${grouped[day].map((order) => renderOperationOrderRow(order, true)).join("")}
+                        ${grouped[day].map(renderCalendarListEvent).join("")}
                       </div>
                     </details>
                   `,
@@ -4637,19 +4764,19 @@ function renderDeadlineList(sourceOrders) {
 }
 
 function renderCalendarWorkspace() {
-  const orders = brandOrders();
-  const openOrders = orders.filter(isOpenWorkOrder);
+  const events = calendarEventsForCurrentScope();
   const calendarView = state.calendarView || "month";
   const canCreate = canCreateWorkOrders();
+  const personalCalendar = calendarAccessScope() === "operational";
   return `
     <section class="section">
       <section class="panel brand-hero calendar-hero">
         <div>
           <div class="hero-title">
             <h2>Calendario</h2>
-            <span class="badge blue">${isAllBrandsScope() ? "Vista global" : getBrand().shortName}</span>
+            <span class="badge blue">${personalCalendar ? "Mi calendario" : isAllBrandsScope() ? "Vista global" : getBrand().shortName}</span>
           </div>
-          <p class="muted">Fechas de entrega y agenda mensual de OTs sin saturar el Dashboard ejecutivo.</p>
+          <p class="muted">${personalCalendar ? "Tus OTs asignadas y fases propias, sin elementos de otros responsables." : "Fechas de entrega y agenda mensual de OTs sin saturar el Dashboard ejecutivo."}</p>
         </div>
         <div class="quick-links">
           ${canCreate ? `<button class="button" data-action="open-create-work-order">+ Crear OT</button>` : ""}
@@ -4663,12 +4790,16 @@ function renderCalendarWorkspace() {
       </div>
       ${
         calendarView === "week"
-          ? renderWeeklyDeadlineCalendar(orders)
+          ? renderWeeklyDeadlineCalendar(events)
           : calendarView === "list"
-            ? renderDeadlineList(orders)
-            : renderDashboardDeadlineCalendar(orders, "Calendario mensual de deadlines", isAllBrandsScope() ? "OTs de todas las marcas" : getBrand().shortName)
+            ? renderDeadlineList(events)
+            : renderDashboardDeadlineCalendar(
+                events,
+                personalCalendar ? "Mi calendario mensual" : "Calendario mensual de deadlines",
+                personalCalendar ? "Tus OTs y fases" : isAllBrandsScope() ? "OTs de todas las marcas" : getBrand().shortName,
+              )
       }
-      ${calendarView === "month" ? renderWorkOrderMonthTimeline(openOrders) : ""}
+      ${calendarView === "month" ? renderWorkOrderMonthTimeline(events.filter(isOpenCalendarEvent)) : ""}
     </section>
   `;
 }
@@ -5005,29 +5136,30 @@ function renderWorkOrderAiComposer(allBrands) {
   `;
 }
 
-function renderWorkOrderMonthTimeline(orders) {
+function renderWorkOrderMonthTimeline(events) {
   const monthKey = state.workOrderMonth || monthKeyFromDate();
-  const monthOrders = orders
-    .filter((order) => dateMatchesMonth(order.dueDate, monthKey))
-    .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
-  const grouped = monthOrders.reduce((acc, order) => {
-    const day = String(order.dueDate || "").slice(0, 10);
+  const monthEvents = events
+    .filter((event) => dateMatchesMonth(event.date, monthKey))
+    .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  const grouped = monthEvents.reduce((acc, event) => {
+    const day = String(event.date || "").slice(0, 10);
     if (!acc[day]) acc[day] = [];
-    acc[day].push(order);
+    acc[day].push(event);
     return acc;
   }, {});
   const days = Object.keys(grouped).sort();
+  const personalCalendar = calendarAccessScope() === "operational";
 
   return `
     <section class="panel section work-order-timetable">
       <div class="section-header">
         <div>
           <h2 class="section-title">Timetable del mes</h2>
-          <div class="small-muted">Órdenes con deadline dentro del mes seleccionado.</div>
+          <div class="small-muted">${personalCalendar ? "Tus elementos pendientes con fecha dentro del mes seleccionado." : "OTs pendientes con fecha dentro del mes seleccionado."}</div>
         </div>
         <div class="row wrap">
           <input class="input month-input" type="month" data-work-order-month value="${escapeHtml(monthKey)}" />
-          <span class="badge blue">${monthOrders.length} OTs</span>
+          <span class="badge blue">${calendarEventCountLabel(monthEvents.length)}</span>
         </div>
       </div>
       <div class="timeline-strip">
@@ -5044,11 +5176,11 @@ function renderWorkOrderMonthTimeline(orders) {
                       <div class="timeline-items">
                         ${grouped[day]
                           .map(
-                            (order) => `
-                              <button class="timeline-item" data-action="view-work-order" data-id="${order.id}">
-                                <span>${escapeHtml(order.id)}</span>
-                                <strong>${escapeHtml(order.title)}</strong>
-                                <small>${escapeHtml(orderAssignees(order).map(userName).join(", ") || "Sin asignar")}</small>
+                            (event) => `
+                              <button class="timeline-item" data-action="view-work-order" data-id="${escapeHtml(event.orderId)}">
+                                <span>${escapeHtml(event.code)} · ${escapeHtml(event.typeLabel)}</span>
+                                <strong>${escapeHtml(event.title)}</strong>
+                                <small>${escapeHtml(calendarEventResponsibleLabel(event))} · ${escapeHtml(event.statusLabel)}</small>
                               </button>
                             `,
                           )
