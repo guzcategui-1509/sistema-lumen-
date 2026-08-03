@@ -994,6 +994,10 @@ const state = {
   editingWorkOrderId: "",
   viewingWorkOrderId: "",
   focusedWorkOrderId: "",
+  workOrderConversations: {},
+  workOrderConversationReplyingTo: "",
+  workOrderConversationPublishing: false,
+  workOrderConversationResolvingId: "",
   creatingWorkOrder: false,
   workOrderSubmitting: false,
   completingWorkOrderId: "",
@@ -1148,6 +1152,14 @@ const roleLabels = {
   operaciones: "Operaciones",
   ejecutivo: "Ejecutivo",
   cliente: "Cliente",
+};
+
+const workOrderConversationTypeLabels = {
+  comment: "Comentario",
+  block: "Bloqueo",
+  deadline_change: "Cambio de fecha",
+  reassignment: "Reasignación",
+  decision: "Decisión",
 };
 
 const visibleRoleOptions = [
@@ -1343,6 +1355,23 @@ function mapDbWorkOrderPhaseComment(row) {
     phaseId: row.phase_id,
     authorId: row.author_id,
     body: row.body || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
+  };
+}
+
+function mapDbWorkOrderComment(row) {
+  return {
+    id: row.comment_id || row.id,
+    workOrderId: row.work_order_id,
+    authorId: row.author_user_id,
+    parentCommentId: row.parent_comment_id || "",
+    message: row.message || "",
+    commentType: row.comment_type || "comment",
+    requiresResponse: Boolean(row.requires_response),
+    resolutionStatus: row.resolution_status || "open",
+    resolvedBy: row.resolved_by || "",
+    resolvedAt: row.resolved_at || "",
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
   };
@@ -2668,6 +2697,260 @@ function renderLinkedText(value = "") {
   return html.replace(/\n/g, "<br />");
 }
 
+function workOrderConversationKey(order) {
+  return order?.dbId || order?.id || "";
+}
+
+function workOrderConversationState(order) {
+  const key = workOrderConversationKey(order);
+  return state.workOrderConversations[key] || {
+    status: isSupabaseMode() ? "idle" : "loaded",
+    comments: [],
+    error: "",
+  };
+}
+
+function setWorkOrderConversationState(order, nextState) {
+  const key = workOrderConversationKey(order);
+  if (!key) return;
+  state.workOrderConversations[key] = {
+    ...workOrderConversationState(order),
+    ...nextState,
+  };
+}
+
+function canParticipateInWorkOrderConversation(order) {
+  if (!order || isArchivedWorkOrder(order)) return false;
+  if (!isSupabaseMode()) return true;
+  if (normalizeRoleKey(dataState.profile?.role) === "cliente") return false;
+
+  const currentId = currentProfileId();
+  if (!currentId) return false;
+  if (isCurrentUserRelatedToWorkOrder(order)) return true;
+
+  const currentUser = users.find((user) => user.id === currentId);
+  return Boolean(canManageWorkOrders() && currentUser && canUserAccessBrand(currentUser, order.brandId));
+}
+
+function canResolveWorkOrderConversationTopic(order, comment) {
+  if (!canParticipateInWorkOrderConversation(order)) return false;
+  if (!comment || comment.parentCommentId || comment.resolutionStatus !== "open") return false;
+  const currentId = currentProfileId();
+  return Boolean(
+    currentId &&
+      (comment.authorId === currentId || order.createdBy === currentId || canManageWorkOrders()),
+  );
+}
+
+function shouldRenderConversationForOrder(order) {
+  const selected = selectedViewingOrder();
+  return Boolean(selected && order && workOrderConversationKey(selected) === workOrderConversationKey(order));
+}
+
+async function loadWorkOrderConversation(order, { force = false } = {}) {
+  if (!order) return;
+  const currentState = workOrderConversationState(order);
+  if (!force && ["loading", "loaded"].includes(currentState.status)) return;
+
+  if (!isSupabaseMode() || !order.dbId) {
+    setWorkOrderConversationState(order, { status: "loaded", comments: [], error: "" });
+    return;
+  }
+
+  setWorkOrderConversationState(order, { status: "loading", error: "" });
+  if (shouldRenderConversationForOrder(order)) render();
+
+  const { data, error } = await supabaseClient
+    .from("work_order_comments")
+    .select(
+      "id,work_order_id,author_user_id,parent_comment_id,message,comment_type,requires_response,resolution_status,resolved_by,resolved_at,created_at,updated_at",
+    )
+    .eq("work_order_id", order.dbId)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error) {
+    debugInteraction("work-order-conversation:load-error", {
+      orderId: order.dbId,
+      code: order.id,
+      message: error.message || "",
+      codeValue: error.code || "",
+    });
+    setWorkOrderConversationState(order, {
+      status: "error",
+      error: error.message || "No se pudo cargar la conversación.",
+    });
+  } else {
+    setWorkOrderConversationState(order, {
+      status: "loaded",
+      comments: (data || []).map(mapDbWorkOrderComment),
+      error: "",
+    });
+  }
+
+  if (shouldRenderConversationForOrder(order)) render();
+}
+
+function renderWorkOrderConversationTypeOptions(activeType = "comment") {
+  return Object.entries(workOrderConversationTypeLabels)
+    .map(
+      ([value, label]) =>
+        `<option value="${escapeHtml(value)}" ${value === activeType ? "selected" : ""}>${escapeHtml(label)}</option>`,
+    )
+    .join("");
+}
+
+function renderWorkOrderConversationAuthor(comment) {
+  const author = users.find((user) => user.id === comment.authorId);
+  return `
+    <div class="work-order-conversation-author">
+      <strong>${escapeHtml(author?.name || "Usuario interno")}</strong>
+      <span>${escapeHtml(roleLabels[author?.role] || author?.role || "Rol no disponible")}</span>
+      <time datetime="${escapeHtml(comment.createdAt)}">${escapeHtml(formatDateTime(comment.createdAt))}</time>
+    </div>
+  `;
+}
+
+function renderWorkOrderConversationReply(order, reply) {
+  return `
+    <article class="work-order-conversation-reply">
+      ${renderWorkOrderConversationAuthor(reply)}
+      <span class="badge neutral">${escapeHtml(workOrderConversationTypeLabels[reply.commentType] || "Comentario")}</span>
+      <div class="work-order-conversation-message">${renderLinkedText(reply.message)}</div>
+    </article>
+  `;
+}
+
+function renderWorkOrderConversationReplyForm(order, rootComment) {
+  if (state.workOrderConversationReplyingTo !== rootComment.id) return "";
+  return `
+    <div class="work-order-conversation-reply-form" data-conversation-reply-form="${escapeHtml(rootComment.id)}">
+      <label class="field">
+        <span>Tipo de respuesta</span>
+        <select class="input" data-conversation-reply-type>
+          ${renderWorkOrderConversationTypeOptions()}
+        </select>
+      </label>
+      <label class="field work-order-conversation-message-field">
+        <span>Respuesta</span>
+        <textarea class="textarea compact-textarea" data-conversation-reply-message maxlength="4000" placeholder="Escribe una respuesta o decisión..."></textarea>
+      </label>
+      <div class="row wrap work-order-conversation-form-actions">
+        <button class="button small" type="button" data-action="publish-work-order-comment-reply" data-id="${escapeHtml(rootComment.id)}" data-order-id="${escapeHtml(order.id)}">Publicar respuesta</button>
+        <button class="button-ghost small" type="button" data-action="cancel-work-order-comment-reply">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderWorkOrderConversationTopic(order, rootComment, replies) {
+  const isResolved = rootComment.resolutionStatus === "resolved";
+  const canWrite = canParticipateInWorkOrderConversation(order) && !isResolved;
+  const canResolve = canResolveWorkOrderConversationTopic(order, rootComment);
+  return `
+    <article class="work-order-conversation-topic ${isResolved ? "is-resolved" : ""}">
+      <div class="work-order-conversation-topic-head">
+        ${renderWorkOrderConversationAuthor(rootComment)}
+        <div class="row wrap work-order-conversation-badges">
+          <span class="badge ${rootComment.commentType === "block" ? "red" : rootComment.commentType === "decision" ? "green" : "blue"}">${escapeHtml(workOrderConversationTypeLabels[rootComment.commentType] || "Comentario")}</span>
+          ${rootComment.requiresResponse && !isResolved ? `<span class="badge amber">Requiere respuesta</span>` : ""}
+          ${isResolved ? `<span class="badge green">Resuelto</span>` : `<span class="badge neutral">Abierto</span>`}
+        </div>
+      </div>
+      <div class="work-order-conversation-message">${renderLinkedText(rootComment.message)}</div>
+      ${
+        rootComment.resolvedAt
+          ? `<div class="small-muted">Resuelto por ${escapeHtml(userName(rootComment.resolvedBy))} · ${escapeHtml(formatDateTime(rootComment.resolvedAt))}</div>`
+          : ""
+      }
+      ${
+        replies.length
+          ? `<div class="work-order-conversation-replies">${replies.map((reply) => renderWorkOrderConversationReply(order, reply)).join("")}</div>`
+          : ""
+      }
+      ${
+        canWrite || canResolve
+          ? `
+            <div class="row wrap work-order-conversation-topic-actions">
+              ${canWrite ? `<button class="button-ghost small" type="button" data-action="reply-work-order-comment" data-id="${escapeHtml(rootComment.id)}">Responder</button>` : ""}
+              ${canResolve ? `<button class="button-ghost small" type="button" data-action="resolve-work-order-comment" data-id="${escapeHtml(rootComment.id)}" data-order-id="${escapeHtml(order.id)}" ${state.workOrderConversationResolvingId === rootComment.id ? 'disabled aria-busy="true"' : ""}>${state.workOrderConversationResolvingId === rootComment.id ? "Resolviendo..." : "Marcar como resuelto"}</button>` : ""}
+            </div>
+          `
+          : ""
+      }
+      ${renderWorkOrderConversationReplyForm(order, rootComment)}
+    </article>
+  `;
+}
+
+function renderWorkOrderConversation(order) {
+  const conversation = workOrderConversationState(order);
+  const isArchived = isArchivedWorkOrder(order);
+  const canWrite = canParticipateInWorkOrderConversation(order);
+  const rootComments = conversation.comments.filter((comment) => !comment.parentCommentId);
+  const repliesByRoot = new Map();
+  conversation.comments
+    .filter((comment) => comment.parentCommentId)
+    .forEach((comment) => {
+      const replies = repliesByRoot.get(comment.parentCommentId) || [];
+      replies.push(comment);
+      repliesByRoot.set(comment.parentCommentId, replies);
+    });
+
+  return `
+    <section class="work-order-conversation" aria-labelledby="work-order-conversation-title">
+      <div class="work-order-conversation-header">
+        <div>
+          <h3 id="work-order-conversation-title">Conversación de la orden</h3>
+          <p>Bloqueos, solicitudes, respuestas y decisiones permanentes de esta OT.</p>
+        </div>
+        ${rootComments.some((comment) => comment.requiresResponse && comment.resolutionStatus === "open") ? `<span class="badge amber">Respuesta pendiente</span>` : ""}
+      </div>
+      ${isArchived ? `<div class="work-order-conversation-readonly">Orden archivada: la conversación permanece visible en modo solo lectura.</div>` : ""}
+      ${
+        canWrite
+          ? `
+            <div class="work-order-conversation-composer" data-work-order-conversation-form="${escapeHtml(order.id)}">
+              <label class="field">
+                <span>Tipo</span>
+                <select class="input" data-conversation-type>
+                  ${renderWorkOrderConversationTypeOptions()}
+                </select>
+              </label>
+              <label class="field work-order-conversation-message-field">
+                <span>Mensaje</span>
+                <textarea class="textarea" data-conversation-message maxlength="4000" placeholder="Escribe un bloqueo, solicitud, respuesta o decisión..."></textarea>
+              </label>
+              <label class="checkbox-line work-order-conversation-response-toggle">
+                <input type="checkbox" data-conversation-requires-response />
+                Requiere respuesta
+              </label>
+              <button class="button" type="button" data-action="publish-work-order-comment" data-id="${escapeHtml(order.id)}" ${state.workOrderConversationPublishing ? 'disabled aria-busy="true"' : ""}>
+                ${state.workOrderConversationPublishing ? "Publicando..." : "Publicar"}
+              </button>
+            </div>
+          `
+          : ""
+      }
+      <div class="work-order-conversation-list">
+        ${
+          conversation.status === "loading" || conversation.status === "idle"
+            ? `<div class="small-muted">Cargando conversación...</div>`
+            : conversation.status === "error"
+              ? `<div class="auth-error">No se pudo cargar la conversación: ${escapeHtml(conversation.error)}</div>`
+              : rootComments.length
+                ? rootComments
+                    .map((rootComment) =>
+                      renderWorkOrderConversationTopic(order, rootComment, repliesByRoot.get(rootComment.id) || []),
+                    )
+                    .join("")
+                : `<div class="empty compact-empty">Todavía no hay mensajes en esta orden.</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
 function renderWorkOrderPhaseComments(phase, order) {
   const comments = Array.isArray(phase.comments) ? phase.comments : [];
   const canComment = canCommentOnWorkOrderPhase(phase, order);
@@ -2978,6 +3261,15 @@ function render() {
   `;
   bindEvents();
   focusLinkedWorkOrder();
+  const conversationOrder = selectedViewingOrder();
+  if (conversationOrder) {
+    loadWorkOrderConversation(conversationOrder).catch((error) => {
+      debugInteraction("work-order-conversation:load-unhandled", {
+        orderId: conversationOrder.dbId || conversationOrder.id,
+        message: error?.message || "",
+      });
+    });
+  }
 }
 
 function renderLoadingScreen() {
@@ -6010,6 +6302,7 @@ function renderWorkOrderDetailPanel(order) {
           `
           : ""
       }
+      ${renderWorkOrderConversation(order)}
       </div>
     </aside>
   `;
@@ -9717,6 +10010,11 @@ async function handleAction(action, id, actionElement = null) {
     "remove-work-order-phase": () => removeWorkOrderPhase(id),
     "complete-work-order-phase": () => completeWorkOrderPhase(id),
     "add-work-order-phase-comment": () => addWorkOrderPhaseComment(id),
+    "publish-work-order-comment": () => publishWorkOrderComment(id, "", actionElement),
+    "reply-work-order-comment": () => openWorkOrderCommentReply(id),
+    "cancel-work-order-comment-reply": () => closeWorkOrderCommentReply(),
+    "publish-work-order-comment-reply": () => publishWorkOrderComment("", id, actionElement),
+    "resolve-work-order-comment": () => resolveWorkOrderComment(id, actionElement),
     "focus-urgent-orders": () => focusUrgentOrders(),
     "optimize-work-order-urgency": () => optimizeWorkOrderUrgency(),
     "create-work-order": () => createWorkOrderFromForm(),
@@ -11017,6 +11315,7 @@ function viewWorkOrder(id) {
   state.currentModule = "work-orders";
   state.viewingWorkOrderId = order.id;
   state.focusedWorkOrderId = order.id;
+  state.workOrderConversationReplyingTo = "";
   state.creatingWorkOrder = false;
   render();
 }
@@ -11024,6 +11323,7 @@ function viewWorkOrder(id) {
 function closeWorkOrderDetail() {
   state.viewingWorkOrderId = "";
   state.focusedWorkOrderId = "";
+  state.workOrderConversationReplyingTo = "";
   showToast("Detalle cerrado");
   render();
 }
@@ -11746,6 +12046,176 @@ async function addWorkOrderPhaseComment(phaseId) {
   state.focusedWorkOrderId = order.id;
   showToast("Comentario agregado a la fase");
   render();
+}
+
+function openWorkOrderCommentReply(commentId) {
+  const order = selectedViewingOrder();
+  const conversation = workOrderConversationState(order);
+  const rootComment = conversation.comments.find(
+    (comment) => comment.id === commentId && !comment.parentCommentId,
+  );
+  if (!order || !rootComment || !canParticipateInWorkOrderConversation(order)) {
+    showToast("No puedes responder en este tema.");
+    return;
+  }
+  if (rootComment.resolutionStatus === "resolved") {
+    showToast("Este tema ya está resuelto.");
+    return;
+  }
+  state.workOrderConversationReplyingTo = commentId;
+  render();
+  window.setTimeout(() => {
+    document.querySelector("[data-conversation-reply-message]")?.focus();
+  }, 0);
+}
+
+function closeWorkOrderCommentReply() {
+  state.workOrderConversationReplyingTo = "";
+  render();
+}
+
+function workOrderCommentRpcRow(data) {
+  return Array.isArray(data) ? data[0] : data;
+}
+
+async function publishWorkOrderComment(orderId = "", parentCommentId = "", actionElement = null) {
+  const order = orderId ? findWorkOrderByAnyId(orderId) : selectedViewingOrder();
+  if (!order || !order.dbId || !canParticipateInWorkOrderConversation(order)) {
+    showToast("No puedes publicar en la conversación de esta orden.");
+    return;
+  }
+
+  const form = parentCommentId
+    ? Array.from(document.querySelectorAll("[data-conversation-reply-form]")).find(
+        (candidate) => candidate.dataset.conversationReplyForm === parentCommentId,
+      )
+    : document.querySelector("[data-work-order-conversation-form]");
+  const message = form?.querySelector(
+    parentCommentId ? "[data-conversation-reply-message]" : "[data-conversation-message]",
+  )?.value?.trim() || "";
+  const commentType = form?.querySelector(
+    parentCommentId ? "[data-conversation-reply-type]" : "[data-conversation-type]",
+  )?.value || "comment";
+  const requiresResponse = parentCommentId
+    ? false
+    : Boolean(form?.querySelector("[data-conversation-requires-response]")?.checked);
+
+  if (!message) {
+    showToast(parentCommentId ? "Escribe una respuesta antes de publicar." : "Escribe un mensaje antes de publicar.");
+    return;
+  }
+  if (message.length > 4000) {
+    showToast("El mensaje no debe superar 4000 caracteres.");
+    return;
+  }
+
+  state.workOrderConversationPublishing = true;
+  if (actionElement) {
+    actionElement.disabled = true;
+    actionElement.setAttribute("aria-busy", "true");
+  }
+  debugInteraction("work-order-conversation:create-start", {
+    orderId: order.dbId,
+    code: order.id,
+    parentCommentId,
+    commentType,
+    requiresResponse,
+    messageLength: message.length,
+  });
+
+  try {
+    const { data, error } = await supabaseClient.rpc("create_work_order_comment", {
+      target_work_order_id: order.dbId,
+      comment_message: message,
+      next_comment_type: commentType,
+      needs_response: requiresResponse,
+      target_parent_comment_id: parentCommentId || null,
+    });
+    if (error) {
+      debugInteraction("work-order-conversation:create-error", {
+        orderId: order.dbId,
+        parentCommentId,
+        code: error.code || "",
+        message: error.message || "",
+      });
+      showToast(`No se pudo publicar: ${error.message}`);
+      return;
+    }
+
+    const row = workOrderCommentRpcRow(data);
+    if (!row?.comment_id && !row?.id) {
+      await loadWorkOrderConversation(order, { force: true });
+    } else {
+      const conversation = workOrderConversationState(order);
+      setWorkOrderConversationState(order, {
+        status: "loaded",
+        comments: [...conversation.comments, mapDbWorkOrderComment(row)].sort((left, right) =>
+          String(left.createdAt).localeCompare(String(right.createdAt)),
+        ),
+        error: "",
+      });
+    }
+    state.workOrderConversationReplyingTo = "";
+    showToast(parentCommentId ? "Respuesta publicada." : "Mensaje publicado.");
+  } finally {
+    state.workOrderConversationPublishing = false;
+    render();
+  }
+}
+
+async function resolveWorkOrderComment(commentId, actionElement = null) {
+  const order = selectedViewingOrder();
+  const conversation = workOrderConversationState(order);
+  const rootComment = conversation.comments.find(
+    (comment) => comment.id === commentId && !comment.parentCommentId,
+  );
+  if (!order || !rootComment || !canResolveWorkOrderConversationTopic(order, rootComment)) {
+    showToast("No puedes resolver este tema.");
+    return;
+  }
+  if (!window.confirm("¿Marcar este tema como resuelto? La conversación permanecerá visible.")) return;
+
+  state.workOrderConversationResolvingId = commentId;
+  if (actionElement) {
+    actionElement.disabled = true;
+    actionElement.setAttribute("aria-busy", "true");
+  }
+
+  try {
+    const { data, error } = await supabaseClient.rpc("resolve_work_order_comment", {
+      target_comment_id: commentId,
+    });
+    if (error) {
+      debugInteraction("work-order-conversation:resolve-error", {
+        orderId: order.dbId,
+        commentId,
+        code: error.code || "",
+        message: error.message || "",
+      });
+      showToast(`No se pudo resolver el tema: ${error.message}`);
+      return;
+    }
+
+    const row = workOrderCommentRpcRow(data);
+    setWorkOrderConversationState(order, {
+      comments: conversation.comments.map((comment) =>
+        comment.id === commentId
+          ? {
+              ...comment,
+              resolutionStatus: row?.resolution_status || "resolved",
+              resolvedBy: row?.resolved_by || currentProfileId(),
+              resolvedAt: row?.resolved_at || new Date().toISOString(),
+              updatedAt: row?.updated_at || new Date().toISOString(),
+            }
+          : comment,
+      ),
+    });
+    state.workOrderConversationReplyingTo = "";
+    showToast("Tema marcado como resuelto.");
+  } finally {
+    state.workOrderConversationResolvingId = "";
+    render();
+  }
 }
 
 async function setOrderStatusFromButton(payload = "") {
