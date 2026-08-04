@@ -1012,7 +1012,8 @@ const state = {
   focusedWorkOrderCommentId: "",
   creatingWorkOrder: false,
   workOrderSubmitting: false,
-  completingWorkOrderId: "",
+  noPhaseOrderStatusProcessingId: "",
+  noPhaseOrderStatusDialog: null,
   workOrderDraftPhases: [],
   workOrderFormDraft: null,
   workOrderUsesPhases: true,
@@ -1098,6 +1099,13 @@ const workOrderEditableStatusLabels = {
   in_progress: "En proceso",
   in_review: "En revisión interna",
   completed: "Entregada",
+  cancelled: "Cancelada",
+};
+
+const noPhaseWorkOrderStatusLabels = {
+  new: "Sin iniciar",
+  in_progress: "En proceso",
+  completed: "Terminada",
   cancelled: "Cancelada",
 };
 
@@ -2670,12 +2678,19 @@ function canCompleteWorkOrderPhase(phase, order = null) {
   return Boolean(currentId && (phase.assignedTo === currentId || phase.assigned_to === currentId));
 }
 
-function canCompleteWorkOrderWithoutPhases(order) {
+function hasConfirmedNoWorkOrderPhases(order) {
+  return Boolean(
+    order
+    && isSupabaseMode()
+    && dataState.workOrderPhasesReady
+    && workOrderPhases(order).length === 0
+  );
+}
+
+function canChangeWorkOrderWithoutPhasesStatus(order) {
   if (!order) return false;
-  if (!isSupabaseMode() || !dataState.workOrderPhasesReady) return false;
+  if (!hasConfirmedNoWorkOrderPhases(order)) return false;
   if (isArchivedWorkOrder(order)) return false;
-  if (!["new", "in_progress", "in_review"].includes(order.status)) return false;
-  if (workOrderPhases(order).length !== 0) return false;
 
   const currentId = currentProfileId();
   if (!currentId || !internalUsers().some((user) => user.id === currentId)) return false;
@@ -2686,6 +2701,19 @@ function canCompleteWorkOrderWithoutPhases(order) {
     || order.createdBy === currentId
     || orderAssignees(order).includes(currentId)
   );
+}
+
+function noPhaseStatusTransitionAllowed(order, nextStatus) {
+  if (!order || !canChangeWorkOrderWithoutPhasesStatus(order)) return false;
+  if (!Object.prototype.hasOwnProperty.call(noPhaseWorkOrderStatusLabels, nextStatus)) return false;
+  if (order.status === nextStatus) return false;
+  if (["completed", "cancelled"].includes(order.status)) {
+    return canManageWorkOrders() && nextStatus === "in_progress";
+  }
+  if (order.status === "new") return ["in_progress", "completed", "cancelled"].includes(nextStatus);
+  if (order.status === "in_progress") return ["new", "completed", "cancelled"].includes(nextStatus);
+  if (order.status === "in_review") return ["in_progress", "completed", "cancelled"].includes(nextStatus);
+  return false;
 }
 
 function canUpdateWorkOrderPhaseStatus(phase, order = null) {
@@ -2933,7 +2961,38 @@ function handleWorkOrderMentionInput(event) {
   updateWorkOrderMentionDropdown(textarea);
 }
 
+function handleNoPhaseStatusDialogKeydown(event) {
+  if (!state.noPhaseOrderStatusDialog) return false;
+  const dialog = document.querySelector(".no-phase-status-modal");
+  if (!dialog) return false;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeNoPhaseOrderStatusDialog();
+    return true;
+  }
+  if (event.key !== "Tab") return false;
+  const focusable = Array.from(
+    dialog.querySelectorAll('button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'),
+  ).filter((element) => element.getAttribute("aria-hidden") !== "true");
+  if (!focusable.length) return false;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+    return true;
+  }
+  if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+    return true;
+  }
+  return false;
+}
+
 function handleWorkOrderMentionKeydown(event) {
+  if (handleNoPhaseStatusDialogKeydown(event)) return;
   const textarea = event.target.closest?.("[data-mention-draft-key]");
   if (!textarea) return;
   const order = selectedViewingOrder();
@@ -6702,6 +6761,117 @@ function renderWorkOrderStageControl(order) {
   `;
 }
 
+function renderNoPhaseWorkOrderStatusControl(order) {
+  if (!hasConfirmedNoWorkOrderPhases(order)) return "";
+  const canChange = canChangeWorkOrderWithoutPhasesStatus(order);
+  const processing = state.noPhaseOrderStatusProcessingId === (order.dbId || order.id);
+  const currentLabel = noPhaseWorkOrderStatusLabels[order.status]
+    || workOrderStatusLabels[order.status]
+    || order.status;
+  const readOnlyMessage = isArchivedWorkOrder(order)
+    ? "La orden está archivada y su estado es de solo lectura."
+    : !canChange
+      ? "Solo el creador, un responsable o Gestión puede cambiar este estado."
+      : ["completed", "cancelled"].includes(order.status) && !canManageWorkOrders()
+        ? "La orden está cerrada. Solo Gestión puede reabrirla."
+        : "Este control aplica únicamente porque la orden no tiene fases internas.";
+
+  return `
+    <section class="no-phase-order-status-section" aria-labelledby="no-phase-order-status-title">
+      <div class="no-phase-order-status-heading">
+        <div>
+          <span class="eyebrow">Seguimiento operativo</span>
+          <h3 id="no-phase-order-status-title">Estado de la orden</h3>
+        </div>
+        <span class="badge blue">${escapeHtml(currentLabel)}</span>
+      </div>
+      <div class="no-phase-order-status-options" role="group" aria-label="Cambiar estado de la orden">
+        ${Object.entries(noPhaseWorkOrderStatusLabels)
+          .map(([value, label]) => {
+            const active = order.status === value;
+            const allowed = noPhaseStatusTransitionAllowed(order, value);
+            const disabled = processing || active || !allowed;
+            return `
+              <button
+                type="button"
+                class="no-phase-order-status-button ${active ? "is-active" : ""}"
+                data-action="request-no-phase-order-status"
+                data-id="${escapeHtml(order.id)}"
+                data-next-status="${escapeHtml(value)}"
+                aria-pressed="${active ? "true" : "false"}"
+                aria-disabled="${disabled ? "true" : "false"}"
+                ${processing ? 'disabled aria-busy="true"' : ""}
+              >
+                ${escapeHtml(label)}
+              </button>
+            `;
+          })
+          .join("")}
+      </div>
+      <p class="no-phase-order-status-help" aria-live="polite">${escapeHtml(processing ? "Actualizando estado..." : readOnlyMessage)}</p>
+    </section>
+  `;
+}
+
+function renderNoPhaseOrderStatusDialog(order) {
+  const dialog = state.noPhaseOrderStatusDialog;
+  if (!order || !dialog || dialog.orderId !== (order.dbId || order.id)) return "";
+  const nextLabel = noPhaseWorkOrderStatusLabels[dialog.nextStatus] || dialog.nextStatus;
+  const reopening = ["completed", "cancelled"].includes(order.status) && dialog.nextStatus === "in_progress";
+  const cancelling = dialog.nextStatus === "cancelled";
+  const requiresReason = cancelling || reopening;
+  const title = cancelling
+    ? "Cancelar orden"
+    : reopening
+      ? "Reabrir orden"
+      : `Marcar como ${nextLabel}`;
+  const description = cancelling
+    ? "La orden seguirá disponible, pero se detendrá el trabajo. No se borrará ni archivará información."
+    : reopening
+      ? "La orden volverá a En proceso. Registra el motivo para dejar trazabilidad."
+      : "Esta orden no tiene fases internas. Confirma el cambio de estado.";
+
+  return `
+    <div class="modal-backdrop no-phase-status-modal-backdrop" data-action="cancel-no-phase-order-status" aria-hidden="true"></div>
+    <aside
+      class="modal-panel no-phase-status-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="no-phase-status-dialog-title"
+      aria-describedby="no-phase-status-dialog-description"
+    >
+      <button class="modal-close-button" type="button" data-action="cancel-no-phase-order-status" aria-label="Cerrar">×</button>
+      <span class="eyebrow">${escapeHtml(order.id)}</span>
+      <h2 id="no-phase-status-dialog-title">${escapeHtml(title)}</h2>
+      <p id="no-phase-status-dialog-description">${escapeHtml(description)}</p>
+      ${
+        requiresReason
+          ? `
+            <div class="field">
+              <label for="no-phase-status-reason">Motivo obligatorio</label>
+              <textarea
+                class="textarea"
+                id="no-phase-status-reason"
+                data-no-phase-status-reason
+                aria-describedby="no-phase-status-reason-error"
+                aria-invalid="${dialog.error ? "true" : "false"}"
+                placeholder="Explica brevemente el motivo"
+              >${escapeHtml(dialog.reason || "")}</textarea>
+              <div class="field-error" id="no-phase-status-reason-error" role="alert">${escapeHtml(dialog.error || "")}</div>
+            </div>
+          `
+          : ""
+      }
+      <div class="row wrap no-phase-status-modal-actions">
+        <button type="button" class="button" data-action="confirm-no-phase-order-status">
+          Confirmar ${escapeHtml(nextLabel)}
+        </button>
+        <button type="button" class="button-ghost" data-action="cancel-no-phase-order-status">Cancelar</button>
+      </div>
+    </aside>
+  `;
+}
+
 function selectedWorkOrderAssigneeIdsFromForm() {
   const assigneeCheckboxes = Array.from(document.querySelectorAll("[data-ot-assignee]:checked"));
   const assigneeSelect = document.getElementById("ot-assignees");
@@ -6790,6 +6960,7 @@ function renderWorkOrderForm(order = null) {
   const dueDateValue = draft?.dueDate ?? (isEditing ? order.dueDate || "" : "");
   const priorityValue = draft?.priority ?? (isEditing ? order.priority : "medium");
   const statusValue = draft?.status ?? (isEditing ? order.status : "new");
+  const editingNoPhaseOrder = Boolean(isEditing && hasConfirmedNoWorkOrderPhases(order));
   const categoryValue = draft?.category ?? (isEditing ? order.category : "diseno");
   const artCountValue = draft?.artCount ?? (isEditing && order.artCount !== null && order.artCount !== undefined ? String(order.artCount) : "");
   const notifyOnEmail = draft?.notifyOnEmail ?? (isEditing ? order.notifyOnEmail !== false : true);
@@ -6875,9 +7046,19 @@ function renderWorkOrderForm(order = null) {
         </div>
         <div class="field">
           <label>Estado</label>
-          <select class="input" id="ot-status">
-            ${renderWorkOrderStatusOptions(statusValue)}
-          </select>
+          ${
+            editingNoPhaseOrder
+              ? `
+                <input id="ot-status" type="hidden" value="${escapeHtml(statusValue)}" />
+                <div class="input read-only-status-field" aria-readonly="true">${escapeHtml(noPhaseWorkOrderStatusLabels[statusValue] || workOrderStatusLabels[statusValue] || statusValue)}</div>
+                <div class="field-help">Cambia el estado desde la sección Estado de la orden.</div>
+              `
+              : `
+                <select class="input" id="ot-status">
+                  ${renderWorkOrderStatusOptions(statusValue)}
+                </select>
+              `
+          }
         </div>
         <div class="field">
           <label>Categoria</label>
@@ -6957,8 +7138,7 @@ function renderWorkOrderDetailPanel(order) {
   const isArchived = Boolean(order.archivedAt || order.archived_at);
   const isUrgent = Boolean(order.isUrgent || order.is_urgent);
   const showUrgencyButton = canManageUrgencyFlag && !isArchived;
-  const showCompleteWithoutPhasesButton = canCompleteWorkOrderWithoutPhases(order);
-  const isCompletingWithoutPhases = state.completingWorkOrderId === (order.dbId || order.id);
+  const hasNoPhases = hasConfirmedNoWorkOrderPhases(order);
   debugInteraction("urgency-render-actions", {
     normalizedRole: normalizeRoleKey(dataState.profile?.role || ""),
     canManageUrgency: canManageUrgencyFlag,
@@ -7009,26 +7189,11 @@ function renderWorkOrderDetailPanel(order) {
                 : `<button class="button-danger small" data-action="archive-work-order" data-id="${order.id}">Archivar</button>`
               : ""
           }
-          ${
-            showCompleteWithoutPhasesButton
-              ? `
-                <button
-                  type="button"
-                  class="button complete-without-phases-button"
-                  data-action="complete-work-order-without-phases"
-                  data-id="${escapeHtml(order.id)}"
-                  ${isCompletingWithoutPhases ? 'disabled aria-busy="true"' : ""}
-                >
-                  ${isCompletingWithoutPhases ? "Terminando..." : "Marcar orden como terminada"}
-                </button>
-              `
-              : ""
-          }
           <button class="button-ghost small" data-action="close-work-order-detail">Cerrar</button>
         </div>
       </div>
       ${renderUrgentOrderBanner(order)}
-      ${canManage && !isArchived ? renderWorkOrderStageControl(order) : ""}
+      ${canManage && !isArchived && !hasNoPhases ? renderWorkOrderStageControl(order) : ""}
       ${renderWorkOrderPhaseProgress(order)}
       <div class="work-order-detail-grid">
         <div class="detail-block">
@@ -7108,8 +7273,10 @@ function renderWorkOrderDetailPanel(order) {
           : ""
       }
       ${renderWorkOrderConversation(order)}
+      ${renderNoPhaseWorkOrderStatusControl(order)}
       </div>
     </aside>
+    ${renderNoPhaseOrderStatusDialog(order)}
   `;
 }
 
@@ -7668,7 +7835,7 @@ function renderOrderCard(order) {
   const canArchive = canArchiveWorkOrders();
   const canUploadMaterials = canUploadWorkOrderMaterials(order);
   const archived = isArchivedWorkOrder(order);
-  const nextStatus = archived ? null : nextWorkOrderStatus(order);
+  const nextStatus = archived || hasConfirmedNoWorkOrderPhases(order) ? null : nextWorkOrderStatus(order);
   const parsedDescription = splitWorkOrderDescription(order.description || "");
   return `
     <div class="mini-card ${isFocused ? "focused-card" : ""}" data-order-card="${escapeHtml(order.id)}">
@@ -10837,7 +11004,10 @@ async function handleAction(action, id, actionElement = null) {
     "update-work-order": () => updateWorkOrderFromForm(),
     "update-order-status": () => updateOrderStatusFromSelect(id),
     "set-order-status": () => setOrderStatusFromButton(id),
-    "complete-work-order-without-phases": () => completeWorkOrderWithoutPhases(id),
+    "complete-work-order-without-phases": () => requestNoPhaseOrderStatusChange(id, "completed"),
+    "request-no-phase-order-status": () => requestNoPhaseOrderStatusChange(id, actionElement?.dataset?.nextStatus || ""),
+    "confirm-no-phase-order-status": () => confirmNoPhaseOrderStatusChange(),
+    "cancel-no-phase-order-status": () => closeNoPhaseOrderStatusDialog(),
     "advance-order": () => advanceWorkOrder(id),
     "archive-work-order": () => archiveWorkOrder(id),
     "unarchive-work-order": () => unarchiveWorkOrder(id),
@@ -12261,6 +12431,7 @@ function viewWorkOrder(id) {
   state.viewingWorkOrderId = order.id;
   state.focusedWorkOrderId = order.id;
   state.workOrderConversationReplyingTo = "";
+  state.noPhaseOrderStatusDialog = null;
   state.creatingWorkOrder = false;
   render();
 }
@@ -12269,6 +12440,7 @@ function closeWorkOrderDetail() {
   state.viewingWorkOrderId = "";
   state.focusedWorkOrderId = "";
   state.workOrderConversationReplyingTo = "";
+  state.noPhaseOrderStatusDialog = null;
   showToast("Detalle cerrado");
   render();
 }
@@ -12644,56 +12816,160 @@ async function setWorkOrderStatus(order, nextStatus) {
   render();
 }
 
-async function completeWorkOrderWithoutPhases(id) {
-  const order = workOrders.find((candidate) =>
-    candidate.id === id || candidate.dbId === id
-  );
-  if (!order || !canCompleteWorkOrderWithoutPhases(order)) {
-    showToast("No tienes permiso para terminar esta orden o la orden contiene fases.");
+function createNoPhaseStatusOperationId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  globalThis.crypto?.getRandomValues?.(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function focusNoPhaseStatusDialog() {
+  window.setTimeout(() => {
+    const dialog = document.querySelector(".no-phase-status-modal");
+    const reason = dialog?.querySelector("[data-no-phase-status-reason]");
+    const firstButton = dialog?.querySelector("button:not([disabled])");
+    (reason || firstButton)?.focus();
+  }, 0);
+}
+
+function closeNoPhaseOrderStatusDialog({ restoreFocus = true } = {}) {
+  if (state.noPhaseOrderStatusProcessingId) return;
+  const dialog = state.noPhaseOrderStatusDialog;
+  state.noPhaseOrderStatusDialog = null;
+  render();
+  if (restoreFocus && dialog) {
+    window.setTimeout(() => {
+      document
+        .querySelector(`[data-action="request-no-phase-order-status"][data-next-status="${CSS.escape(dialog.nextStatus)}"]`)
+        ?.focus();
+    }, 0);
+  }
+}
+
+async function requestNoPhaseOrderStatusChange(id, nextStatus) {
+  const order = workOrders.find((candidate) => candidate.id === id || candidate.dbId === id);
+  if (!order || !nextStatus) return;
+  if (state.noPhaseOrderStatusProcessingId) return;
+  if (order.status === nextStatus) return;
+  if (!noPhaseStatusTransitionAllowed(order, nextStatus)) {
+    showToast("No tienes permiso para realizar esa transición o la orden contiene fases.");
     return;
   }
 
-  const confirmed = window.confirm(
-    `${order.id} no tiene fases. ¿Marcar esta orden como terminada?`,
-  );
-  if (!confirmed) return;
-
   const targetOrderId = order.dbId || order.id;
-  state.completingWorkOrderId = targetOrderId;
+  const needsConfirmation = nextStatus === "completed"
+    || nextStatus === "cancelled"
+    || (["completed", "cancelled"].includes(order.status) && nextStatus === "in_progress");
+  const operationId = createNoPhaseStatusOperationId();
+
+  if (needsConfirmation) {
+    state.noPhaseOrderStatusDialog = {
+      orderId: targetOrderId,
+      nextStatus,
+      operationId,
+      reason: "",
+      error: "",
+    };
+    render();
+    focusNoPhaseStatusDialog();
+    return;
+  }
+
+  await transitionNoPhaseWorkOrderStatus(order, nextStatus, operationId, "");
+}
+
+async function confirmNoPhaseOrderStatusChange() {
+  const dialog = state.noPhaseOrderStatusDialog;
+  if (!dialog || state.noPhaseOrderStatusProcessingId) return;
+  const order = workOrders.find((candidate) => (candidate.dbId || candidate.id) === dialog.orderId);
+  if (!order) {
+    closeNoPhaseOrderStatusDialog();
+    return;
+  }
+
+  const reason = document.querySelector("[data-no-phase-status-reason]")?.value.trim() || "";
+  const requiresReason = dialog.nextStatus === "cancelled"
+    || (["completed", "cancelled"].includes(order.status) && dialog.nextStatus === "in_progress");
+  if (requiresReason && !reason) {
+    state.noPhaseOrderStatusDialog = {
+      ...dialog,
+      reason,
+      error: "Escribe un motivo antes de confirmar.",
+    };
+    render();
+    focusNoPhaseStatusDialog();
+    return;
+  }
+
+  await transitionNoPhaseWorkOrderStatus(order, dialog.nextStatus, dialog.operationId, reason);
+}
+
+async function transitionNoPhaseWorkOrderStatus(order, nextStatus, operationId, reason = "") {
+  const targetOrderId = order?.dbId || order?.id || "";
+  if (!targetOrderId || state.noPhaseOrderStatusProcessingId) return;
+  const previousDialog = state.noPhaseOrderStatusDialog;
+  state.noPhaseOrderStatusDialog = null;
+  state.noPhaseOrderStatusProcessingId = targetOrderId;
   render();
 
   try {
     const { data, error } = await supabaseClient
-      .rpc("complete_work_order_without_phases", {
+      .rpc("transition_work_order_without_phases", {
         target_work_order_id: targetOrderId,
+        next_status: nextStatus,
+        operation_id: operationId,
+        change_reason: reason || null,
       })
       .single();
 
     if (error) {
-      debugInteraction("work-order-without-phases:complete:error", {
+      debugInteraction("work-order-without-phases:status:error", {
         orderId: targetOrderId,
         code: order.id,
+        nextStatus,
+        operationId,
         errorCode: error.code || "",
         message: error.message || "",
         details: error.details || "",
       });
-      showToast(error.message || "No se pudo terminar la orden.");
+      if (previousDialog) {
+        state.noPhaseOrderStatusDialog = {
+          ...previousDialog,
+          reason,
+          error: error.message || "No se pudo actualizar el estado.",
+        };
+      }
+      showToast(error.message || "No se pudo actualizar el estado de la orden.");
       return;
     }
 
-    order.status = data?.status || "completed";
+    order.status = data?.status || nextStatus;
     order.updatedAt = data?.updated_at || new Date().toISOString();
     state.viewingWorkOrderId = order.id;
     state.focusedWorkOrderId = order.id;
-    debugInteraction("work-order-without-phases:complete:success", {
+    debugInteraction("work-order-without-phases:status:success", {
       orderId: targetOrderId,
       code: order.id,
+      previousStatus: data?.previous_status || "",
       status: order.status,
+      operationId: data?.event_id || operationId,
+      eligibleRecipientCount: data?.eligible_recipient_count ?? 0,
+      queuedCount: data?.queued_count ?? 0,
+      idempotent: Boolean(data?.idempotent),
     });
-    showToast(`${order.id} fue marcada como terminada.`);
+    const recipientCount = Number(data?.eligible_recipient_count || 0);
+    showToast(
+      recipientCount
+        ? "Estado actualizado. Las notificaciones fueron puestas en cola."
+        : "Estado actualizado. No se encontraron otros involucrados con correo disponible.",
+    );
   } finally {
-    state.completingWorkOrderId = "";
+    state.noPhaseOrderStatusProcessingId = "";
     render();
+    if (state.noPhaseOrderStatusDialog) focusNoPhaseStatusDialog();
   }
 }
 
