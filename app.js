@@ -998,9 +998,18 @@ const state = {
   viewingWorkOrderId: "",
   focusedWorkOrderId: "",
   workOrderConversations: {},
+  workOrderMentionCandidates: {},
+  workOrderCommentMentionDrafts: {},
   workOrderConversationReplyingTo: "",
   workOrderConversationPublishing: false,
   workOrderConversationResolvingId: "",
+  mentionInbox: {
+    status: "idle",
+    items: [],
+    error: "",
+  },
+  mentionInboxOpen: false,
+  focusedWorkOrderCommentId: "",
   creatingWorkOrder: false,
   workOrderSubmitting: false,
   completingWorkOrderId: "",
@@ -1377,6 +1386,15 @@ function mapDbWorkOrderComment(row) {
     resolvedAt: row.resolved_at || "",
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
+    mentions: (row.mentions || []).map((mention) => ({
+      id: mention.id,
+      userId: mention.mentioned_user_id,
+      mentionedByUserId: mention.mentioned_by_user_id,
+      eventKey: mention.event_key || "",
+      readAt: mention.read_at || "",
+      createdAt: mention.created_at || "",
+      name: mention.mentioned_profile?.full_name || "",
+    })),
   };
 }
 
@@ -1701,8 +1719,16 @@ async function initializeApp() {
   }
 
   supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+    const previousUserId = dataState.session?.user?.id || "";
     dataState.session = session;
     dataState.error = "";
+    if (previousUserId && previousUserId !== (session?.user?.id || "")) {
+      state.workOrderConversations = {};
+      state.workOrderMentionCandidates = {};
+      state.workOrderCommentMentionDrafts = {};
+      state.mentionInbox = { status: "idle", items: [], error: "" };
+      state.mentionInboxOpen = false;
+    }
     if (_event === "PASSWORD_RECOVERY") {
       dataState.passwordResetMode = true;
     }
@@ -1913,11 +1939,12 @@ function getAppBaseUrl() {
   return url.href.replace(/\/$/, "");
 }
 
-function buildWorkOrderUrl(orderCode, brandId) {
+function buildWorkOrderUrl(orderCode, brandId, commentId = "") {
   const url = new URL(getAppBaseUrl());
   url.searchParams.set("module", "work-orders");
   url.searchParams.set("brand", brandId);
   url.searchParams.set("ot", orderCode);
+  if (commentId) url.searchParams.set("comment", commentId);
   return url.toString();
 }
 
@@ -1927,6 +1954,7 @@ function applyInitialRouteParams() {
   const moduleParam = params.get("module");
   const brandParam = params.get("brand");
   const orderParam = params.get("ot");
+  const commentParam = params.get("comment");
 
   if (moduleParam && canOpenModule(moduleParam)) {
     state.currentModule = moduleParam;
@@ -1940,6 +1968,7 @@ function applyInitialRouteParams() {
     state.focusedWorkOrderId = order?.id || orderParam;
     state.viewingWorkOrderId = order?.id || orderParam;
     if (order?.brandId) state.currentBrandId = order.brandId;
+    state.focusedWorkOrderCommentId = commentParam || "";
   }
 
   state.initialRouteApplied = true;
@@ -2757,6 +2786,277 @@ function setWorkOrderConversationState(order, nextState) {
   };
 }
 
+function workOrderMentionCandidateState(order) {
+  const key = workOrderConversationKey(order);
+  return state.workOrderMentionCandidates[key] || { status: "idle", items: [], error: "" };
+}
+
+function setWorkOrderMentionCandidateState(order, nextState) {
+  const key = workOrderConversationKey(order);
+  if (!key) return;
+  state.workOrderMentionCandidates[key] = {
+    ...workOrderMentionCandidateState(order),
+    ...nextState,
+  };
+}
+
+function workOrderMentionDraftKey(order, parentCommentId = "") {
+  return `${workOrderConversationKey(order)}::${parentCommentId || "root"}`;
+}
+
+function workOrderMentionDraft(order, parentCommentId = "") {
+  const key = workOrderMentionDraftKey(order, parentCommentId);
+  return state.workOrderCommentMentionDrafts[key] || {
+    mentions: [],
+    query: "",
+    tokenStart: -1,
+    activeIndex: 0,
+    open: false,
+  };
+}
+
+function setWorkOrderMentionDraft(order, parentCommentId, nextState) {
+  const key = workOrderMentionDraftKey(order, parentCommentId);
+  state.workOrderCommentMentionDrafts[key] = {
+    ...workOrderMentionDraft(order, parentCommentId),
+    ...nextState,
+  };
+}
+
+function clearWorkOrderMentionDraft(order, parentCommentId = "") {
+  delete state.workOrderCommentMentionDrafts[workOrderMentionDraftKey(order, parentCommentId)];
+}
+
+function reconcileWorkOrderMentionDraft(order, parentCommentId, value) {
+  const draft = workOrderMentionDraft(order, parentCommentId);
+  const mentions = draft.mentions
+    .filter((mention) => String(value).includes(mention.token))
+    .map((mention) => {
+      const start = String(value).indexOf(mention.token);
+      return { ...mention, start, end: start + mention.token.length };
+    });
+  setWorkOrderMentionDraft(order, parentCommentId, { mentions });
+  return mentions;
+}
+
+function mentionQueryAtCursor(value, cursorPosition) {
+  const prefix = String(value).slice(0, cursorPosition);
+  const match = prefix.match(/(?:^|\s)@([^@\n]*)$/);
+  if (!match) return null;
+  const tokenStart = prefix.lastIndexOf("@");
+  return {
+    query: match[1].trimStart(),
+    tokenStart,
+  };
+}
+
+function filteredWorkOrderMentionCandidates(order, parentCommentId = "", query = "") {
+  const normalizedQuery = normalizeSearchText(query);
+  const selectedIds = new Set(
+    workOrderMentionDraft(order, parentCommentId).mentions.map((mention) => mention.userId),
+  );
+  return workOrderMentionCandidateState(order).items.filter((candidate) => {
+    if (selectedIds.has(candidate.id)) return false;
+    if (!normalizedQuery) return true;
+    return normalizeSearchText(`${candidate.name} ${candidate.email} ${candidate.role}`).includes(normalizedQuery);
+  });
+}
+
+function updateWorkOrderMentionDropdown(textarea) {
+  const order = selectedViewingOrder();
+  if (!order || !textarea) return;
+  const parentCommentId = textarea.dataset.parentCommentId || "";
+  const cursorPosition = textarea.selectionStart || 0;
+  const draftKey = textarea.dataset.mentionDraftKey || workOrderMentionDraftKey(order, parentCommentId);
+  const dropdown = document.querySelector(`[data-mention-dropdown="${CSS.escape(draftKey)}"]`);
+  const currentMentions = reconcileWorkOrderMentionDraft(order, parentCommentId, textarea.value);
+  let mentionAtCursor = mentionQueryAtCursor(textarea.value, cursorPosition);
+  if (
+    mentionAtCursor
+    && currentMentions.some(
+      (mention) => mention.start === mentionAtCursor.tokenStart && cursorPosition >= mention.end,
+    )
+  ) {
+    mentionAtCursor = null;
+  }
+  renderWorkOrderMentionDraftSummaryIntoDom(order, parentCommentId);
+  if (!dropdown) return;
+
+  if (!mentionAtCursor) {
+    setWorkOrderMentionDraft(order, parentCommentId, { open: false, query: "", tokenStart: -1 });
+    dropdown.hidden = true;
+    dropdown.replaceChildren();
+    return;
+  }
+
+  const draft = workOrderMentionDraft(order, parentCommentId);
+  const candidates = filteredWorkOrderMentionCandidates(order, parentCommentId, mentionAtCursor.query).slice(0, 8);
+  const activeIndex = Math.min(draft.activeIndex || 0, Math.max(candidates.length - 1, 0));
+  setWorkOrderMentionDraft(order, parentCommentId, {
+    open: true,
+    query: mentionAtCursor.query,
+    tokenStart: mentionAtCursor.tokenStart,
+    activeIndex,
+  });
+
+  dropdown.replaceChildren();
+  if (!candidates.length) {
+    const empty = document.createElement("div");
+    empty.className = "work-order-mention-dropdown-empty";
+    empty.textContent = workOrderMentionCandidateState(order).status === "error"
+      ? "No se pudieron cargar las personas."
+      : "No hay personas relacionadas que coincidan.";
+    dropdown.append(empty);
+  } else {
+    candidates.forEach((candidate, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `work-order-mention-option ${index === activeIndex ? "is-active" : ""}`;
+      button.dataset.action = "select-work-order-mention";
+      button.dataset.id = candidate.id;
+      button.dataset.mentionDraftKey = draftKey;
+      button.dataset.parentCommentId = parentCommentId;
+      const name = document.createElement("strong");
+      name.textContent = candidate.name;
+      const detail = document.createElement("span");
+      detail.textContent = [candidate.email, roleLabels[candidate.role] || candidate.role].filter(Boolean).join(" · ");
+      button.append(name, detail);
+      dropdown.append(button);
+    });
+  }
+  dropdown.hidden = false;
+}
+
+function handleWorkOrderMentionInput(event) {
+  const textarea = event.target.closest?.("[data-mention-draft-key]");
+  if (!textarea) return;
+  updateWorkOrderMentionDropdown(textarea);
+}
+
+function handleWorkOrderMentionKeydown(event) {
+  const textarea = event.target.closest?.("[data-mention-draft-key]");
+  if (!textarea) return;
+  const order = selectedViewingOrder();
+  if (!order) return;
+  const parentCommentId = textarea.dataset.parentCommentId || "";
+  const draft = workOrderMentionDraft(order, parentCommentId);
+  if (!draft.open) return;
+  const candidates = filteredWorkOrderMentionCandidates(order, parentCommentId, draft.query).slice(0, 8);
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    setWorkOrderMentionDraft(order, parentCommentId, { open: false });
+    const dropdown = document.querySelector(`[data-mention-dropdown="${CSS.escape(textarea.dataset.mentionDraftKey)}"]`);
+    if (dropdown) dropdown.hidden = true;
+    return;
+  }
+  if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key) || !candidates.length) return;
+  event.preventDefault();
+  if (event.key === "Enter") {
+    selectWorkOrderMention(candidates[draft.activeIndex || 0]?.id, {
+      dataset: {
+        mentionDraftKey: textarea.dataset.mentionDraftKey,
+        parentCommentId,
+      },
+    });
+    return;
+  }
+  const direction = event.key === "ArrowDown" ? 1 : -1;
+  const activeIndex = (draft.activeIndex + direction + candidates.length) % candidates.length;
+  setWorkOrderMentionDraft(order, parentCommentId, { activeIndex });
+  updateWorkOrderMentionDropdown(textarea);
+}
+
+function selectWorkOrderMention(userId, actionElement) {
+  const order = selectedViewingOrder();
+  if (!order || !userId) return;
+  const parentCommentId = actionElement?.dataset?.parentCommentId || "";
+  const draft = workOrderMentionDraft(order, parentCommentId);
+  const candidate = workOrderMentionCandidateState(order).items.find((item) => item.id === userId);
+  const textarea = document.querySelector(
+    `[data-mention-draft-key="${CSS.escape(actionElement?.dataset?.mentionDraftKey || workOrderMentionDraftKey(order, parentCommentId))}"]`,
+  );
+  if (!candidate || !textarea || draft.tokenStart < 0) return;
+
+  const token = `@${candidate.name}`;
+  const cursor = textarea.selectionStart || textarea.value.length;
+  textarea.value = `${textarea.value.slice(0, draft.tokenStart)}${token} ${textarea.value.slice(cursor)}`;
+  const nextCursor = draft.tokenStart + token.length + 1;
+  textarea.focus();
+  textarea.setSelectionRange(nextCursor, nextCursor);
+  const mentions = [
+    ...draft.mentions.filter((mention) => mention.userId !== candidate.id),
+    { userId: candidate.id, name: candidate.name, token, start: draft.tokenStart, end: draft.tokenStart + token.length },
+  ];
+  setWorkOrderMentionDraft(order, parentCommentId, {
+    mentions,
+    open: false,
+    query: "",
+    tokenStart: -1,
+    activeIndex: 0,
+  });
+  renderWorkOrderMentionDraftSummaryIntoDom(order, parentCommentId);
+  const dropdown = document.querySelector(`[data-mention-dropdown="${CSS.escape(textarea.dataset.mentionDraftKey)}"]`);
+  if (dropdown) {
+    dropdown.hidden = true;
+    dropdown.replaceChildren();
+  }
+}
+
+function renderWorkOrderMentionDraftSummaryIntoDom(order, parentCommentId = "") {
+  const draftKey = workOrderMentionDraftKey(order, parentCommentId);
+  const dropdown = document.querySelector(`[data-mention-dropdown="${CSS.escape(draftKey)}"]`);
+  if (!dropdown) return;
+  const previous = dropdown.previousElementSibling;
+  if (previous?.classList.contains("work-order-mention-selection")) previous.remove();
+  const draft = workOrderMentionDraft(order, parentCommentId);
+  if (!draft.mentions.length) return;
+  const selection = document.createElement("div");
+  selection.className = "work-order-mention-selection";
+  selection.setAttribute("aria-label", "Personas mencionadas");
+  draft.mentions.forEach((mention) => {
+    const chip = document.createElement("span");
+    chip.className = "work-order-mention-chip";
+    chip.append(document.createTextNode(`@${mention.name} `));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.dataset.action = "remove-work-order-mention";
+    remove.dataset.id = mention.userId;
+    remove.dataset.mentionDraftKey = draftKey;
+    remove.setAttribute("aria-label", `Quitar mención de ${mention.name}`);
+    remove.textContent = "×";
+    chip.append(remove);
+    selection.append(chip);
+  });
+  dropdown.before(selection);
+}
+
+function removeWorkOrderMention(userId, actionElement) {
+  const order = selectedViewingOrder();
+  if (!order) return;
+  const draftKey = actionElement?.dataset?.mentionDraftKey || "";
+  const parentCommentId = draftKey.split("::").slice(1).join("::") === "root"
+    ? ""
+    : draftKey.split("::").slice(1).join("::");
+  const draft = workOrderMentionDraft(order, parentCommentId);
+  const mention = draft.mentions.find((item) => item.userId === userId);
+  const textarea = document.querySelector(`[data-mention-draft-key="${CSS.escape(draftKey)}"]`);
+  if (mention && textarea) {
+    const tokenStart = textarea.value.slice(mention.start, mention.end) === mention.token
+      ? mention.start
+      : textarea.value.indexOf(mention.token);
+    if (tokenStart >= 0) {
+      textarea.value = `${textarea.value.slice(0, tokenStart)}${textarea.value.slice(tokenStart + mention.token.length)}`
+        .replace(/ {2,}/g, " ");
+    }
+  }
+  setWorkOrderMentionDraft(order, parentCommentId, {
+    mentions: draft.mentions.filter((item) => item.userId !== userId),
+  });
+  renderWorkOrderMentionDraftSummaryIntoDom(order, parentCommentId);
+  textarea?.focus();
+}
+
 function canParticipateInWorkOrderConversation(order) {
   if (!order || isArchivedWorkOrder(order)) return false;
   if (!isSupabaseMode()) return true;
@@ -2798,14 +3098,48 @@ async function loadWorkOrderConversation(order, { force = false } = {}) {
   setWorkOrderConversationState(order, { status: "loading", error: "" });
   if (shouldRenderConversationForOrder(order)) render();
 
-  const { data, error } = await supabaseClient
+  const commentsPromise = supabaseClient
     .from("work_order_comments")
     .select(
-      "id,work_order_id,author_user_id,parent_comment_id,message,comment_type,requires_response,resolution_status,resolved_by,resolved_at,created_at,updated_at",
+      "id,work_order_id,author_user_id,parent_comment_id,message,comment_type,requires_response,resolution_status,resolved_by,resolved_at,created_at,updated_at,mentions:work_order_comment_mentions(id,mentioned_user_id,mentioned_by_user_id,event_key,read_at,created_at,mentioned_profile:profiles!work_order_comment_mentions_mentioned_user_id_fkey(full_name))",
     )
     .eq("work_order_id", order.dbId)
     .order("created_at", { ascending: true })
     .order("id", { ascending: true });
+
+  const candidateState = workOrderMentionCandidateState(order);
+  const shouldLoadCandidates = canParticipateInWorkOrderConversation(order)
+    && candidateState.status !== "loaded";
+  if (shouldLoadCandidates) {
+    setWorkOrderMentionCandidateState(order, { status: "loading", error: "" });
+  }
+  const candidatesPromise = shouldLoadCandidates
+    ? supabaseClient.rpc("list_work_order_comment_mention_candidates", {
+        target_work_order_id: order.dbId,
+      })
+    : Promise.resolve({ data: null, error: null });
+
+  const [{ data, error }, candidateResult] = await Promise.all([commentsPromise, candidatesPromise]);
+
+  if (shouldLoadCandidates) {
+    if (candidateResult.error) {
+      setWorkOrderMentionCandidateState(order, {
+        status: "error",
+        error: candidateResult.error.message || "No se pudieron cargar las personas.",
+      });
+    } else {
+      setWorkOrderMentionCandidateState(order, {
+        status: "loaded",
+        items: (candidateResult.data || []).map((candidate) => ({
+          id: candidate.id,
+          name: candidate.full_name || "Usuario interno",
+          role: candidate.role || "",
+          email: candidate.email || "",
+        })),
+        error: "",
+      });
+    }
+  }
 
   if (error) {
     debugInteraction("work-order-conversation:load-error", {
@@ -2849,12 +3183,86 @@ function renderWorkOrderConversationAuthor(comment) {
   `;
 }
 
+function workOrderMentionedUserName(userId) {
+  const loadedUser = users.find((user) => user.id === userId);
+  if (loadedUser?.name) return loadedUser.name;
+  for (const candidateState of Object.values(state.workOrderMentionCandidates)) {
+    const candidate = candidateState.items?.find((item) => item.id === userId);
+    if (candidate?.name) return candidate.name;
+  }
+  return "";
+}
+
+function renderStructuredWorkOrderCommentMessage(comment) {
+  const mentions = Array.isArray(comment.mentions) ? comment.mentions : [];
+  if (!mentions.length) return renderLinkedText(comment.message);
+
+  const source = String(comment.message || "");
+  const matches = [];
+  const occupied = [];
+  mentions.forEach((mention) => {
+    const name = mention.name || workOrderMentionedUserName(mention.userId);
+    if (!name) return;
+    const token = `@${name}`;
+    let index = source.indexOf(token);
+    while (index >= 0 && occupied.some(([start, end]) => index < end && index + token.length > start)) {
+      index = source.indexOf(token, index + token.length);
+    }
+    if (index < 0) return;
+    occupied.push([index, index + token.length]);
+    matches.push({ index, token, name, userId: mention.userId });
+  });
+  if (!matches.length) return renderLinkedText(source);
+
+  matches.sort((left, right) => left.index - right.index);
+  let cursor = 0;
+  let html = "";
+  matches.forEach((match) => {
+    html += renderLinkedText(source.slice(cursor, match.index));
+    html += `<span class="work-order-comment-mention" data-mentioned-user-id="${escapeHtml(
+      match.userId,
+    )}">@${escapeHtml(match.name)}</span>`;
+    cursor = match.index + match.token.length;
+  });
+  html += renderLinkedText(source.slice(cursor));
+  return html;
+}
+
+function renderWorkOrderMentionDraftSummary(order, parentCommentId = "") {
+  const draft = workOrderMentionDraft(order, parentCommentId);
+  if (!draft.mentions.length) return "";
+  return `
+    <div class="work-order-mention-selection" aria-label="Personas mencionadas">
+      ${draft.mentions
+        .map(
+          (mention) => `
+            <span class="work-order-mention-chip">
+              @${escapeHtml(mention.name)}
+              <button type="button" data-action="remove-work-order-mention" data-id="${escapeHtml(
+                mention.userId,
+              )}" data-mention-draft-key="${escapeHtml(workOrderMentionDraftKey(order, parentCommentId))}" aria-label="Quitar mención de ${escapeHtml(mention.name)}">×</button>
+            </span>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderWorkOrderMentionInput(order, parentCommentId = "") {
+  const draftKey = workOrderMentionDraftKey(order, parentCommentId);
+  return `
+    ${renderWorkOrderMentionDraftSummary(order, parentCommentId)}
+    <div class="work-order-mention-dropdown" data-mention-dropdown="${escapeHtml(draftKey)}" hidden></div>
+  `;
+}
+
 function renderWorkOrderConversationReply(order, reply) {
   return `
-    <article class="work-order-conversation-reply">
+    <article class="work-order-conversation-reply" id="work-order-comment-${escapeHtml(reply.id)}" data-work-order-comment-id="${escapeHtml(reply.id)}">
       ${renderWorkOrderConversationAuthor(reply)}
       <span class="badge neutral">${escapeHtml(workOrderConversationTypeLabels[reply.commentType] || "Comentario")}</span>
-      <div class="work-order-conversation-message">${renderLinkedText(reply.message)}</div>
+      <div class="work-order-conversation-message">${renderStructuredWorkOrderCommentMessage(reply)}</div>
     </article>
   `;
 }
@@ -2869,10 +3277,13 @@ function renderWorkOrderConversationReplyForm(order, rootComment) {
           ${renderWorkOrderConversationTypeOptions()}
         </select>
       </label>
-      <label class="field work-order-conversation-message-field">
-        <span>Respuesta</span>
-        <textarea class="textarea compact-textarea" data-conversation-reply-message maxlength="4000" placeholder="Escribe una respuesta o decisión..."></textarea>
-      </label>
+      <div class="field work-order-conversation-message-field">
+        <label for="conversation-reply-${escapeHtml(rootComment.id)}">Respuesta</label>
+        <textarea class="textarea compact-textarea" data-conversation-reply-message data-mention-draft-key="${escapeHtml(
+          workOrderMentionDraftKey(order, rootComment.id),
+        )}" data-parent-comment-id="${escapeHtml(rootComment.id)}" id="conversation-reply-${escapeHtml(rootComment.id)}" maxlength="4000" placeholder="Escribe una respuesta o usa @ para mencionar..."></textarea>
+        ${renderWorkOrderMentionInput(order, rootComment.id)}
+      </div>
       <div class="row wrap work-order-conversation-form-actions">
         <button class="button small" type="button" data-action="publish-work-order-comment-reply" data-id="${escapeHtml(rootComment.id)}" data-order-id="${escapeHtml(order.id)}">Publicar respuesta</button>
         <button class="button-ghost small" type="button" data-action="cancel-work-order-comment-reply">Cancelar</button>
@@ -2886,7 +3297,7 @@ function renderWorkOrderConversationTopic(order, rootComment, replies) {
   const canWrite = canParticipateInWorkOrderConversation(order) && !isResolved;
   const canResolve = canResolveWorkOrderConversationTopic(order, rootComment);
   return `
-    <article class="work-order-conversation-topic ${isResolved ? "is-resolved" : ""}">
+    <article class="work-order-conversation-topic ${isResolved ? "is-resolved" : ""}" id="work-order-comment-${escapeHtml(rootComment.id)}" data-work-order-comment-id="${escapeHtml(rootComment.id)}">
       <div class="work-order-conversation-topic-head">
         ${renderWorkOrderConversationAuthor(rootComment)}
         <div class="row wrap work-order-conversation-badges">
@@ -2895,7 +3306,7 @@ function renderWorkOrderConversationTopic(order, rootComment, replies) {
           ${isResolved ? `<span class="badge green">Resuelto</span>` : `<span class="badge neutral">Abierto</span>`}
         </div>
       </div>
-      <div class="work-order-conversation-message">${renderLinkedText(rootComment.message)}</div>
+      <div class="work-order-conversation-message">${renderStructuredWorkOrderCommentMessage(rootComment)}</div>
       ${
         rootComment.resolvedAt
           ? `<div class="small-muted">Resuelto por ${escapeHtml(userName(rootComment.resolvedBy))} · ${escapeHtml(formatDateTime(rootComment.resolvedAt))}</div>`
@@ -2955,10 +3366,13 @@ function renderWorkOrderConversation(order) {
                   ${renderWorkOrderConversationTypeOptions()}
                 </select>
               </label>
-              <label class="field work-order-conversation-message-field">
-                <span>Mensaje</span>
-                <textarea class="textarea" data-conversation-message maxlength="4000" placeholder="Escribe un bloqueo, solicitud, respuesta o decisión..."></textarea>
-              </label>
+              <div class="field work-order-conversation-message-field">
+                <label for="work-order-conversation-message">Mensaje</label>
+                <textarea class="textarea" data-conversation-message data-mention-draft-key="${escapeHtml(
+                  workOrderMentionDraftKey(order),
+                )}" data-parent-comment-id="" id="work-order-conversation-message" maxlength="4000" placeholder="Escribe un bloqueo, solicitud o usa @ para mencionar..."></textarea>
+                ${renderWorkOrderMentionInput(order)}
+              </div>
               <label class="checkbox-line work-order-conversation-response-toggle">
                 <input type="checkbox" data-conversation-requires-response />
                 Requiere respuesta
@@ -2987,6 +3401,165 @@ function renderWorkOrderConversation(order) {
       </div>
     </section>
   `;
+}
+
+function mapDbWorkOrderMentionInboxItem(row) {
+  return {
+    id: row.mention_id,
+    commentId: row.comment_id,
+    workOrderDbId: row.work_order_id,
+    orderCode: row.work_order_code || "OT",
+    orderTitle: row.work_order_title || "Orden de trabajo",
+    brandId: row.brand_id || "",
+    authorId: row.author_user_id || "",
+    authorName: row.author_name || "Usuario interno",
+    authorRole: row.author_role || "",
+    excerpt: row.message_excerpt || "",
+    createdAt: row.created_at || "",
+    readAt: row.read_at || "",
+    archivedAt: row.archived_at || "",
+  };
+}
+
+function unreadWorkOrderMentionCount() {
+  return state.mentionInbox.items.filter((item) => !item.readAt).length;
+}
+
+async function loadMyWorkOrderMentions({ force = false } = {}) {
+  if (!isSupabaseMode() || !dataState.session || normalizeRoleKey(dataState.profile?.role) === "cliente") return;
+  if (!force && ["loading", "loaded"].includes(state.mentionInbox.status)) return;
+  state.mentionInbox = { ...state.mentionInbox, status: "loading", error: "" };
+
+  const { data, error } = await supabaseClient.rpc("list_my_work_order_comment_mentions", {
+    page_size: 50,
+    before_created_at: null,
+  });
+  if (error) {
+    state.mentionInbox = {
+      ...state.mentionInbox,
+      status: "error",
+      error: error.message || "No se pudieron cargar tus menciones.",
+    };
+  } else {
+    state.mentionInbox = {
+      status: "loaded",
+      items: (data || []).map(mapDbWorkOrderMentionInboxItem),
+      error: "",
+    };
+  }
+  render();
+}
+
+async function toggleWorkOrderMentionInbox() {
+  state.mentionInboxOpen = !state.mentionInboxOpen;
+  render();
+  if (state.mentionInboxOpen) await loadMyWorkOrderMentions({ force: true });
+}
+
+function closeWorkOrderMentionInbox() {
+  state.mentionInboxOpen = false;
+  render();
+}
+
+async function openWorkOrderMention(mentionId, actionElement) {
+  const mention = state.mentionInbox.items.find((item) => item.id === mentionId);
+  if (!mention) return;
+
+  if (!mention.readAt) {
+    const { data, error } = await supabaseClient.rpc("mark_work_order_comment_mention_read", {
+      target_mention_id: mention.id,
+    });
+    if (error) {
+      showToast(`No se pudo marcar la mención: ${error.message}`);
+      return;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    state.mentionInbox.items = state.mentionInbox.items.map((item) =>
+      item.id === mention.id ? { ...item, readAt: row?.read_at || new Date().toISOString() } : item,
+    );
+  }
+
+  const order = findWorkOrderByAnyId(mention.workOrderDbId)
+    || findWorkOrderByAnyId(actionElement?.dataset?.orderCode || mention.orderCode);
+  if (!order) {
+    showToast("No se pudo abrir la orden relacionada.");
+    return;
+  }
+
+  state.mentionInboxOpen = false;
+  state.currentModule = "work-orders";
+  state.currentBrandId = mention.brandId || order.brandId;
+  state.focusedWorkOrderId = order.id;
+  state.viewingWorkOrderId = order.id;
+  state.focusedWorkOrderCommentId = mention.commentId;
+  render();
+}
+
+function renderWorkOrderMentionInboxPanel() {
+  if (!state.mentionInboxOpen) return "";
+  const inbox = state.mentionInbox;
+  return `
+    <button class="mention-inbox-backdrop" type="button" data-action="close-mention-inbox" aria-label="Cerrar Mis menciones"></button>
+    <aside class="mention-inbox-panel" role="dialog" aria-modal="true" aria-labelledby="mention-inbox-title">
+      <div class="mention-inbox-header">
+        <div>
+          <h2 id="mention-inbox-title">Mis menciones</h2>
+          <p>${unreadWorkOrderMentionCount()} sin leer</p>
+        </div>
+        <button class="drawer-close-button" type="button" data-action="close-mention-inbox" aria-label="Cerrar">×</button>
+      </div>
+      <div class="mention-inbox-list">
+        ${
+          inbox.status === "loading" || inbox.status === "idle"
+            ? `<div class="small-muted">Cargando menciones...</div>`
+            : inbox.status === "error"
+              ? `<div class="auth-error">${escapeHtml(inbox.error)}</div>`
+              : inbox.items.length
+                ? inbox.items
+                    .map(
+                      (item) => `
+                        <button
+                          class="mention-inbox-item ${item.readAt ? "is-read" : "is-unread"}"
+                          type="button"
+                          data-action="open-work-order-mention"
+                          data-id="${escapeHtml(item.id)}"
+                          data-order-id="${escapeHtml(item.workOrderDbId)}"
+                          data-order-code="${escapeHtml(item.orderCode)}"
+                          data-brand-id="${escapeHtml(item.brandId)}"
+                          data-comment-id="${escapeHtml(item.commentId)}"
+                        >
+                          <span class="mention-inbox-item-head">
+                            <strong>${escapeHtml(item.authorName)}</strong>
+                            ${item.readAt ? "" : `<span class="mention-unread-dot" aria-label="Sin leer"></span>`}
+                          </span>
+                          <span>${escapeHtml(item.orderCode)} · ${escapeHtml(item.orderTitle)}</span>
+                          <span class="mention-inbox-excerpt">${escapeHtml(item.excerpt)}</span>
+                          <time datetime="${escapeHtml(item.createdAt)}">${escapeHtml(formatDateTime(item.createdAt))}</time>
+                        </button>
+                      `,
+                    )
+                    .join("")
+                : `<div class="empty compact-empty">Todavía no tienes menciones.</div>`
+        }
+      </div>
+    </aside>
+  `;
+}
+
+function focusLinkedWorkOrderComment() {
+  if (!state.focusedWorkOrderCommentId) return;
+  const conversationOrder = selectedViewingOrder();
+  if (!conversationOrder || workOrderConversationState(conversationOrder).status !== "loaded") return;
+  window.setTimeout(() => {
+    const comment = document.querySelector(
+      `[data-work-order-comment-id="${CSS.escape(state.focusedWorkOrderCommentId)}"]`,
+    );
+    if (!comment) return;
+    comment.classList.add("is-deep-linked");
+    comment.scrollIntoView({ block: "center", behavior: "smooth" });
+    window.setTimeout(() => comment.classList.remove("is-deep-linked"), 4200);
+    state.focusedWorkOrderCommentId = "";
+  }, 80);
 }
 
 function renderWorkOrderPhaseComments(phase, order) {
@@ -3283,6 +3856,15 @@ function render() {
             <select class="brand-select topbar-brand-select js-brand-select" aria-label="Marca activa">
               ${renderBrandOptions(state.currentBrandId)}
             </select>
+            ${
+              normalizeRoleKey(dataState.profile?.role) !== "cliente"
+                ? `<button class="button-ghost small mention-inbox-trigger" type="button" data-action="toggle-mention-inbox" aria-label="Abrir Mis menciones">
+                    ${iconSvg("notifications")}
+                    <span>Mis menciones</span>
+                    ${unreadWorkOrderMentionCount() ? `<strong>${unreadWorkOrderMentionCount()}</strong>` : ""}
+                  </button>`
+                : ""
+            }
             ${canCreate ? `<button class="button small topbar-create" data-action="open-create-work-order">+ Crear OT</button>` : ""}
             <button class="button-ghost small" data-module="work-orders">OTs</button>
             ${canViewReports ? `<button class="button-ghost small" data-module="reports">Reportería</button>` : ""}
@@ -3293,11 +3875,17 @@ function render() {
         </div>
       </main>
     </div>
+    ${renderWorkOrderMentionInboxPanel()}
     ${state.mobileNavOpen ? `<button class="mobile-nav-backdrop" type="button" data-action="close-mobile-nav" aria-label="Cerrar menú"></button>` : ""}
     ${state.toast ? `<div class="toast">${state.toast}</div>` : ""}
     ${renderDebugInteractionsPanel()}
   `;
   bindEvents();
+  if (isSupabaseMode() && dataState.session && state.mentionInbox.status === "idle") {
+    loadMyWorkOrderMentions().catch((error) => {
+      debugInteraction("work-order-mentions:inbox-unhandled", { message: error?.message || "" });
+    });
+  }
   focusLinkedWorkOrder();
   const conversationOrder = selectedViewingOrder();
   if (conversationOrder) {
@@ -3308,6 +3896,7 @@ function render() {
       });
     });
   }
+  focusLinkedWorkOrderComment();
 }
 
 function renderLoadingScreen() {
@@ -10081,6 +10670,8 @@ function bindDelegatedActionEvents() {
 function bindDocumentInteractionEvents() {
   if (typeof window === "undefined" || window.__lumenDocumentInteractionsAttached) return;
   document.addEventListener("click", handleDocumentActionClick, true);
+  document.addEventListener("input", handleWorkOrderMentionInput);
+  document.addEventListener("keydown", handleWorkOrderMentionKeydown);
   window.__lumenDocumentInteractionsAttached = true;
   debugInteraction("document-action-listener:bound", {
     capture: true,
@@ -10231,6 +10822,11 @@ async function handleAction(action, id, actionElement = null) {
     "cancel-work-order-comment-reply": () => closeWorkOrderCommentReply(),
     "publish-work-order-comment-reply": () => publishWorkOrderComment("", id, actionElement),
     "resolve-work-order-comment": () => resolveWorkOrderComment(id, actionElement),
+    "select-work-order-mention": () => selectWorkOrderMention(id, actionElement),
+    "remove-work-order-mention": () => removeWorkOrderMention(id, actionElement),
+    "toggle-mention-inbox": () => toggleWorkOrderMentionInbox(),
+    "close-mention-inbox": () => closeWorkOrderMentionInbox(),
+    "open-work-order-mention": () => openWorkOrderMention(id, actionElement),
     "focus-urgent-orders": () => focusUrgentOrders(),
     "optimize-work-order-urgency": () => optimizeWorkOrderUrgency(),
     "create-work-order": () => createWorkOrderFromForm(),
@@ -10746,6 +11342,11 @@ async function logout() {
     await supabaseClient.auth.signOut();
     dataState.session = null;
     dataState.profile = null;
+    state.workOrderConversations = {};
+    state.workOrderMentionCandidates = {};
+    state.workOrderCommentMentionDrafts = {};
+    state.mentionInbox = { status: "idle", items: [], error: "" };
+    state.mentionInboxOpen = false;
     render();
     return;
   }
@@ -12414,6 +13015,10 @@ function openWorkOrderCommentReply(commentId) {
 }
 
 function closeWorkOrderCommentReply() {
+  const order = selectedViewingOrder();
+  if (order && state.workOrderConversationReplyingTo) {
+    clearWorkOrderMentionDraft(order, state.workOrderConversationReplyingTo);
+  }
   state.workOrderConversationReplyingTo = "";
   render();
 }
@@ -12443,6 +13048,8 @@ async function publishWorkOrderComment(orderId = "", parentCommentId = "", actio
   const requiresResponse = parentCommentId
     ? false
     : Boolean(form?.querySelector("[data-conversation-requires-response]")?.checked);
+  const structuredMentions = reconcileWorkOrderMentionDraft(order, parentCommentId, message);
+  const mentionedUserIds = Array.from(new Set(structuredMentions.map((mention) => mention.userId)));
 
   if (!message) {
     showToast(parentCommentId ? "Escribe una respuesta antes de publicar." : "Escribe un mensaje antes de publicar.");
@@ -12474,6 +13081,7 @@ async function publishWorkOrderComment(orderId = "", parentCommentId = "", actio
       next_comment_type: commentType,
       needs_response: requiresResponse,
       target_parent_comment_id: parentCommentId || null,
+      mentioned_user_ids: mentionedUserIds,
     });
     if (error) {
       debugInteraction("work-order-conversation:create-error", {
@@ -12486,19 +13094,8 @@ async function publishWorkOrderComment(orderId = "", parentCommentId = "", actio
       return;
     }
 
-    const row = workOrderCommentRpcRow(data);
-    if (!row?.comment_id && !row?.id) {
-      await loadWorkOrderConversation(order, { force: true });
-    } else {
-      const conversation = workOrderConversationState(order);
-      setWorkOrderConversationState(order, {
-        status: "loaded",
-        comments: [...conversation.comments, mapDbWorkOrderComment(row)].sort((left, right) =>
-          String(left.createdAt).localeCompare(String(right.createdAt)),
-        ),
-        error: "",
-      });
-    }
+    await loadWorkOrderConversation(order, { force: true });
+    clearWorkOrderMentionDraft(order, parentCommentId);
     state.workOrderConversationReplyingTo = "";
     showToast(parentCommentId ? "Respuesta publicada." : "Mensaje publicado.");
   } finally {
