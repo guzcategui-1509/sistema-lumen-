@@ -2025,7 +2025,7 @@ function createDefaultBrandConfig(brand) {
       referenceLinks: "",
     },
     governance: {
-      approvers: getClient(brand.clientId).name,
+      approvers: getClient(brand.clientId)?.name || "Equipo Lumen",
       sla: "24-48h para revisión de piezas.",
       legalNotes: "",
       escalation: "Escalar claims sensibles, quejas delicadas o cambios de estrategia.",
@@ -3400,7 +3400,7 @@ function renderBrandHero() {
       <div>
         <div class="hero-title">
           <h2>${brand.name}</h2>
-          <span class="badge blue">${client.name}</span>
+          <span class="badge blue">${escapeHtml(client?.name || "Marca disponible")}</span>
         </div>
         <div class="badge-row">
           ${brand.platforms.map((platform) => `<span class="badge">${platform}</span>`).join("")}
@@ -3479,7 +3479,7 @@ function renderAllBrandCard(snapshot) {
         <strong>${brand.shortName}</strong>
         <span class="status-dot ${risk}"></span>
       </div>
-      <span class="muted">${getClient(brand.clientId).name}</span>
+      <span class="muted">${escapeHtml(getClient(brand.clientId)?.name || "Marca disponible")}</span>
       <div class="mini-progress"><div style="width:${completion}%"></div></div>
       <div class="brand-mini-meta">
         <span>${open} OTs</span>
@@ -8505,9 +8505,11 @@ function reportFilteredOrders(orders) {
 }
 
 function clientReportRows(orders, scopedBrands) {
-  return clients
-    .map((clientItem) => {
-      const clientBrands = scopedBrands.filter((brand) => brand.clientId === clientItem.id);
+  const scopedBrandIds = new Set(scopedBrands.map((brand) => brand.id));
+  return brandCollectionGroups()
+    .map((group) => {
+      const clientItem = group.client || { id: group.id, name: group.label };
+      const clientBrands = group.brands.filter((brand) => scopedBrandIds.has(brand.id));
       const clientBrandIds = new Set(clientBrands.map((brand) => brand.id));
       const clientOrders = orders.filter((order) => clientBrandIds.has(order.brandId));
       const open = clientOrders.filter(isOpenWorkOrder);
