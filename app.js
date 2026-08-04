@@ -992,6 +992,8 @@ const state = {
   contentView: "concept",
   brandConfigSection: "identity",
   adminEditingUserId: "",
+  creatingBrand: false,
+  brandSubmitting: false,
   editingWorkOrderId: "",
   viewingWorkOrderId: "",
   focusedWorkOrderId: "",
@@ -1463,6 +1465,10 @@ function productionPlannerItemToDb(item) {
   };
 }
 
+function loadActiveBrandRows() {
+  return supabaseClient.from("brands").select("*").eq("is_active", true).order("name");
+}
+
 async function loadSupabaseData() {
   if (!isSupabaseMode() || !dataState.session) return;
 
@@ -1483,7 +1489,7 @@ async function loadSupabaseData() {
   ] = await Promise.all([
     supabaseClient.from("profiles").select("*").eq("id", dataState.session.user.id).maybeSingle(),
     supabaseClient.from("clients").select("*").order("name"),
-    supabaseClient.from("brands").select("*").eq("is_active", true).order("name"),
+    loadActiveBrandRows(),
     supabaseClient.from("brand_memberships").select("*"),
     supabaseClient.from("profiles").select("*").order("full_name"),
     supabaseClient
@@ -1730,6 +1736,37 @@ function getClient(id) {
   return clients.find((client) => client.id === id);
 }
 
+function activeBrandCollection() {
+  return brands.filter((brand) => brand.isActive !== false);
+}
+
+function brandCollectionGroups() {
+  const activeBrands = activeBrandCollection();
+  const visibleClientIds = new Set(clients.map((client) => client.id));
+  const groups = clients
+    .map((client) => ({
+      id: client.id,
+      label: client.name,
+      client,
+      brands: activeBrands.filter((brand) => brand.clientId === client.id),
+    }))
+    .filter((group) => group.brands.length);
+  const brandsWithoutVisibleClient = activeBrands.filter(
+    (brand) => !brand.clientId || !visibleClientIds.has(brand.clientId),
+  );
+
+  if (brandsWithoutVisibleClient.length) {
+    groups.push({
+      id: "available-brands",
+      label: "Marcas disponibles",
+      client: null,
+      brands: brandsWithoutVisibleClient,
+    });
+  }
+
+  return groups;
+}
+
 function visibleModules() {
   return OPERATIONS_MODE ? modules.filter((module) => operationalModuleKeys.includes(module.key)) : modules;
 }
@@ -1802,7 +1839,8 @@ function getScopeTitle() {
 function getScopeSubtitle() {
   if (isAllBrandsScope()) return "Vista global / todas las marcas activas";
   const brand = getBrand();
-  return `${getClient(brand.clientId).name} / ${brand.name}`;
+  const client = getClient(brand.clientId);
+  return client ? `${client.name} / ${brand.name}` : brand.name;
 }
 
 function escapeHtml(value = "") {
@@ -1922,16 +1960,15 @@ function renderBrandOptions(activeBrandId = state.currentBrandId) {
     <option value="${ALL_BRANDS_ID}" ${activeBrandId === ALL_BRANDS_ID ? "selected" : ""}>
       Resumen general
     </option>
-    ${clients
+    ${brandCollectionGroups()
       .map(
-        (clientItem) => `
-        <optgroup label="${clientItem.name}">
-          ${brands
-            .filter((brandItem) => brandItem.clientId === clientItem.id)
+        (group) => `
+        <optgroup label="${escapeHtml(group.label)}">
+          ${group.brands
             .map(
               (brandItem) => `
                 <option value="${brandItem.id}" ${brandItem.id === activeBrandId ? "selected" : ""}>
-                  ${brandItem.shortName}
+                  ${escapeHtml(brandItem.shortName)}
                 </option>
               `,
             )
@@ -1988,7 +2025,7 @@ function createDefaultBrandConfig(brand) {
       referenceLinks: "",
     },
     governance: {
-      approvers: getClient(brand.clientId).name,
+      approvers: getClient(brand.clientId)?.name || "Equipo Lumen",
       sla: "24-48h para revisión de piezas.",
       legalNotes: "",
       escalation: "Escalar claims sensibles, quejas delicadas o cambios de estrategia.",
@@ -3363,7 +3400,7 @@ function renderBrandHero() {
       <div>
         <div class="hero-title">
           <h2>${brand.name}</h2>
-          <span class="badge blue">${client.name}</span>
+          <span class="badge blue">${escapeHtml(client?.name || "Marca disponible")}</span>
         </div>
         <div class="badge-row">
           ${brand.platforms.map((platform) => `<span class="badge">${platform}</span>`).join("")}
@@ -3442,7 +3479,7 @@ function renderAllBrandCard(snapshot) {
         <strong>${brand.shortName}</strong>
         <span class="status-dot ${risk}"></span>
       </div>
-      <span class="muted">${getClient(brand.clientId).name}</span>
+      <span class="muted">${escapeHtml(getClient(brand.clientId)?.name || "Marca disponible")}</span>
       <div class="mini-progress"><div style="width:${completion}%"></div></div>
       <div class="brand-mini-meta">
         <span>${open} OTs</span>
@@ -4806,6 +4843,7 @@ function renderCalendarWorkspace() {
 
 function renderBrandsWorkspace() {
   const snapshots = brands.map(getBrandSnapshot);
+  const canCreateBrand = isSystemAdmin() || !isSupabaseMode();
   return `
     <section class="section">
       <section class="panel brand-hero brands-hero">
@@ -4817,14 +4855,17 @@ function renderBrandsWorkspace() {
           <p class="muted">Navega por cliente y marca. El Dashboard solo muestra las marcas que necesitan seguimiento.</p>
         </div>
         <div class="quick-links">
+          ${canCreateBrand ? `<button class="button" data-action="open-create-brand">+ Nueva marca</button>` : ""}
           <button class="button" data-action="open-create-work-order">+ Crear OT</button>
           <button class="button-ghost" data-module="dashboard">Volver al dashboard</button>
         </div>
       </section>
       <div class="client-lanes brands-client-lanes">
-        ${clients
-          .map((clientItem) => {
-            const clientSnapshots = snapshots.filter((snapshot) => snapshot.brand.clientId === clientItem.id);
+        ${brandCollectionGroups()
+          .map((group) => {
+            const clientSnapshots = snapshots.filter((snapshot) =>
+              group.brands.some((brand) => brand.id === snapshot.brand.id),
+            );
             const clientOpen = clientSnapshots.reduce((sum, snapshot) => sum + snapshot.open, 0);
             const clientOverdue = clientSnapshots.reduce((sum, snapshot) => sum + snapshot.overdue, 0);
             const clientReview = clientSnapshots.reduce((sum, snapshot) => sum + snapshot.review, 0);
@@ -4832,7 +4873,7 @@ function renderBrandsWorkspace() {
               <article class="client-lane navigation-card">
                 <div class="client-lane-head">
                   <div>
-                    <strong>${escapeHtml(clientItem.name)}</strong>
+                    <strong>${escapeHtml(group.label)}</strong>
                     <span>${clientSnapshots.length} marcas / ${clientOpen} OTs abiertas</span>
                   </div>
                   <div class="badge-row">
@@ -4848,7 +4889,51 @@ function renderBrandsWorkspace() {
           })
           .join("")}
       </div>
+      ${renderCreateBrandModal()}
     </section>
+  `;
+}
+
+function renderCreateBrandModal() {
+  if (!state.creatingBrand || (!isSystemAdmin() && isSupabaseMode())) return "";
+  return `
+    <div class="modal-backdrop" data-action="close-create-brand" aria-hidden="true"></div>
+    <aside class="modal-panel" role="dialog" aria-modal="true" aria-label="Crear marca">
+      <button class="modal-close-button" type="button" data-action="close-create-brand" aria-label="Cerrar">×</button>
+      <div class="panel section">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Nueva marca</h2>
+            <div class="small-muted">La marca activa quedará disponible inmediatamente según los permisos de Supabase.</div>
+          </div>
+          <span class="badge green">Activa</span>
+        </div>
+        <div class="form-grid">
+          <div class="field full">
+            <label>Nombre</label>
+            <input class="input" id="new-brand-name" autocomplete="off" placeholder="Nombre de la marca" />
+          </div>
+          <div class="field">
+            <label>Código de órdenes</label>
+            <input class="input" id="new-brand-code" autocomplete="off" maxlength="4" placeholder="ABC" />
+            <div class="field-help">Se usará para códigos como ABC-001.</div>
+          </div>
+          <div class="field">
+            <label>Cliente</label>
+            <select class="input" id="new-brand-client">
+              <option value="">Seleccionar cliente</option>
+              ${clients.map((client) => `<option value="${escapeHtml(client.id)}">${escapeHtml(client.name)}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        <div class="row wrap form-actions">
+          <button class="button" type="button" data-action="save-brand" ${state.brandSubmitting ? "disabled aria-busy=\"true\"" : ""}>
+            ${state.brandSubmitting ? "Creando..." : "Crear marca"}
+          </button>
+          <button class="button-ghost" type="button" data-action="close-create-brand" ${state.brandSubmitting ? "disabled" : ""}>Cancelar</button>
+        </div>
+      </div>
+    </aside>
   `;
 }
 
@@ -5084,12 +5169,11 @@ function renderWorkOrderSmartPanel(orders, allBrands) {
 function renderWorkOrderAiComposer(allBrands) {
   const brandSelectOptions = `
     <option value="">Detectar por texto</option>
-    ${clients
+    ${brandCollectionGroups()
       .map(
-        (clientItem) => `
-          <optgroup label="${escapeHtml(clientItem.name)}">
-            ${brands
-              .filter((brandItem) => brandItem.clientId === clientItem.id)
+        (group) => `
+          <optgroup label="${escapeHtml(group.label)}">
+            ${group.brands
               .map(
                 (brandItem) => `
                   <option value="${escapeHtml(brandItem.id)}" ${!allBrands && brandItem.id === state.currentBrandId ? "selected" : ""}>
@@ -8421,9 +8505,11 @@ function reportFilteredOrders(orders) {
 }
 
 function clientReportRows(orders, scopedBrands) {
-  return clients
-    .map((clientItem) => {
-      const clientBrands = scopedBrands.filter((brand) => brand.clientId === clientItem.id);
+  const scopedBrandIds = new Set(scopedBrands.map((brand) => brand.id));
+  return brandCollectionGroups()
+    .map((group) => {
+      const clientItem = group.client || { id: group.id, name: group.label };
+      const clientBrands = group.brands.filter((brand) => scopedBrandIds.has(brand.id));
       const clientBrandIds = new Set(clientBrands.map((brand) => brand.id));
       const clientOrders = orders.filter((order) => clientBrandIds.has(order.brandId));
       const open = clientOrders.filter(isOpenWorkOrder);
@@ -9184,15 +9270,13 @@ function renderAdminBrandChecks(selectedBrandIds = [], disabled = false) {
   const selected = new Set(selectedBrandIds);
   return `
     <div class="brand-check-groups">
-      ${clients
-        .map((clientItem) => {
-          const clientBrands = brands.filter((brand) => brand.clientId === clientItem.id);
-          if (!clientBrands.length) return "";
+      ${brandCollectionGroups()
+        .map((group) => {
           return `
             <div class="brand-check-group">
-              <strong>${clientItem.name}</strong>
+              <strong>${escapeHtml(group.label)}</strong>
               <div class="brand-check-list">
-                ${clientBrands
+                ${group.brands
                   .map(
                     (brand) => `
                       <label class="checkbox-line">
@@ -9202,7 +9286,7 @@ function renderAdminBrandChecks(selectedBrandIds = [], disabled = false) {
                           ${selected.has(brand.id) ? "checked" : ""}
                           ${disabled ? "disabled" : ""}
                         />
-                        ${brand.shortName}
+                        ${escapeHtml(brand.shortName)}
                       </label>
                     `,
                   )
@@ -10190,6 +10274,9 @@ async function handleAction(action, id, actionElement = null) {
     "download-report-pdf": () => downloadReportPdf(),
     "download-workspace-backup": () => downloadWorkspaceBackup(),
     "download-workspace-json": () => downloadWorkspaceJsonBackup(),
+    "open-create-brand": () => openCreateBrand(),
+    "close-create-brand": () => closeCreateBrand(),
+    "save-brand": () => saveBrand(),
     "new-admin-user": () => newAdminUser(),
     "save-admin-user": () => saveAdminUser(),
     "deactivate-admin-user": () => setAdminUserActive(id, false),
@@ -10527,6 +10614,131 @@ async function changeOwnPassword() {
   document.getElementById("settings-new-password").value = "";
   document.getElementById("settings-confirm-password").value = "";
   showToast("Password actualizado");
+}
+
+function brandSlugFromName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function addBrandToCanonicalCollection(row) {
+  const mappedBrand = mapDbBrand(row);
+  const existingIndex = brands.findIndex((brand) => brand.id === mappedBrand.id);
+  if (existingIndex >= 0) brands.splice(existingIndex, 1, mappedBrand);
+  else brands.push(mappedBrand);
+  brands.sort((left, right) =>
+    String(left.name || "").localeCompare(String(right.name || ""), "es", { sensitivity: "base" }),
+  );
+  return mappedBrand;
+}
+
+function openCreateBrand() {
+  if (isSupabaseMode() && !isSystemAdmin()) {
+    showToast("Solo Admin o Dirección puede crear marcas");
+    return;
+  }
+  state.creatingBrand = true;
+  state.brandSubmitting = false;
+  render();
+}
+
+function closeCreateBrand() {
+  if (state.brandSubmitting) return;
+  state.creatingBrand = false;
+  render();
+}
+
+async function saveBrand() {
+  if (state.brandSubmitting) return;
+  if (isSupabaseMode() && !isSystemAdmin()) {
+    showToast("Solo Admin o Dirección puede crear marcas");
+    return;
+  }
+
+  const name = String(document.getElementById("new-brand-name")?.value || "").trim();
+  const rawAbbreviation = String(document.getElementById("new-brand-code")?.value || "").trim();
+  const abbreviation = rawAbbreviation ? normalizeBrandCodePrefix(rawAbbreviation).slice(0, 4) : "";
+  const clientId = document.getElementById("new-brand-client")?.value || "";
+  const slug = brandSlugFromName(name);
+
+  if (!name) {
+    showToast("Escribe el nombre de la marca");
+    return;
+  }
+  if (!clientId || !clients.some((client) => client.id === clientId)) {
+    showToast("Selecciona el cliente de la marca");
+    return;
+  }
+  if (abbreviation.length < 2) {
+    showToast("Escribe un código de al menos 2 caracteres");
+    return;
+  }
+  const duplicate = brands.find(
+    (brand) =>
+      normalizeSearchText(brand.name) === normalizeSearchText(name) ||
+      String(brand.slug || "").toLowerCase() === slug ||
+      normalizeBrandCodePrefix(brand.abbreviation) === abbreviation,
+  );
+  if (duplicate) {
+    showToast(`Ya existe la marca ${duplicate.name}`);
+    return;
+  }
+
+  state.brandSubmitting = true;
+  render();
+  try {
+    let createdRow;
+    if (isSupabaseMode()) {
+      const { data, error } = await supabaseClient
+        .from("brands")
+        .insert({
+          client_id: clientId,
+          name,
+          slug,
+          abbreviation,
+          is_active: true,
+        })
+        .select("*")
+        .single();
+      if (error) throw error;
+      createdRow = data;
+    } else {
+      createdRow = {
+        id: crypto.randomUUID(),
+        client_id: clientId,
+        name,
+        slug,
+        abbreviation,
+        is_active: true,
+      };
+    }
+
+    addBrandToCanonicalCollection(createdRow);
+    state.creatingBrand = false;
+    showToast(`Marca ${name} creada`);
+    render();
+
+    if (isSupabaseMode()) {
+      const refreshResult = await loadActiveBrandRows();
+      if (refreshResult.error) {
+        debugInteraction("brands:refresh-after-create:error", {
+          code: refreshResult.error.code || "",
+          message: refreshResult.error.message || "",
+        });
+      } else {
+        setCollection(brands, (refreshResult.data || []).map(mapDbBrand));
+      }
+    }
+  } catch (error) {
+    showToast(error.message || "No se pudo crear la marca");
+  } finally {
+    state.brandSubmitting = false;
+    render();
+  }
 }
 
 async function logout() {
