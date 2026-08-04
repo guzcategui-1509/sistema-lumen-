@@ -20,7 +20,7 @@ Riesgos principales antes del piloto:
 
 | Riesgo | Nivel | Motivo | Acción requerida |
 |---|---:|---|---|
-| Correos `phase_completed` atorados en `queued` | Crítico | Hay 8 registros completos que no pasan a `sent` ni `failed` | Ejecutar worker con logs y confirmar resultado por SQL |
+| Correos `phase_completed` atorados en `queued` | Resuelto (2026-07-28) | El cron autenticado procesó automáticamente la cola existente | Evidencia: HTTP 200, `processed: 2`, `queued` a `sent` y `provider_message_id` presente |
 | Schema drift / patches no confirmados | Alto | La app depende de múltiples patches SQL | Verificar tablas, columnas y RPCs en Supabase producción |
 | Edge Functions / cron no observados end-to-end | Alto | Digest y worker pueden preparar pero no enviar | Validar functions, secrets, cron y logs |
 | Permisos por rol no probados con usuarios reales | Alto | Frontend y RLS pueden divergir | QA con usuario operativo, gestión y admin |
@@ -28,7 +28,11 @@ Riesgos principales antes del piloto:
 
 ## 3. Bloqueantes antes de piloto
 
-### B1. Cerrar `email-worker` / correos queued
+### B1. Cerrar `email-worker` / correos queued — Resuelto
+
+Estado actualizado: **Resuelto — 2026-07-28**.
+
+Evidencia: se sincronizaron `CRON_SECRET` y `lumen_cron_secret`; el siguiente ciclo automático respondió HTTP 200, procesó las dos filas existentes de USM-001 y las movió de `queued` a `sent` con `sent_at` y `provider_message_id`, sin `error_message`. La prueba posterior con VW-006 certificó el flujo de `assignment` en producción. El diagnóstico histórico y sus consultas se conservan debajo como referencia operativa.
 
 Problema:
 
@@ -479,13 +483,13 @@ Criterio de aceptación:
 
 Salir a piloto solo si:
 
-1. Los 8 correos `phase_completed` ya no están atorados.
+1. Resuelto (2026-07-28): los correos `phase_completed` históricos dejaron de estar atorados.
 2. Patches críticos confirmados en producción.
 3. Usuario operativo real pasa QA.
 4. Usuario gestión real pasa QA.
 5. Planificador funciona con datos reales.
-6. `email-worker` procesa pendientes o falla con error claro.
-7. Cron está confirmado o se decide operación manual temporal.
+6. Resuelto (2026-07-28): `email-worker` procesa pendientes y registra el resultado.
+7. Resuelto (2026-07-28): cron automático confirmado con HTTP 200.
 8. Consola limpia en flujos principales.
 9. No hay overlays bloqueando clicks.
 10. `npm run check` y `git diff --check` pasan.
@@ -556,6 +560,26 @@ Canal recomendado para bugs:
   - captura/consola
   - hora
 
+## Estado actualizado después de los últimos merges
+
+Actualizado: 2026-08-03.
+
+Evidencia de despliegue: `main` está en el merge `40aba07` del PR #8 y Vercel reporta `Deployment has completed`. Este deployment incluye los merges anteriores indicados en la tabla. El diagnóstico histórico de las secciones anteriores se conserva; esta sección prevalece cuando exista una diferencia de estado.
+
+| Mejora | Estado actualizado | Evidencia |
+|---|---|---|
+| Conversación persistente dentro de las órdenes | Resuelto — 2026-08-03 | PR #7, merge `384602a`, commit `286b6b6`; publicación, respuesta y resolución validadas con SLK-003 antes del merge; incluido en el deployment actual de `main` |
+| Temas, respuestas, bloqueos y resolución | Resuelto — 2026-08-03 | Implementados mediante `work_order_comments` y RPCs autoritativas en el PR #7; conversación archivada en solo lectura |
+| Fechas `date-only` en órdenes | Resuelto — 2026-07-29 | PR #4, merge `3c46958`, commit `7c88675`; RJZ-002 se utilizó para verificar que `2026-07-31` no bajara un día |
+| Correos `assignment` generados por servidor | Resuelto — 2026-07-28 | PR #1, merge `960426d`, commit `ab9b915`; VW-006 certificó en producción generación sin duplicados y transición a `sent` |
+| Plantilla completa del correo de nueva OT | Resuelto — 2026-07-28 | PR #3, merge `5316b02`, commit `9f85249`; la generación permanece dentro de la RPC segura |
+| Correos `phase_completed` y worker automático | Resuelto — 2026-07-30 | PR #5, merge `15d02c4`, commit `75a27e0`; productor servidor por trigger, cron HTTP 200 y cola existente procesada automáticamente |
+| Completar OT sin fases mediante flujo autorizado | Pendiente de reverificación | PR #6, merge `3fd55f2`, commit `1bcbf2e`, desplegado; falta validar la primera operación legítima autenticada posterior al deployment |
+| Calendario personal para operativos | Pendiente de reverificación | PR #8, merge `40aba07`, commit `ac7cff8`, desplegado; pasó QA controlado en Mes, Semana, Lista, 375 px y escritorio, pero falta sesión operativa real posterior al deployment |
+| Patches críticos, Planificador y QA integral por rol | Pendiente de reverificación | No hay evidencia reciente suficiente para cerrar todos los checks históricos de estas secciones como bloque completo |
+
+No considerar “Resuelto” un punto marcado como “Pendiente de reverificación”, aunque el código esté mergeado y desplegado.
+
 ## 11. Mejoras post-piloto
 
 No hacer antes del piloto salvo bloqueo real.
@@ -583,3 +607,112 @@ No hacer antes del piloto salvo bloqueo real.
    - secrets requeridos
    - cron activo
    - checklist de release.
+
+### Backlog oficial: experiencia y gestión de órdenes
+
+Este bloque debe ejecutarse después del cierre pre-piloto. No implementar todas las mejoras en una sola rama o Pull Request.
+
+#### `feature/work-order-comment-mentions`
+
+Objetivo: permitir menciones estructuradas de usuarios dentro de la conversación de una OT mediante `@persona`.
+
+1. Al escribir `@`, mostrar un selector de personas relacionadas con la OT.
+2. Exigir que la persona se seleccione explícitamente del listado; escribir manualmente `@Nombre` no genera una mención válida.
+3. Persistir cada mención asociando comentario, usuario mencionado, autor y fecha.
+4. Permitir menciones en:
+   - temas nuevos;
+   - comentarios;
+   - bloqueos;
+   - mensajes que requieren respuesta;
+   - respuestas dentro de un tema.
+5. Generar para la persona mencionada:
+   - notificación interna persistente;
+   - correo individual;
+   - enlace directo a la OT y conversación.
+6. No notificar al autor sobre su propia mención.
+7. Deduplicar menciones repetidas de la misma persona dentro de un comentario para producir una sola notificación y un solo correo.
+8. Mostrar únicamente usuarios activos con acceso legítimo a la OT.
+9. Realizar la validación definitiva en Supabase.
+10. No aceptar desde `app.js` como autoridad:
+    - `recipient_email`;
+    - `subject`;
+    - `html_body`;
+    - destinatarios.
+11. Evitar consultas N+1.
+12. Mantener visibles las menciones históricas en órdenes archivadas, sin permitir menciones nuevas.
+13. Guardar texto plano, aplicar escape seguro y convertir únicamente enlaces `http/https`.
+14. Usar la plantilla completa vigente de correos de Lumen.
+
+Identidad de idempotencia propuesta:
+
+```txt
+work_order_comment_mention:{comment_id}:{mentioned_user_id}
+```
+
+Puerta específica antes de implementar:
+
+1. Diagnóstico de `work_order_comments` y `create_work_order_comment()`.
+2. Regla exacta de usuarios mencionables.
+3. Modelo SQL y rollback.
+4. Diseño de la notificación interna.
+5. Productor servidor del correo.
+6. Preview del correo.
+7. Riesgos de permisos, duplicados y concurrencia.
+8. Casos de prueba desktop y móvil.
+
+#### `feature/order-creation-ux`
+
+1. Refresco inmediato después de crear una OT:
+   - incorporar la OT creada al estado local autoritativo;
+   - reflejarla inmediatamente en dashboard, listados, calendario y contadores;
+   - evitar recargar la aplicación;
+   - impedir duplicados entre la actualización optimista y la siguiente carga desde Supabase.
+2. Validación de deadlines:
+   - impedir fechas anteriores al día actual durante la creación;
+   - tratar el valor como fecha `date-only`;
+   - validar en frontend para respuesta inmediata;
+   - validar también en Supabase para impedir escrituras inválidas por clientes antiguos o llamadas directas.
+3. Fases opcionales:
+   - crear OTs sin fases por defecto;
+   - mostrar la acción `Agregar fases`;
+   - incorporar las fases oficiales únicamente cuando el usuario las necesite;
+   - conservar el orden y la nomenclatura oficial de fases.
+
+#### `feature/duplicate-work-order`
+
+1. Duplicación segura de OT:
+   - abrir el formulario de creación precargado desde una OT existente;
+   - copiar únicamente los campos editables aprobados;
+   - no copiar código, estado, deadline, comentarios, conversación, actividad, notificaciones ni historial;
+   - generar un nuevo código y persistir la OT mediante el flujo normal de creación;
+   - evitar vínculos accidentales con los registros históricos de la OT original.
+
+#### `feature/order-search-kanban`
+
+1. Búsqueda de `Resumen general`:
+   - auditar la fuente y los campos que utiliza actualmente;
+   - buscar por código, título, marca, responsable, estado y brief;
+   - normalizar acentos, espacios y mayúsculas;
+   - respetar los permisos y el alcance de datos del usuario autenticado.
+2. Vista Kanban de órdenes:
+   - agrupar por estado canónico;
+   - incluir filtros y tarjetas con la información operativa necesaria;
+   - mantener Lista y Calendario como vistas secundarias durante la validación;
+   - no ampliar permisos ni cargar órdenes fuera del alcance autorizado.
+
+#### Puerta obligatoria antes de implementar cada rama
+
+Antes de modificar código o SQL, entregar y aprobar:
+
+1. Diagnóstico breve de la implementación actual y causa del problema.
+2. Archivos que se modificarán.
+3. SQL requerido, incluyendo patch y rollback cuando corresponda.
+4. Riesgos de datos, permisos, concurrencia y compatibilidad.
+5. Criterios y casos de prueba funcionales, negativos y responsive.
+
+Restricciones comunes:
+
+- No modificar correos, `phase_completed`, conversación ni permisos existentes salvo evidencia de que el alcance específico lo exige.
+- No mezclar estas cuatro ramas entre sí.
+- No hacer refactors amplios fuera del objetivo de cada rama.
+- No declarar una mejora lista solo con checks estáticos; completar la validación funcional correspondiente.
