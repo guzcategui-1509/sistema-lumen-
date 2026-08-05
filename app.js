@@ -1068,6 +1068,8 @@ const state = {
   debugEvents: [],
 };
 
+const workOrderMentionCandidateRequests = new Map();
+
 const statusLabels = {
   draft: "Draft",
   internal_review: "Revisión interna",
@@ -2816,7 +2818,14 @@ function setWorkOrderConversationState(order, nextState) {
 
 function workOrderMentionCandidateState(order) {
   const key = workOrderConversationKey(order);
-  return state.workOrderMentionCandidates[key] || { status: "idle", items: [], error: "" };
+  return state.workOrderMentionCandidates[key] || {
+    status: "idle",
+    items: [],
+    error: "",
+    fetchedAt: "",
+    needsRefresh: false,
+    refreshing: false,
+  };
 }
 
 function setWorkOrderMentionCandidateState(order, nextState) {
@@ -2826,6 +2835,11 @@ function setWorkOrderMentionCandidateState(order, nextState) {
     ...workOrderMentionCandidateState(order),
     ...nextState,
   };
+}
+
+function markWorkOrderMentionCandidatesStale(order) {
+  if (!workOrderConversationKey(order)) return;
+  setWorkOrderMentionCandidateState(order, { needsRefresh: true });
 }
 
 function workOrderMentionDraftKey(order, parentCommentId = "") {
@@ -2931,9 +2945,9 @@ function updateWorkOrderMentionDropdown(textarea) {
   if (!candidates.length) {
     const empty = document.createElement("div");
     empty.className = "work-order-mention-dropdown-empty";
-    empty.textContent = workOrderMentionCandidateState(order).status === "error"
-      ? "No se pudieron cargar las personas."
-      : "No hay personas relacionadas que coincidan.";
+    empty.textContent = workOrderMentionCandidateState(order).error
+      ? "No se pudo actualizar la lista de personas."
+      : "No hay personas autorizadas que coincidan.";
     dropdown.append(empty);
   } else {
     candidates.forEach((candidate, index) => {
@@ -3144,13 +3158,104 @@ function shouldRenderConversationForOrder(order) {
   return Boolean(selected && order && workOrderConversationKey(selected) === workOrderConversationKey(order));
 }
 
+async function refreshWorkOrderMentionCandidates(order, { force = false } = {}) {
+  if (!isSupabaseMode() || !order?.dbId || !canParticipateInWorkOrderConversation(order)) return [];
+
+  const key = workOrderConversationKey(order);
+  const cachedState = workOrderMentionCandidateState(order);
+  if (!force && cachedState.status === "loaded" && !cachedState.needsRefresh) {
+    return cachedState.items;
+  }
+
+  const pendingRequest = workOrderMentionCandidateRequests.get(key);
+  if (pendingRequest) return pendingRequest;
+
+  const hasCachedItems = cachedState.items.length > 0;
+  setWorkOrderMentionCandidateState(order, {
+    status: hasCachedItems ? "loaded" : "loading",
+    error: "",
+    needsRefresh: false,
+    refreshing: true,
+  });
+
+  const request = (async () => {
+    let data;
+    let error;
+    try {
+      ({ data, error } = await supabaseClient.rpc("list_work_order_comment_mention_candidates", {
+        target_work_order_id: order.dbId,
+      }));
+    } catch (requestError) {
+      error = requestError;
+    }
+
+    if (error) {
+      debugInteraction("work-order-mentions:candidates-error", {
+        orderId: order.dbId,
+        code: order.id,
+        message: error.message || "",
+        errorCode: error.code || "",
+      });
+      setWorkOrderMentionCandidateState(order, {
+        status: hasCachedItems ? "loaded" : "error",
+        error: error.message || "No se pudieron cargar las personas.",
+        needsRefresh: true,
+        refreshing: false,
+      });
+      return workOrderMentionCandidateState(order).items;
+    }
+
+    const items = (data || []).map((candidate) => ({
+      id: candidate.id,
+      name: candidate.full_name || "Usuario interno",
+      role: candidate.role || "",
+      email: candidate.email || "",
+    }));
+    setWorkOrderMentionCandidateState(order, {
+      status: "loaded",
+      items,
+      error: "",
+      fetchedAt: new Date().toISOString(),
+      needsRefresh: false,
+      refreshing: false,
+    });
+    debugInteraction("work-order-mentions:candidates-loaded", {
+      orderId: order.dbId,
+      code: order.id,
+      count: items.length,
+    });
+    return items;
+  })();
+
+  workOrderMentionCandidateRequests.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (workOrderMentionCandidateRequests.get(key) === request) {
+      workOrderMentionCandidateRequests.delete(key);
+    }
+    if (shouldRenderConversationForOrder(order)) render();
+  }
+}
+
 async function loadWorkOrderConversation(order, { force = false } = {}) {
   if (!order) return;
-  const currentState = workOrderConversationState(order);
-  if (!force && ["loading", "loaded"].includes(currentState.status)) return;
-
   if (!isSupabaseMode() || !order.dbId) {
     setWorkOrderConversationState(order, { status: "loaded", comments: [], error: "" });
+    return;
+  }
+
+  const currentState = workOrderConversationState(order);
+  const shouldLoadComments = force || !["loading", "loaded"].includes(currentState.status);
+  const candidateState = workOrderMentionCandidateState(order);
+  const shouldRefreshCandidates = canParticipateInWorkOrderConversation(order)
+    && (force || candidateState.status !== "loaded" || candidateState.needsRefresh);
+  const candidatesPromise = shouldRefreshCandidates
+    ? refreshWorkOrderMentionCandidates(order, { force: true })
+    : Promise.resolve(candidateState.items);
+
+  if (!shouldLoadComments) {
+    await candidatesPromise;
     return;
   }
 
@@ -3166,39 +3271,7 @@ async function loadWorkOrderConversation(order, { force = false } = {}) {
     .order("created_at", { ascending: true })
     .order("id", { ascending: true });
 
-  const candidateState = workOrderMentionCandidateState(order);
-  const shouldLoadCandidates = canParticipateInWorkOrderConversation(order)
-    && candidateState.status !== "loaded";
-  if (shouldLoadCandidates) {
-    setWorkOrderMentionCandidateState(order, { status: "loading", error: "" });
-  }
-  const candidatesPromise = shouldLoadCandidates
-    ? supabaseClient.rpc("list_work_order_comment_mention_candidates", {
-        target_work_order_id: order.dbId,
-      })
-    : Promise.resolve({ data: null, error: null });
-
-  const [{ data, error }, candidateResult] = await Promise.all([commentsPromise, candidatesPromise]);
-
-  if (shouldLoadCandidates) {
-    if (candidateResult.error) {
-      setWorkOrderMentionCandidateState(order, {
-        status: "error",
-        error: candidateResult.error.message || "No se pudieron cargar las personas.",
-      });
-    } else {
-      setWorkOrderMentionCandidateState(order, {
-        status: "loaded",
-        items: (candidateResult.data || []).map((candidate) => ({
-          id: candidate.id,
-          name: candidate.full_name || "Usuario interno",
-          role: candidate.role || "",
-          email: candidate.email || "",
-        })),
-        error: "",
-      });
-    }
-  }
+  const [{ data, error }] = await Promise.all([commentsPromise, candidatesPromise]);
 
   if (error) {
     debugInteraction("work-order-conversation:load-error", {
@@ -3551,6 +3624,7 @@ async function openWorkOrderMention(mentionId, actionElement) {
   state.focusedWorkOrderId = order.id;
   state.viewingWorkOrderId = order.id;
   state.focusedWorkOrderCommentId = mention.commentId;
+  markWorkOrderMentionCandidatesStale(order);
   render();
 }
 
@@ -12433,6 +12507,7 @@ function viewWorkOrder(id) {
   state.workOrderConversationReplyingTo = "";
   state.noPhaseOrderStatusDialog = null;
   state.creatingWorkOrder = false;
+  markWorkOrderMentionCandidatesStale(order);
   render();
 }
 
