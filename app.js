@@ -1016,7 +1016,8 @@ const state = {
   noPhaseOrderStatusDialog: null,
   workOrderDraftPhases: [],
   workOrderFormDraft: null,
-  workOrderUsesPhases: true,
+  workOrderUsesPhases: false,
+  workOrderPhasesExpanded: false,
   dashboardSearch: "",
   dashboardKpiFilter: "open",
   dashboardBrandOpenId: "",
@@ -1657,6 +1658,7 @@ function captureNavigationState() {
     creatingWorkOrder: state.creatingWorkOrder,
     workOrderSubmitting: state.workOrderSubmitting,
     workOrderUsesPhases: state.workOrderUsesPhases,
+    workOrderPhasesExpanded: state.workOrderPhasesExpanded,
     workOrderDraftPhases: state.workOrderDraftPhases,
     workOrderFormDraft: state.workOrderFormDraft,
     productionPlannerEditingId: state.productionPlannerEditingId,
@@ -1676,6 +1678,7 @@ function restoreNavigationState(snapshot) {
   state.creatingWorkOrder = snapshot.creatingWorkOrder;
   state.workOrderSubmitting = snapshot.workOrderSubmitting;
   state.workOrderUsesPhases = snapshot.workOrderUsesPhases;
+  state.workOrderPhasesExpanded = Boolean(snapshot.workOrderPhasesExpanded);
   state.workOrderDraftPhases = snapshot.workOrderDraftPhases || [];
   state.workOrderFormDraft = snapshot.workOrderFormDraft;
   state.productionPlannerEditingId = snapshot.productionPlannerEditingId;
@@ -2522,20 +2525,6 @@ function workOrderProcessArea(category = "diseno") {
 
 function workOrderPhaseTitle(phaseKey = "custom") {
   return workOrderPhaseCatalog.find((phase) => phase.key === phaseKey)?.title || "Fase personalizada";
-}
-
-function defaultWorkOrderPhases({ dueDate = "", assignee = "" } = {}) {
-  return workOrderPhaseCatalog.map((phase, index) => ({
-    id: `draft-phase-${phase.key}-${index}`,
-    phaseKey: phase.key,
-    title: phase.title,
-    description: defaultWorkOrderPhaseDescriptions[phase.key] || "",
-    assignedTo: assignee,
-    status: index === 0 ? "in_progress" : "pending",
-    dueDate,
-    completedAt: "",
-    sortOrder: index,
-  }));
 }
 
 function workOrderPhases(order) {
@@ -6228,16 +6217,26 @@ function renderPhaseAssigneeOptions(activeUserId = "") {
   `;
 }
 
-function renderWorkOrderPhaseEditorRow(phase, index) {
+function renderWorkOrderPhaseEditorRow(phase, index, options = {}) {
+  const lockPhaseKey = options.lockPhaseKey === true && phase.phaseKey !== "custom";
   return `
     <div class="phase-editor-row" data-phase-row="${index}">
       <div class="phase-editor-topline">
         <span class="phase-index">${index + 1}</span>
-        <select class="input" data-phase-field="phaseKey" data-phase-index="${index}">
-          ${renderPhaseKeyOptions(phase.phaseKey)}
-        </select>
+        ${
+          lockPhaseKey
+            ? `
+              <input type="hidden" data-phase-field="phaseKey" data-phase-index="${index}" value="${escapeHtml(phase.phaseKey)}" />
+              <div class="input phase-key-readonly" aria-label="Tipo de fase">${escapeHtml(workOrderPhaseTitle(phase.phaseKey))}</div>
+            `
+            : `
+              <select class="input" data-phase-field="phaseKey" data-phase-index="${index}" aria-label="Tipo de fase ${index + 1}">
+                ${renderPhaseKeyOptions(phase.phaseKey)}
+              </select>
+            `
+        }
         <input class="input" data-phase-field="title" data-phase-index="${index}" value="${escapeHtml(phase.title)}" placeholder="Nombre de fase" />
-        <button class="button-ghost small" type="button" data-action="remove-work-order-phase" data-id="${index}">Quitar</button>
+        <button class="button-ghost small" type="button" data-action="remove-work-order-phase" data-id="${index}" aria-label="Quitar fase ${escapeHtml(phase.title)}">Quitar</button>
       </div>
       <textarea class="textarea compact-textarea" data-phase-field="description" data-phase-index="${index}" placeholder="Qué debe pasar en esta fase">${escapeHtml(phase.description || "")}</textarea>
       <div class="phase-editor-grid">
@@ -6263,40 +6262,79 @@ function renderWorkOrderPhaseEditorRow(phase, index) {
 }
 
 function renderWorkOrderPhasesEditor(phases = [], options = {}) {
-  const usesPhases = options.usesPhases !== false;
-  const allowDisable = options.allowDisable !== false;
+  const isEditing = options.isEditing === true;
+  const expanded = isEditing || options.expanded === true;
   const normalized = normalizeWorkOrderPhases(phases);
+  const selectedKeys = new Set(normalized.map((phase) => phase.phaseKey));
+  const selectedPhaseRows = normalized.map((phase, index) => renderWorkOrderPhaseEditorRow(phase, index, { lockPhaseKey: !isEditing })).join("");
+
+  if (isEditing) {
+    return `
+      <div class="field full work-order-phase-editor is-expanded">
+        <div class="phase-editor-header">
+          <div>
+            <label>Fases internas</label>
+            <div class="field-help">Edita únicamente las fases que ya pertenecen a esta orden.</div>
+          </div>
+          <button class="button-ghost small" type="button" data-action="add-work-order-phase">Agregar fase</button>
+        </div>
+        <div class="phase-editor-list">
+          ${selectedPhaseRows || `<div class="empty compact-empty">Esta orden no tiene fases internas.</div>`}
+        </div>
+      </div>
+    `;
+  }
+
   return `
-    <div class="field full">
+    <div class="field full work-order-phase-editor ${expanded ? "is-expanded" : "is-collapsed"}">
       <div class="phase-editor-header">
         <div>
           <label>Fases internas</label>
-          <div class="field-help">La OT sigue siendo una sola solicitud. Usa fases solo para responsable, deadline y estado interno.</div>
+          <div class="field-help">Esta orden puede crearse sin fases.</div>
         </div>
-        ${usesPhases ? `<button class="button-ghost small" type="button" data-action="add-work-order-phase">Agregar fase</button>` : ""}
+        <button
+          class="button-ghost small phase-editor-toggle"
+          type="button"
+          data-action="toggle-work-order-phases"
+          aria-expanded="${expanded ? "true" : "false"}"
+          aria-controls="work-order-phase-options"
+        >
+          ${expanded ? "Cerrar fases" : "Agregar fases"}
+        </button>
       </div>
       ${
-        allowDisable
+        expanded
           ? `
-            <label class="checkbox-line phase-toggle-line">
-              <input id="ot-use-phases" type="checkbox" ${usesPhases ? "checked" : ""} />
-              Usar fases en esta orden
-            </label>
-          `
-          : ""
-      }
-      ${
-        usesPhases
-          ? `
-            <div class="phase-editor-list">
-              ${
-                normalized.length
-                  ? normalized.map(renderWorkOrderPhaseEditorRow).join("")
-                  : `<div class="empty compact-empty">Sin fases internas. Puedes agregar solo las fases que esta OT necesita.</div>`
-              }
+            <div id="work-order-phase-options" class="work-order-phase-options">
+              <div class="phase-catalog" role="group" aria-label="Fases disponibles">
+                ${workOrderPhaseCatalog
+                  .map(
+                    (phase) => `
+                      <label class="phase-catalog-option">
+                        <input
+                          type="checkbox"
+                          data-phase-selection="${escapeHtml(phase.key)}"
+                          ${selectedKeys.has(phase.key) ? "checked" : ""}
+                        />
+                        <span>
+                          <strong>${escapeHtml(phase.title)}</strong>
+                          <small>${escapeHtml(defaultWorkOrderPhaseDescriptions[phase.key] || "Fase interna de la orden")}</small>
+                        </span>
+                      </label>
+                    `,
+                  )
+                  .join("")}
+              </div>
+              <div class="phase-editor-selection-summary" aria-live="polite">
+                ${normalized.length ? `${normalized.length} fase${normalized.length === 1 ? "" : "s"} seleccionada${normalized.length === 1 ? "" : "s"}` : "Ninguna fase seleccionada"}
+              </div>
+              <div class="phase-editor-list">
+                ${selectedPhaseRows || `<div class="empty compact-empty">Selecciona únicamente las fases que esta OT necesita.</div>`}
+              </div>
+              <button class="button-ghost small phase-custom-add" type="button" data-action="add-work-order-phase">Agregar fase personalizada</button>
             </div>
           `
-          : `<div class="empty compact-empty">Puedes crear esta orden sin fases y agregarlas después si las necesitas.</div>`
+          : ""
       }
     </div>
   `;
@@ -6425,8 +6463,10 @@ function emptyWorkOrderFormDraft() {
     subtasks: "",
     materialChanges: "",
     notifyOnEmail: true,
-    usesPhases: true,
+    usesPhases: false,
+    phasesExpanded: false,
     phases: [],
+    phaseSelectionVersion: 2,
     createRequestId: `wo-draft-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   };
 }
@@ -6437,7 +6477,14 @@ function loadStoredWorkOrderDraft() {
     if (!raw) return null;
     const draft = JSON.parse(raw);
     if (!draft || typeof draft !== "object") return null;
-    return { ...emptyWorkOrderFormDraft(), ...draft };
+    const restored = { ...emptyWorkOrderFormDraft(), ...draft };
+    if (draft.phaseSelectionVersion !== 2) {
+      restored.usesPhases = false;
+      restored.phasesExpanded = false;
+      restored.phases = [];
+      restored.phaseSelectionVersion = 2;
+    }
+    return restored;
   } catch (error) {
     console.warn("No se pudo restaurar el borrador de OT.", error);
     return null;
@@ -6473,26 +6520,22 @@ function ensureWorkOrderFormDraft() {
   } else if (!isAllBrandsScope()) {
     state.workOrderFormDraft.selectedBrandId = state.currentBrandId;
   }
-  if (state.workOrderFormDraft.usesPhases !== false && !state.workOrderDraftPhases.length && state.workOrderFormDraft.phases?.length) {
+  if (!state.workOrderDraftPhases.length && state.workOrderFormDraft.phases?.length) {
     state.workOrderDraftPhases = normalizeWorkOrderPhases(state.workOrderFormDraft.phases);
   }
+  state.workOrderUsesPhases = state.workOrderDraftPhases.length > 0;
+  state.workOrderPhasesExpanded = Boolean(state.workOrderFormDraft.phasesExpanded);
+  state.workOrderFormDraft.usesPhases = state.workOrderUsesPhases;
+  state.workOrderFormDraft.phasesExpanded = state.workOrderPhasesExpanded;
+  state.workOrderFormDraft.phases = state.workOrderDraftPhases;
+  state.workOrderFormDraft.phaseSelectionVersion = 2;
   persistWorkOrderFormDraft();
   return state.workOrderFormDraft;
 }
 
 function hasMeaningfulWorkOrderDraft(draft = state.workOrderFormDraft) {
   if (!draft) return false;
-  const phasesChanged = state.workOrderDraftPhases.some((phase, index) => {
-    const defaultPhase = workOrderPhaseCatalog[index];
-    return Boolean(
-      phase.assignedTo ||
-        phase.dueDate ||
-        phase.description !== (defaultWorkOrderPhaseDescriptions[phase.phaseKey] || "") ||
-        !defaultPhase ||
-        phase.phaseKey !== defaultPhase.key ||
-        phase.title !== defaultPhase.title,
-    );
-  });
+  const phasesChanged = state.workOrderDraftPhases.length > 0;
   return Boolean(
     draft.title ||
       draft.assigneeSearch ||
@@ -6955,7 +6998,6 @@ function selectedWorkOrderAssigneeIdsFromForm() {
 }
 
 function readWorkOrderFormDraftFromDom() {
-  const usePhasesInput = document.getElementById("ot-use-phases");
   const artCountInput = document.getElementById("ot-art-count");
   const currentDraft = state.workOrderFormDraft || emptyWorkOrderFormDraft();
   return {
@@ -6972,7 +7014,9 @@ function readWorkOrderFormDraftFromDom() {
     subtasks: document.getElementById("ot-subtasks")?.value || "",
     materialChanges: document.getElementById("ot-material-changes")?.value || "",
     notifyOnEmail: document.getElementById("ot-email")?.checked ?? true,
-    usesPhases: usePhasesInput ? usePhasesInput.checked : state.workOrderUsesPhases !== false,
+    usesPhases: state.workOrderDraftPhases.length > 0,
+    phasesExpanded: state.workOrderPhasesExpanded,
+    phaseSelectionVersion: 2,
     createRequestId: currentDraft.createRequestId,
   };
 }
@@ -6981,15 +7025,21 @@ function syncWorkOrderFormDraftFromForm() {
   if (!document.getElementById("ot-title")) return;
   const draft = readWorkOrderFormDraftFromDom();
   state.workOrderFormDraft = draft;
-  state.workOrderUsesPhases = draft.usesPhases;
-  state.workOrderDraftPhases = draft.usesPhases ? getWorkOrderPhaseFormValues() : [];
+  const phaseRows = document.querySelectorAll("[data-phase-row]");
+  if (phaseRows.length) {
+    state.workOrderDraftPhases = getWorkOrderPhaseFormValues();
+  }
+  state.workOrderUsesPhases = state.workOrderDraftPhases.length > 0;
+  state.workOrderFormDraft.usesPhases = state.workOrderUsesPhases;
   state.workOrderFormDraft.phases = state.workOrderDraftPhases;
   persistWorkOrderFormDraft();
 }
 
 function resetWorkOrderFormDraft({ clearStorage = true } = {}) {
   state.workOrderFormDraft = null;
-  state.workOrderUsesPhases = true;
+  state.workOrderDraftPhases = [];
+  state.workOrderUsesPhases = false;
+  state.workOrderPhasesExpanded = false;
   if (clearStorage) clearStoredWorkOrderDraft();
 }
 
@@ -7020,13 +7070,11 @@ function renderWorkOrderForm(order = null) {
   const availableUsers = availableWorkOrderAssigneeUsers(selectedAssignees);
   const selectedUsers = availableUsers.filter((user) => selectedAssignees.has(user.id));
   const files = isEditing ? orderFiles(order) : [];
-  const usesPhases = isEditing ? true : state.workOrderUsesPhases !== false;
-  const fallbackPhases = isEditing ? workOrderPhases(order) : defaultWorkOrderPhases();
-  const formPhases = usesPhases
-    ? state.workOrderDraftPhases.length
-      ? normalizeWorkOrderPhases(state.workOrderDraftPhases)
-      : fallbackPhases
-    : [];
+  const formPhases = state.workOrderDraftPhases.length
+    ? normalizeWorkOrderPhases(state.workOrderDraftPhases)
+    : isEditing
+      ? workOrderPhases(order)
+      : [];
   const titleValue = draft?.title ?? (isEditing ? order.title : "");
   const descriptionValue = draft?.description ?? (isEditing ? parsedDescription.description || "" : "Contexto, entregable esperado y criterios de aprobación.");
   const subtasksValue = draft?.subtasks ?? parsedDescription.subtasks.join("\n");
@@ -7162,7 +7210,7 @@ function renderWorkOrderForm(order = null) {
           <textarea class="textarea compact-textarea" id="ot-material-changes" placeholder="Una solicitud o cambio por linea">${escapeHtml(materialChangesValue)}</textarea>
           <div class="field-help">Usalo para ajustes de arte, copy, formatos o piezas faltantes.</div>
         </div>
-        ${renderWorkOrderPhasesEditor(formPhases, { usesPhases, allowDisable: !isEditing })}
+        ${renderWorkOrderPhasesEditor(formPhases, { isEditing, expanded: state.workOrderPhasesExpanded })}
         ${
           files.length
             ? `
@@ -10385,9 +10433,6 @@ function bindEvents() {
       if (state.creatingWorkOrder) {
         const draft = ensureWorkOrderFormDraft();
         draft.selectedBrandId = state.currentBrandId;
-        if (state.workOrderUsesPhases && !state.workOrderDraftPhases.length) {
-          state.workOrderDraftPhases = defaultWorkOrderPhases({ dueDate: draft.dueDate || "" });
-        }
         persistWorkOrderFormDraft();
         render();
         return;
@@ -10492,18 +10537,10 @@ function bindEvents() {
     input.addEventListener("change", syncWorkOrderFormDraftFromForm);
   });
 
-  document.getElementById("ot-use-phases")?.addEventListener("change", (event) => {
-    syncWorkOrderFormDraftFromForm();
-    state.workOrderUsesPhases = event.target.checked;
-    if (state.workOrderUsesPhases && !state.workOrderDraftPhases.length) {
-      state.workOrderDraftPhases = defaultWorkOrderPhases({ dueDate: document.getElementById("ot-due-date")?.value || "" });
-    }
-    if (state.workOrderFormDraft) {
-      state.workOrderFormDraft.usesPhases = state.workOrderUsesPhases;
-      state.workOrderFormDraft.phases = state.workOrderDraftPhases;
-      persistWorkOrderFormDraft();
-    }
-    render();
+  document.querySelectorAll("[data-phase-selection]").forEach((input) => {
+    input.addEventListener("change", () => {
+      toggleWorkOrderPhaseSelection(input.dataset.phaseSelection || "", input.checked);
+    });
   });
 
   ["ot-category", "ot-priority"].forEach((fieldId) => {
@@ -10750,10 +10787,8 @@ function openCreateWorkOrder() {
   state.focusedWorkOrderId = "";
   state.workOrderSubmitting = false;
   const draft = ensureWorkOrderFormDraft();
-  state.workOrderUsesPhases = draft.usesPhases !== false;
-  if (state.workOrderUsesPhases && !state.workOrderDraftPhases.length) {
-    state.workOrderDraftPhases = defaultWorkOrderPhases({ dueDate: draft.dueDate || "" });
-  }
+  state.workOrderUsesPhases = state.workOrderDraftPhases.length > 0;
+  state.workOrderPhasesExpanded = Boolean(draft.phasesExpanded);
   state.creatingWorkOrder = true;
   render();
   if (ENABLE_AI_ASSISTANT) {
@@ -10811,10 +10846,73 @@ function syncDraftPhasesFromForm() {
   syncWorkOrderFormDraftFromForm();
 }
 
+function persistWorkOrderPhaseSelection() {
+  state.workOrderDraftPhases = normalizeWorkOrderPhases(state.workOrderDraftPhases).map((phase, index) => ({
+    ...phase,
+    sortOrder: index,
+  }));
+  state.workOrderUsesPhases = state.workOrderDraftPhases.length > 0;
+  const draft = state.workOrderFormDraft || emptyWorkOrderFormDraft();
+  state.workOrderFormDraft = draft;
+  draft.usesPhases = state.workOrderUsesPhases;
+  draft.phasesExpanded = state.workOrderPhasesExpanded;
+  draft.phases = state.workOrderDraftPhases;
+  draft.phaseSelectionVersion = 2;
+  persistWorkOrderFormDraft();
+}
+
+function toggleWorkOrderPhasesEditor() {
+  const scrollPosition = captureFormScrollPosition();
+  syncWorkOrderFormDraftFromForm();
+  state.workOrderPhasesExpanded = !state.workOrderPhasesExpanded;
+  persistWorkOrderPhaseSelection();
+  render();
+  restoreFormScrollPosition(scrollPosition);
+  if (state.workOrderPhasesExpanded) {
+    window.requestAnimationFrame(() => document.querySelector("[data-phase-selection]")?.focus());
+  }
+}
+
+function toggleWorkOrderPhaseSelection(phaseKey, isSelected) {
+  const catalogPhase = workOrderPhaseCatalog.find((phase) => phase.key === phaseKey);
+  if (!catalogPhase) return;
+  const scrollPosition = captureFormScrollPosition();
+  syncWorkOrderFormDraftFromForm();
+  const existingIndex = state.workOrderDraftPhases.findIndex((phase) => phase.phaseKey === phaseKey);
+  if (isSelected && existingIndex < 0) {
+    state.workOrderDraftPhases.push(
+      normalizedPhaseFromValues(
+        {
+          phaseKey,
+          title: catalogPhase.title,
+          description: defaultWorkOrderPhaseDescriptions[phaseKey] || "",
+          assignedTo: "",
+          status: "pending",
+          dueDate: document.getElementById("ot-due-date")?.value || "",
+          sortOrder: workOrderPhaseCatalog.findIndex((phase) => phase.key === phaseKey),
+        },
+        state.workOrderDraftPhases.length,
+      ),
+    );
+  } else if (!isSelected && existingIndex >= 0) {
+    state.workOrderDraftPhases.splice(existingIndex, 1);
+  }
+  state.workOrderDraftPhases.sort((left, right) => {
+    const leftIndex = workOrderPhaseCatalog.findIndex((phase) => phase.key === left.phaseKey);
+    const rightIndex = workOrderPhaseCatalog.findIndex((phase) => phase.key === right.phaseKey);
+    const safeLeft = leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex;
+    const safeRight = rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex;
+    return safeLeft - safeRight;
+  });
+  persistWorkOrderPhaseSelection();
+  render();
+  restoreFormScrollPosition(scrollPosition);
+}
+
 function addWorkOrderPhase() {
   const scrollPosition = captureFormScrollPosition();
   syncWorkOrderFormDraftFromForm();
-  state.workOrderUsesPhases = true;
+  state.workOrderPhasesExpanded = true;
   state.workOrderDraftPhases.push(
     normalizedPhaseFromValues(
       {
@@ -10829,11 +10927,7 @@ function addWorkOrderPhase() {
       state.workOrderDraftPhases.length,
     ),
   );
-  if (state.workOrderFormDraft) {
-    state.workOrderFormDraft.usesPhases = true;
-    state.workOrderFormDraft.phases = state.workOrderDraftPhases;
-    persistWorkOrderFormDraft();
-  }
+  persistWorkOrderPhaseSelection();
   render();
   restoreFormScrollPosition(scrollPosition);
 }
@@ -10846,10 +10940,7 @@ function removeWorkOrderPhase(index) {
     ...phase,
     sortOrder: phaseIndex,
   }));
-  if (state.workOrderFormDraft) {
-    state.workOrderFormDraft.phases = state.workOrderDraftPhases;
-    persistWorkOrderFormDraft();
-  }
+  persistWorkOrderPhaseSelection();
   render();
   restoreFormScrollPosition(scrollPosition);
 }
@@ -11054,6 +11145,7 @@ async function handleAction(action, id, actionElement = null) {
     "open-create-work-order": () => openCreateWorkOrder(),
     "close-create-work-order": () => closeCreateWorkOrder(),
     "clear-work-order-filters": () => clearWorkOrderFilters(),
+    "toggle-work-order-phases": () => toggleWorkOrderPhasesEditor(),
     "add-work-order-phase": () => addWorkOrderPhase(),
     "remove-work-order-phase": () => removeWorkOrderPhase(id),
     "complete-work-order-phase": () => completeWorkOrderPhase(id),
@@ -11799,9 +11891,11 @@ function getWorkOrderFormValues() {
     size: file.size,
     type: file.type || "application/octet-stream",
   }));
-  const usePhasesInput = document.getElementById("ot-use-phases");
-  const usesPhases = usePhasesInput ? usePhasesInput.checked : true;
-  const phases = usesPhases ? getWorkOrderPhaseFormValues() : [];
+  const phaseRows = document.querySelectorAll("[data-phase-row]");
+  const phases = phaseRows.length
+    ? getWorkOrderPhaseFormValues()
+    : normalizeWorkOrderPhases(state.workOrderDraftPhases);
+  const usesPhases = phases.length > 0;
   return {
     title,
     assignees,
@@ -12533,7 +12627,8 @@ function editWorkOrder(id) {
   state.viewingWorkOrderId = id;
   state.focusedWorkOrderId = id;
   state.workOrderDraftPhases = workOrderPhases(order);
-  state.workOrderUsesPhases = true;
+  state.workOrderUsesPhases = state.workOrderDraftPhases.length > 0;
+  state.workOrderPhasesExpanded = true;
   state.workOrderFormDraft = null;
   showToast(`Editando ${id}`);
   render();
