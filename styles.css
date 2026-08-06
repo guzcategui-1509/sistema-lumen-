@@ -3798,6 +3798,99 @@ tr:last-child td {
   margin-bottom: 12px;
 }
 
+.work-order-phase-editor {
+  padding: 14px;
+  border: 1px solid rgba(16, 35, 26, 0.12);
+  border-radius: 8px;
+  background: rgba(248, 250, 248, 0.78);
+}
+
+.work-order-phase-editor.is-collapsed .phase-editor-header {
+  margin-bottom: 0;
+}
+
+.button-ghost.small.phase-editor-toggle,
+.button-ghost.small.phase-custom-add {
+  min-height: 44px;
+}
+
+.phase-editor-toggle {
+  white-space: nowrap;
+}
+
+.work-order-phase-options {
+  display: grid;
+  gap: 14px;
+}
+
+.phase-catalog {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.phase-catalog-option {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  min-height: 56px;
+  padding: 10px;
+  border: 1px solid rgba(16, 35, 26, 0.12);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.phase-catalog-option:focus-within {
+  outline: 3px solid rgba(23, 99, 57, 0.2);
+  outline-offset: 2px;
+}
+
+.phase-catalog-option input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+}
+
+.phase-catalog-option span,
+.phase-catalog-option strong,
+.phase-catalog-option small {
+  min-width: 0;
+}
+
+.phase-catalog-option span {
+  display: grid;
+  gap: 3px;
+}
+
+.phase-catalog-option strong {
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.phase-catalog-option small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.phase-editor-selection-summary {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.phase-key-readonly {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  background: rgba(238, 242, 239, 0.8);
+}
+
+.phase-custom-add {
+  justify-self: start;
+}
+
 .phase-editor-list {
   display: grid;
   gap: 12px;
@@ -6140,6 +6233,24 @@ tr:last-child td {
 
   .phase-editor-header {
     display: grid;
+  }
+
+  .work-order-phase-editor {
+    min-width: 0;
+    padding: 12px;
+  }
+
+  .phase-editor-toggle,
+  .phase-custom-add {
+    width: 100%;
+  }
+
+  .phase-catalog {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .phase-catalog-option {
+    min-width: 0;
   }
 
   .dashboard-command-actions,
