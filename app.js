@@ -1065,6 +1065,7 @@ const state = {
   },
   notificationBrandId: "",
   initialRouteApplied: false,
+  workOrderNavigationRevision: 0,
   passwordResetMode: false,
   toast: "",
   debugEvents: [],
@@ -1687,6 +1688,7 @@ function restoreNavigationState(snapshot) {
 
 async function refreshSupabaseData({ silent = true, preserveNavigation = true } = {}) {
   const navigationSnapshot = preserveNavigation ? captureNavigationState() : null;
+  const navigationRevision = state.workOrderNavigationRevision;
   if (state.creatingWorkOrder) syncOpenWorkOrderDraftBeforeSuspend();
   if (!silent) {
     dataState.loading = true;
@@ -1694,7 +1696,11 @@ async function refreshSupabaseData({ silent = true, preserveNavigation = true } 
   }
   try {
     await loadSupabaseData();
-    if (preserveNavigation) restoreNavigationState(navigationSnapshot);
+    if (preserveNavigation && navigationRevision === state.workOrderNavigationRevision) {
+      restoreNavigationState(navigationSnapshot);
+    } else if (preserveNavigation) {
+      applyWorkOrderRouteFromLocation({ normalize: true, showInvalidMessage: false });
+    }
     dataState.initialized = true;
   } finally {
     if (!silent) dataState.loading = false;
@@ -1706,6 +1712,7 @@ async function initializeApp() {
   if (!hasSupabase) {
     dataState.mode = "demo";
     dataState.loading = false;
+    applyInitialRouteParams();
     render();
     return;
   }
@@ -1962,13 +1969,122 @@ function buildWorkOrderUrl(orderCode, brandId, commentId = "") {
   return url.toString();
 }
 
+const workOrderRouteParamNames = ["ot", "work_order_id", "order_id"];
+const workOrderCommentRouteParamNames = ["comment", "comment_id", "highlight"];
+
+function firstRouteParam(params, names) {
+  return names.map((name) => params.get(name)).find(Boolean) || "";
+}
+
+function clearWorkOrderConversationNavigationState() {
+  state.workOrderConversationReplyingTo = "";
+  state.workOrderCommentMentionDrafts = {};
+  state.workOrderConversationResolvingId = "";
+  state.focusedWorkOrderCommentId = "";
+  state.noPhaseOrderStatusDialog = null;
+}
+
+function workOrderNavigationUrl(order = null, commentId = "") {
+  const url = new URL(window.location.href);
+  [...workOrderRouteParamNames, ...workOrderCommentRouteParamNames].forEach((name) => url.searchParams.delete(name));
+  if (order) {
+    url.searchParams.set("module", "work-orders");
+    url.searchParams.set("brand", order.brandId);
+    url.searchParams.set("ot", order.id);
+    if (commentId) url.searchParams.set("comment", commentId);
+  }
+  return url;
+}
+
+function setActiveWorkOrderNavigation(order = null, { commentId = "", historyMode = "push" } = {}) {
+  const previousOrderId = state.viewingWorkOrderId || state.focusedWorkOrderId || "";
+  const nextOrderId = order?.id || "";
+  if (previousOrderId !== nextOrderId || commentId !== state.focusedWorkOrderCommentId) {
+    clearWorkOrderConversationNavigationState();
+  }
+
+  state.workOrderNavigationRevision += 1;
+  state.currentModule = "work-orders";
+  state.viewingWorkOrderId = nextOrderId;
+  state.focusedWorkOrderId = nextOrderId;
+  state.focusedWorkOrderCommentId = commentId;
+  if (order?.brandId) state.currentBrandId = order.brandId;
+
+  const url = workOrderNavigationUrl(order, commentId);
+  const method = historyMode === "replace" ? "replaceState" : "pushState";
+  window.history[method]({ workOrderId: nextOrderId || null }, "", url);
+}
+
+function applyWorkOrderRouteFromLocation({ normalize = true, showInvalidMessage = true } = {}) {
+  const params = new URLSearchParams(window.location.search);
+  const orderParam = firstRouteParam(params, workOrderRouteParamNames);
+  const commentParam = firstRouteParam(params, workOrderCommentRouteParamNames);
+
+  if (!orderParam) {
+    clearWorkOrderConversationNavigationState();
+    state.viewingWorkOrderId = "";
+    state.focusedWorkOrderId = "";
+    if (normalize && workOrderCommentRouteParamNames.some((name) => params.has(name))) {
+      window.history.replaceState({ workOrderId: null }, "", workOrderNavigationUrl());
+    }
+    return null;
+  }
+
+  const order = findWorkOrderByAnyId(orderParam);
+  if (!order || !canOpenWorkOrder(order)) {
+    clearWorkOrderConversationNavigationState();
+    state.currentModule = "work-orders";
+    state.viewingWorkOrderId = "";
+    state.focusedWorkOrderId = "";
+    window.history.replaceState({ workOrderId: null }, "", workOrderNavigationUrl());
+    if (showInvalidMessage) {
+      showToast(order ? "No tienes acceso a esta orden." : "No se encontró la orden solicitada.");
+    }
+    return null;
+  }
+
+  clearWorkOrderConversationNavigationState();
+  state.currentModule = "work-orders";
+  state.currentBrandId = order.brandId;
+  state.viewingWorkOrderId = order.id;
+  state.focusedWorkOrderId = order.id;
+  state.focusedWorkOrderCommentId = commentParam;
+  markWorkOrderMentionCandidatesStale(order);
+
+  if (normalize) {
+    const canonicalUrl = workOrderNavigationUrl(order, commentParam);
+    if (canonicalUrl.href !== window.location.href) {
+      window.history.replaceState({ workOrderId: order.id }, "", canonicalUrl);
+    }
+  }
+  return order;
+}
+
+function handleWorkOrderNavigationPopState() {
+  state.workOrderNavigationRevision += 1;
+  state.editingWorkOrderId = "";
+  state.creatingWorkOrder = false;
+  applyWorkOrderRouteFromLocation({ normalize: true, showInvalidMessage: true });
+  render();
+}
+
+function clearConsumedWorkOrderCommentRoute() {
+  const url = new URL(window.location.href);
+  let changed = false;
+  workOrderCommentRouteParamNames.forEach((name) => {
+    if (url.searchParams.has(name)) {
+      url.searchParams.delete(name);
+      changed = true;
+    }
+  });
+  if (changed) window.history.replaceState(window.history.state, "", url);
+}
+
 function applyInitialRouteParams() {
   if (state.initialRouteApplied) return;
   const params = new URLSearchParams(window.location.search);
   const moduleParam = params.get("module");
   const brandParam = params.get("brand");
-  const orderParam = params.get("ot");
-  const commentParam = params.get("comment");
 
   if (moduleParam && canOpenModule(moduleParam)) {
     state.currentModule = moduleParam;
@@ -1976,14 +2092,7 @@ function applyInitialRouteParams() {
   if (brandParam && (brandParam === ALL_BRANDS_ID || brands.some((brand) => brand.id === brandParam))) {
     state.currentBrandId = brandParam;
   }
-  if (orderParam) {
-    const order = workOrders.find((candidate) => candidate.id === orderParam || candidate.dbId === orderParam);
-    state.currentModule = "work-orders";
-    state.focusedWorkOrderId = order?.id || orderParam;
-    state.viewingWorkOrderId = order?.id || orderParam;
-    if (order?.brandId) state.currentBrandId = order.brandId;
-    state.focusedWorkOrderCommentId = commentParam || "";
-  }
+  applyWorkOrderRouteFromLocation({ normalize: true, showInvalidMessage: true });
 
   state.initialRouteApplied = true;
 }
@@ -3609,11 +3718,7 @@ async function openWorkOrderMention(mentionId, actionElement) {
   }
 
   state.mentionInboxOpen = false;
-  state.currentModule = "work-orders";
-  state.currentBrandId = mention.brandId || order.brandId;
-  state.focusedWorkOrderId = order.id;
-  state.viewingWorkOrderId = order.id;
-  state.focusedWorkOrderCommentId = mention.commentId;
+  setActiveWorkOrderNavigation(order, { commentId: mention.commentId, historyMode: "push" });
   markWorkOrderMentionCandidatesStale(order);
   render();
 }
@@ -3681,6 +3786,7 @@ function focusLinkedWorkOrderComment() {
     comment.classList.add("is-deep-linked");
     comment.scrollIntoView({ block: "center", behavior: "smooth" });
     window.setTimeout(() => comment.classList.remove("is-deep-linked"), 4200);
+    clearConsumedWorkOrderCommentRoute();
     state.focusedWorkOrderCommentId = "";
   }, 80);
 }
@@ -11005,6 +11111,7 @@ function bindDocumentInteractionEvents() {
   document.addEventListener("click", handleDocumentActionClick, true);
   document.addEventListener("input", handleWorkOrderMentionInput);
   document.addEventListener("keydown", handleWorkOrderMentionKeydown);
+  window.addEventListener("popstate", handleWorkOrderNavigationPopState);
   window.__lumenDocumentInteractionsAttached = true;
   debugInteraction("document-action-listener:bound", {
     capture: true,
@@ -12596,21 +12703,14 @@ function viewWorkOrder(id) {
     showToast("No tienes acceso a esta orden.");
     return;
   }
-  state.currentModule = "work-orders";
-  state.viewingWorkOrderId = order.id;
-  state.focusedWorkOrderId = order.id;
-  state.workOrderConversationReplyingTo = "";
-  state.noPhaseOrderStatusDialog = null;
+  setActiveWorkOrderNavigation(order, { historyMode: "push" });
   state.creatingWorkOrder = false;
   markWorkOrderMentionCandidatesStale(order);
   render();
 }
 
 function closeWorkOrderDetail() {
-  state.viewingWorkOrderId = "";
-  state.focusedWorkOrderId = "";
-  state.workOrderConversationReplyingTo = "";
-  state.noPhaseOrderStatusDialog = null;
+  setActiveWorkOrderNavigation(null, { historyMode: "push" });
   showToast("Detalle cerrado");
   render();
 }
@@ -12622,11 +12722,8 @@ function editWorkOrder(id) {
   }
   const order = workOrders.find((candidate) => candidate.id === id);
   if (!order) return;
-  state.currentModule = "work-orders";
-  state.currentBrandId = order.brandId;
+  setActiveWorkOrderNavigation(order, { historyMode: "push" });
   state.editingWorkOrderId = id;
-  state.viewingWorkOrderId = id;
-  state.focusedWorkOrderId = id;
   state.workOrderDraftPhases = workOrderPhases(order);
   state.workOrderUsesPhases = state.workOrderDraftPhases.length > 0;
   state.workOrderPhasesExpanded = true;
