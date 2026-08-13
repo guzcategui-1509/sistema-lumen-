@@ -1002,6 +1002,7 @@ const state = {
   workOrderCommentMentionDrafts: {},
   workOrderConversationReplyingTo: "",
   workOrderConversationPublishing: false,
+  workOrderPhaseCommentPublishingIds: new Set(),
   workOrderConversationResolvingId: "",
   mentionInbox: {
     status: "idle",
@@ -3723,7 +3724,7 @@ function renderWorkOrderPhaseComments(phase, order) {
           ? `
             <div class="phase-comment-form">
               <textarea class="textarea compact-textarea" data-phase-comment-input="${escapeHtml(phase.id)}" maxlength="2000" placeholder="Escribe un avance o pega un link de Drive, Canva, etc."></textarea>
-              <button class="button-ghost small" data-action="add-work-order-phase-comment" data-id="${escapeHtml(phase.id)}">Agregar comentario</button>
+              <button class="button-ghost small" data-action="add-work-order-phase-comment" data-id="${escapeHtml(phase.id)}" ${state.workOrderPhaseCommentPublishingIds.has(phase.id) ? 'disabled aria-busy="true"' : ""}>${state.workOrderPhaseCommentPublishingIds.has(phase.id) ? "Publicando..." : "Agregar comentario"}</button>
             </div>
           `
           : ""
@@ -13350,6 +13351,7 @@ async function completeWorkOrderPhase(phaseId) {
 }
 
 async function addWorkOrderPhaseComment(phaseId) {
+  if (state.workOrderPhaseCommentPublishingIds.has(phaseId)) return;
   const found = findWorkOrderPhaseById(phaseId);
   if (!found) {
     showToast("No encontré esa fase");
@@ -13373,70 +13375,89 @@ async function addWorkOrderPhaseComment(phaseId) {
     return;
   }
 
-  if (isSupabaseMode()) {
-    const targetId = phase.dbId || phase.id;
-    debugInteraction("phase-comment:add:start", {
-      rpc: "add_work_order_phase_comment",
-      phaseId,
-      targetId,
-      bodyLength: body.length,
-      bodyPreview: body.slice(0, 80),
-      currentUserId: dataState.session?.user?.id || "",
-      payload: {
+  state.workOrderPhaseCommentPublishingIds.add(phaseId);
+  const submitButton = input?.closest(".phase-comment-form")?.querySelector('[data-action="add-work-order-phase-comment"]');
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.setAttribute("aria-busy", "true");
+    submitButton.textContent = "Publicando...";
+  }
+  let published = false;
+  try {
+    if (isSupabaseMode()) {
+      const targetId = phase.dbId || phase.id;
+      debugInteraction("phase-comment:add:start", {
+        rpc: "add_work_order_phase_comment",
+        phaseId,
+        targetId,
+        bodyLength: body.length,
+        bodyPreview: body.slice(0, 80),
+        currentUserId: dataState.session?.user?.id || "",
+        payload: {
+          target_phase_id: targetId,
+          comment_body: body,
+        },
+      });
+      const { data, error } = await supabaseClient.rpc("add_work_order_phase_comment", {
         target_phase_id: targetId,
         comment_body: body,
-      },
-    });
-    const { data, error } = await supabaseClient.rpc("add_work_order_phase_comment", {
-      target_phase_id: targetId,
-      comment_body: body,
-    });
-    debugInteraction("phase-comment:add:response", {
-      rpc: "add_work_order_phase_comment",
-      phaseId,
-      targetId,
-      data,
-      result: Array.isArray(data) ? data[0] : data,
-      commentId: Array.isArray(data) ? data[0]?.id : data?.id,
-      error: error?.message || "",
-      errorDetails: error?.details || error?.hint || error?.code || "",
-    });
-    if (error) {
-      debugInteraction("phase-comment:add:error", { phaseId, targetId, message: error.message || "" });
-      showToast(phasePermissionMessage(error.message || "") || `No se pudo guardar el comentario: ${error.message}`);
-      return;
+      });
+      debugInteraction("phase-comment:add:response", {
+        rpc: "add_work_order_phase_comment",
+        phaseId,
+        targetId,
+        data,
+        result: Array.isArray(data) ? data[0] : data,
+        commentId: Array.isArray(data) ? data[0]?.id : data?.id,
+        error: error?.message || "",
+        errorDetails: error?.details || error?.hint || error?.code || "",
+      });
+      if (error) {
+        debugInteraction("phase-comment:add:error", { phaseId, targetId, message: error.message || "" });
+        showToast(phasePermissionMessage(error.message || "") || `No se pudo guardar el comentario: ${error.message}`);
+        return;
+      }
+      const insertedComment = mapDbWorkOrderPhaseComment(Array.isArray(data) ? data[0] : data);
+      replaceLocalWorkOrderPhase(order, phase.id, (candidate) => ({
+        ...candidate,
+        comments: [...(candidate.comments || []), insertedComment],
+      }));
+      if (input) input.value = "";
+      await refreshSupabaseData({ silent: true, preserveNavigation: true });
+    } else {
+      replaceLocalWorkOrderPhase(order, phase.id, (candidate) => ({
+        ...candidate,
+        comments: [
+          ...(candidate.comments || []),
+          {
+            id: `phase-comment-${Date.now()}`,
+            workOrderId: order.dbId || order.id,
+            phaseId: phase.dbId || phase.id,
+            authorId: currentProfileId() || "giu",
+            body,
+            createdAt: new Date().toISOString(),
+            updatedAt: "",
+          },
+        ],
+      }));
+      if (input) input.value = "";
+      saveWorkOrders();
     }
-    const insertedComment = mapDbWorkOrderPhaseComment(Array.isArray(data) ? data[0] : data);
-    replaceLocalWorkOrderPhase(order, phase.id, (candidate) => ({
-      ...candidate,
-      comments: [...(candidate.comments || []), insertedComment],
-    }));
-    if (input) input.value = "";
-    await refreshSupabaseData({ silent: true, preserveNavigation: true });
-  } else {
-    replaceLocalWorkOrderPhase(order, phase.id, (candidate) => ({
-      ...candidate,
-      comments: [
-        ...(candidate.comments || []),
-        {
-        id: `phase-comment-${Date.now()}`,
-        workOrderId: order.dbId || order.id,
-        phaseId: phase.dbId || phase.id,
-        authorId: currentProfileId() || "giu",
-        body,
-        createdAt: new Date().toISOString(),
-        updatedAt: "",
-      },
-      ],
-    }));
-    if (input) input.value = "";
-    saveWorkOrders();
-  }
 
-  state.viewingWorkOrderId = order.id;
-  state.focusedWorkOrderId = order.id;
-  showToast("Comentario agregado a la fase");
-  render();
+    state.viewingWorkOrderId = order.id;
+    state.focusedWorkOrderId = order.id;
+    published = true;
+    showToast("Comentario publicado. Los involucrados fueron notificados.");
+  } finally {
+    state.workOrderPhaseCommentPublishingIds.delete(phaseId);
+    if (published) {
+      render();
+    } else if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.removeAttribute("aria-busy");
+      submitButton.textContent = "Agregar comentario";
+    }
+  }
 }
 
 function openWorkOrderCommentReply(commentId) {
@@ -13543,7 +13564,7 @@ async function publishWorkOrderComment(orderId = "", parentCommentId = "", actio
     await loadWorkOrderConversation(order, { force: true });
     clearWorkOrderMentionDraft(order, parentCommentId);
     state.workOrderConversationReplyingTo = "";
-    showToast(parentCommentId ? "Respuesta publicada." : "Mensaje publicado.");
+    showToast("Comentario publicado. Los involucrados fueron notificados.");
   } finally {
     state.workOrderConversationPublishing = false;
     render();
