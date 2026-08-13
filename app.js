@@ -4319,7 +4319,7 @@ function dashboardScopedBrands() {
 function createdOrdersDashboardSourceOrders() {
   const currentUserId = dataState.session?.user?.id || "";
   const scope = state.dashboardOrderScope === "all" ? "all" : "created";
-  const sourceOrders = brandOrders(ALL_BRANDS_ID, { includeArchived: true });
+  const sourceOrders = dashboardScopedOrders({ includeArchived: true });
   if (scope === "all") return sourceOrders;
   return sourceOrders.filter((order) => order.createdBy === currentUserId);
 }
@@ -4333,6 +4333,15 @@ function createdOrdersDashboardFilters() {
     dueDate: state.dashboardOrderFilters?.dueDate || "",
     archive: state.dashboardOrderFilters?.archive || "active",
   };
+}
+
+function reconcileDashboardOrderBrandFilter() {
+  const filters = createdOrdersDashboardFilters();
+  const scopedBrandIds = new Set(dashboardScopedBrands().map((brand) => brand?.id).filter(Boolean));
+  const nextBrand = isAllBrandsScope() && scopedBrandIds.has(filters.brand) ? filters.brand : "";
+  if (nextBrand !== filters.brand) {
+    state.dashboardOrderFilters = { ...filters, brand: nextBrand };
+  }
 }
 
 function createdOrderAssigneeIds(order) {
@@ -4458,7 +4467,8 @@ function renderCreatedOrderDashboardCard(order) {
 
 function renderCreatedOrdersDashboardFilters() {
   const filters = createdOrdersDashboardFilters();
-  const activeBrands = brands.filter((brand) => brand.isActive !== false);
+  const activeBrands = dashboardScopedBrands().filter((brand) => brand?.isActive !== false);
+  const scopedBrand = !isAllBrandsScope() ? activeBrands[0] : null;
   return `
     <button
       class="button-ghost created-orders-filter-toggle"
@@ -4471,14 +4481,18 @@ function renderCreatedOrdersDashboardFilters() {
     <div class="created-orders-filters ${state.dashboardOrderFiltersOpen ? "is-open" : ""}">
       <label>
         <span>Marca</span>
-        <select class="input" data-created-order-filter="brand">
-          <option value="">Todas</option>
-          ${activeBrands
-            .map(
-              (brand) =>
-                `<option value="${escapeHtml(brand.id)}" ${filters.brand === brand.id ? "selected" : ""}>${escapeHtml(brand.shortName || brand.name)}</option>`,
-            )
-            .join("")}
+        <select class="input" data-created-order-filter="brand" ${scopedBrand ? "disabled aria-disabled=\"true\"" : ""}>
+          ${
+            scopedBrand
+              ? `<option value="">${escapeHtml(scopedBrand.shortName || scopedBrand.name)}</option>`
+              : `<option value="">Todas</option>
+                ${activeBrands
+                  .map(
+                    (brand) =>
+                      `<option value="${escapeHtml(brand.id)}" ${filters.brand === brand.id ? "selected" : ""}>${escapeHtml(brand.shortName || brand.name)}</option>`,
+                  )
+                  .join("")}`
+          }
         </select>
       </label>
       <label>
@@ -4581,7 +4595,8 @@ function renderCreatedOrdersPrimaryBlock() {
 }
 
 function renderPriorityCreatedOrdersDashboard() {
-  const activeOrders = brandOrders(ALL_BRANDS_ID);
+  const activeOrders = dashboardScopedOrders();
+  const activeBrands = dashboardScopedBrands();
   const urgentAndOverdue = activeOrders
     .filter((order) => {
       const dueDate = workOrderEffectiveDueDate(order);
@@ -4622,7 +4637,7 @@ function renderPriorityCreatedOrdersDashboard() {
         </div>
       </section>
     </section>
-    ${renderManagementBrandsDashboard(activeOrders, brands.filter((brand) => brand.isActive !== false))}
+    ${renderManagementBrandsDashboard(activeOrders, activeBrands)}
   `;
 }
 
@@ -10467,6 +10482,7 @@ function bindEvents() {
     brandSelect.addEventListener("change", (event) => {
       syncWorkOrderFormDraftFromForm();
       state.currentBrandId = event.target.value;
+      reconcileDashboardOrderBrandFilter();
       if (state.creatingWorkOrder) {
         const draft = ensureWorkOrderFormDraft();
         draft.selectedBrandId = event.target.value;
@@ -10511,6 +10527,7 @@ function bindEvents() {
     button.addEventListener("click", () => {
       syncWorkOrderFormDraftFromForm();
       state.currentBrandId = button.dataset.brandJump;
+      reconcileDashboardOrderBrandFilter();
       if (state.creatingWorkOrder) {
         const draft = ensureWorkOrderFormDraft();
         draft.selectedBrandId = state.currentBrandId;
@@ -10548,7 +10565,7 @@ function bindEvents() {
       if (!key) return;
       state.dashboardOrderFilters = {
         ...createdOrdersDashboardFilters(),
-        [key]: field.value,
+        [key]: key === "brand" && !isAllBrandsScope() ? "" : field.value,
       };
       render();
     });
