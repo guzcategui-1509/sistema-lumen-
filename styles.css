@@ -3536,57 +3536,6 @@ tr:last-child td {
   align-items: flex-start;
 }
 
-.urgent-order-banner {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-  padding: 16px;
-  border: 1px solid rgba(200, 78, 72, 0.28);
-  border-radius: var(--radius);
-  background: linear-gradient(135deg, #fff2ef, #ffffff 72%);
-  box-shadow: inset 6px 0 0 var(--red), var(--shadow-card);
-}
-
-.urgent-order-banner > div {
-  min-width: 0;
-}
-
-.urgent-order-banner h3,
-.urgent-order-banner p {
-  margin: 0;
-  max-width: 100%;
-  overflow-wrap: normal;
-  word-break: normal;
-}
-
-.urgent-order-banner h3 {
-  margin-top: 7px;
-  font-size: 20px;
-  line-height: 1.2;
-}
-
-.urgent-order-banner p {
-  color: #70423f;
-  line-height: 1.45;
-}
-
-.urgent-order-banner > .row {
-  justify-content: flex-start;
-}
-
-.urgent-order-banner .badge {
-  max-width: 100%;
-  white-space: normal;
-}
-
-.urgent-order-banner .button,
-.urgent-order-banner .button-ghost,
-.urgent-order-banner .button-danger {
-  flex: 0 1 auto;
-  white-space: normal;
-}
-
 .stage-control {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -6207,7 +6156,6 @@ tr:last-child td {
     .stage-control,
     .gate-panel,
     .urgent-planner-panel,
-    .urgent-order-banner,
 	  .notification-guide-grid,
   .recipient-manager-grid,
   .brand-shortcut-grid,
