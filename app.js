@@ -6938,31 +6938,6 @@ function renderWorkOrderProcessTimeline(order) {
   `;
 }
 
-function renderUrgentOrderBanner(order) {
-  const days = daysUntil(workOrderEffectiveDueDate(order));
-  const shouldShow = isUrgentWorkOrder(order) || days <= 1 || days < 0;
-  if (!shouldShow || isArchivedWorkOrder(order) || !isOpenWorkOrder(order)) return "";
-  const plan = urgentWorkOrderPlan({ category: order.category, brandId: order.brandId, priority: "high" });
-  return `
-    <div class="urgent-order-banner">
-      <div>
-        <span class="badge red">Alerta visible</span>
-        <h3>Esta OT necesita una decisión rápida</h3>
-        <p>
-          ${escapeHtml(plan.reason)}
-          ${plan.candidate ? ` Fecha ideal sugerida: ${escapeHtml(formatDate(plan.dueDate))}.` : ""}
-        </p>
-      </div>
-      <div class="row wrap">
-        ${plan.candidate ? `<span class="badge">${escapeHtml(plan.candidate.name)} · ${escapeHtml(workloadLabelForUser(plan.candidate.id))}</span>` : ""}
-        ${canManageWorkOrders() ? `<button class="button-danger small" data-action="apply-urgent-workload-plan" data-id="${order.id}">Aplicar plan sugerido</button>` : ""}
-        ${canManageWorkOrders() ? `<button class="button small" data-action="send-urgent-alert" data-id="${order.id}">Enviar alerta urgente</button>` : ""}
-        ${canManageUrgency() ? `<button class="button-ghost small" data-action="${isUrgentWorkOrder(order) ? "unmark-work-order-urgent" : "mark-work-order-urgent"}" data-id="${order.id}">${isUrgentWorkOrder(order) ? "Quitar urgencia" : "Marcar urgencia"}</button>` : ""}
-      </div>
-    </div>
-  `;
-}
-
 function renderWorkOrderStageControl(order) {
   const statuses = ["new", "in_progress", "in_review", "completed"];
   return `
@@ -7421,7 +7396,6 @@ function renderWorkOrderDetailPanel(order) {
           <button class="button-ghost small" data-action="close-work-order-detail">Cerrar</button>
         </div>
       </div>
-      ${renderUrgentOrderBanner(order)}
       ${canManage && !isArchived && !hasNoPhases ? renderWorkOrderStageControl(order) : ""}
       ${renderWorkOrderPhaseProgress(order)}
       <div class="work-order-detail-grid">
@@ -11292,7 +11266,6 @@ async function handleAction(action, id, actionElement = null) {
     "send-urgent-alert": () => sendUrgentWorkOrderAlert(id),
     "mark-work-order-urgent": () => toggleWorkOrderUrgency(id),
     "unmark-work-order-urgent": () => toggleWorkOrderUrgency(id),
-    "apply-urgent-workload-plan": () => applyUrgentWorkloadPlan(id),
     "preview-weekly-digest": () => previewWeeklyDigest(),
     "queue-daily-digest": () => queueDailyDigest(),
     "queue-weekly-digest": () => queueWeeklyDigest(),
@@ -13745,81 +13718,6 @@ async function advanceWorkOrder(id) {
   }
 
   await setWorkOrderStatus(order, nextStatus);
-}
-
-async function applyUrgentWorkloadPlan(id) {
-  if (!canManageWorkOrders()) {
-    showToast("Solo Dirección o Cuentas puede aplicar plan de urgencia");
-    return;
-  }
-  const order = workOrders.find((candidate) => candidate.id === id);
-  if (!order) return;
-  const plan = urgentWorkOrderPlan({ category: order.category, brandId: order.brandId, priority: "high" });
-  const currentAssignees = orderAssignees(order);
-  const nextAssignees = plan.candidate
-    ? Array.from(new Set([...currentAssignees, plan.candidate.id]))
-    : currentAssignees;
-  const changes = [
-    `Urgencia marcada en la OT`,
-    `Deadline sugerido segun tareas: ${formatDate(order.dueDate)} -> ${formatDate(plan.dueDate)}`,
-  ];
-  if (plan.candidate && !currentAssignees.includes(plan.candidate.id)) {
-    changes.push(`Responsable sugerido segun tareas: ${plan.candidate.name}`);
-  }
-
-  if (isSupabaseMode()) {
-    if (!order.dbId) {
-      showToast("Esta OT no tiene ID de Supabase");
-      return;
-    }
-    const { error } = await supabaseClient
-      .from("work_orders")
-      .update({ is_urgent: true, due_date: plan.dueDate, updated_at: new Date().toISOString() })
-      .eq("id", order.dbId);
-    if (error) {
-      const message = error.message || "";
-      if (message.includes("is_urgent") || message.includes("schema cache")) {
-        showToast("Falta activar urgencias en Supabase: ejecuta supabase/patch_work_order_urgency.sql");
-      } else {
-        showToast(`No se pudo aplicar plan urgente: ${message}`);
-      }
-      return;
-    }
-    const addedAssignees = nextAssignees.filter((userId) => !currentAssignees.includes(userId));
-    if (addedAssignees.length) {
-      const { error: assigneeError } = await supabaseClient.from("work_order_assignees").insert(
-        addedAssignees.map((userId) => ({
-          work_order_id: order.dbId,
-          user_id: userId,
-          assigned_by: dataState.session?.user?.id,
-        })),
-      );
-      if (assigneeError) {
-        showToast(`Plan aplicado, pero fallo responsable sugerido: ${assigneeError.message}`);
-      }
-    }
-    const updatedOrderForEmail = { ...order, isUrgent: true, dueDate: plan.dueDate, assignees: nextAssignees };
-    await supabaseClient.from("work_order_activity").insert({
-      work_order_id: order.dbId,
-      actor_id: dataState.session?.user?.id,
-      action: "urgent_rebalanced",
-      details: { due_date: plan.dueDate, suggested_user: plan.candidate?.id || null },
-    });
-    await queueWorkOrderUpdateEmails(updatedOrderForEmail, changes, 0, nextAssignees);
-    await loadSupabaseData();
-  } else {
-    order.isUrgent = true;
-    order.dueDate = plan.dueDate;
-    order.assignees = nextAssignees;
-    order.assignee = nextAssignees[0] || order.assignee;
-    order.updatedAt = new Date().toISOString();
-    saveWorkOrders();
-  }
-
-  state.viewingWorkOrderId = order.id;
-  state.focusedWorkOrderId = order.id;
-  showToast(`Plan urgente aplicado a ${order.id}: ${formatDate(plan.dueDate)}`);
-  render();
 }
 
 function archiveMigrationMessage(message = "") {
