@@ -2581,6 +2581,10 @@ function workOrderUrgency(order) {
   return { label: `${days}d restantes`, cls: "blue" };
 }
 
+function shouldRenderWorkOrderTimingBadge(order) {
+  return !isArchivedWorkOrder(order) && isOpenWorkOrder(order);
+}
+
 function isUrgentWorkOrder(order) {
   return Boolean(order?.isUrgent);
 }
@@ -4417,20 +4421,22 @@ function renderCreatedOrderDashboardCard(order) {
   const brand = getBrand(order.brandId);
   const dueDate = workOrderEffectiveDueDate(order);
   const urgency = workOrderUrgency(order);
+  const showTimingBadge = shouldRenderWorkOrderTimingBadge(order);
+  const showUrgentBadge = showTimingBadge && isUrgentWorkOrder(order);
   const assigneeNames = createdOrderAssigneeIds(order).map(userName);
   return `
-    <article class="created-order-card ${isUrgentWorkOrder(order) ? "urgent" : ""}">
+    <article class="created-order-card ${showUrgentBadge ? "urgent" : ""}">
       <div class="created-order-card-head">
         <div>
           <div class="created-order-code-row">
             <span class="badge blue">${escapeHtml(order.id)}</span>
-            ${isUrgentWorkOrder(order) ? `<span class="badge red">Urgente</span>` : ""}
+            ${showUrgentBadge ? `<span class="badge red">Urgente</span>` : ""}
             ${isArchivedWorkOrder(order) ? `<span class="badge neutral">Archivada</span>` : ""}
           </div>
           <h3>${escapeHtml(order.title || "Sin título")}</h3>
           <span>${escapeHtml(brand?.shortName || brand?.name || "Sin marca")}</span>
         </div>
-        <span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>
+        ${showTimingBadge ? `<span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
       </div>
       <dl class="created-order-facts">
         <div>
@@ -5094,13 +5100,14 @@ function renderAttentionCard(order) {
   const brand = getBrand(order.brandId);
   const client = getClient(brand.clientId);
   const urgency = workOrderUrgency(order);
+  const showTimingBadge = shouldRenderWorkOrderTimingBadge(order);
   const assigneeNames = orderAssignees(order).map(userName).join(", ") || "Sin responsable";
   return `
     <article class="alert-card">
       <div class="alert-card-main">
         <div class="row between">
           <span class="badge">${escapeHtml(order.id)}</span>
-          <span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>
+          ${showTimingBadge ? `<span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
         </div>
         <strong>${escapeHtml(order.title)}</strong>
         <span>${escapeHtml(client?.name || "Cliente")} / ${escapeHtml(brand.shortName)} · ${escapeHtml(assigneeNames)}</span>
@@ -7350,6 +7357,7 @@ function renderWorkOrderDetailPanel(order) {
   const files = orderFiles(order);
   const parsedDescription = splitWorkOrderDescription(order.description || "");
   const urgency = workOrderUrgency(order);
+  const showTimingBadge = shouldRenderWorkOrderTimingBadge(order);
   const canManage = canManageWorkOrders();
   const canManageUrgencyFlag = canManageUrgency();
   const canArchive = canArchiveWorkOrders();
@@ -7377,8 +7385,8 @@ function renderWorkOrderDetailPanel(order) {
         <div>
           <div class="row wrap">
             <span class="badge">${escapeHtml(order.id)}</span>
-            <span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>
-            ${isUrgent ? `<span class="badge red">Urgente</span>` : ""}
+            ${showTimingBadge ? `<span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
+            ${showTimingBadge && isUrgent ? `<span class="badge red">Urgente</span>` : ""}
             <span class="badge ${order.priority === "high" ? "red" : order.priority === "medium" ? "amber" : "green"}">${escapeHtml(workOrderPriorityLabels[order.priority] || order.priority)}</span>
           </div>
           <h2 class="section-title">${escapeHtml(order.title)}</h2>
@@ -7938,6 +7946,7 @@ function renderOperationOrderRow(order, allBrands) {
   const assignees = orderAssignees(order);
   const files = orderFiles(order);
   const urgency = workOrderUrgency(order);
+  const showTimingBadge = shouldRenderWorkOrderTimingBadge(order);
   const brand = getBrand(order.brandId);
   const archived = isArchivedWorkOrder(order);
   return `
@@ -7951,7 +7960,7 @@ function renderOperationOrderRow(order, allBrands) {
         </span>
       </button>
       <div class="operation-meta">
-        <span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>
+        ${showTimingBadge ? `<span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
         <span class="muted">${escapeHtml(formatDate(order.dueDate))}</span>
       </div>
       <div class="operation-assignees">
@@ -7976,6 +7985,7 @@ function userPhaseSummaryForOrder(order, userId = currentProfileId()) {
 function renderMyWorkOrderRow(order) {
   const brand = getBrand(order.brandId);
   const urgency = workOrderUrgency(order);
+  const showTimingBadge = shouldRenderWorkOrderTimingBadge(order);
   return `
     <article class="operation-order-row compact-order-row my-order-row" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
       <button class="operation-order-main compact-order-main" data-action="view-work-order" data-id="${escapeHtml(order.id)}">
@@ -7987,7 +7997,7 @@ function renderMyWorkOrderRow(order) {
         </span>
       </button>
       <div class="operation-meta">
-        <span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>
+        ${showTimingBadge ? `<span class="badge ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
         <span class="badge blue">${escapeHtml(workOrderStatusLabels[order.status] || order.status)}</span>
         <span class="muted">${escapeHtml(formatDate(order.dueDate))}</span>
       </div>
