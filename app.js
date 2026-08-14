@@ -4001,6 +4001,22 @@ function formatDateTime(value) {
   });
 }
 
+function formatWorkOrderCreatedAt(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Fecha no disponible";
+  return date.toLocaleString("es-GT", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function workOrderCreatorName(order) {
+  return users.find((user) => user.id === order?.createdBy)?.name || "Usuario Lumen";
+}
+
 function clsStatus(status) {
   if (status === "approved" || status === "completed" || status === "published") return "green";
   if (status === "client_review" || status === "internal_review") return "blue";
@@ -7447,6 +7463,11 @@ function renderWorkOrderDetailPanel(order) {
         <div class="detail-block">
           <span>Email</span>
           <strong>${order.notifyOnEmail ? "Notificaciones activas" : "Sin notificaciones"}</strong>
+        </div>
+        <div class="detail-block">
+          <span>Creada por</span>
+          <strong>${escapeHtml(workOrderCreatorName(order))}</strong>
+          <small>${escapeHtml(formatWorkOrderCreatedAt(order.createdAt))}</small>
         </div>
       </div>
       <div class="grid grid-2 top-aligned-grid">
