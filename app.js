@@ -2521,6 +2521,14 @@ function isoDateFromDate(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function todayDateOnly() {
+  return isoDateFromDate(todayAtNoon());
+}
+
+function isPastDateOnly(value) {
+  return Boolean(dateOnlyParts(value) && value < todayDateOnly());
+}
+
 function monthCalendarDays(monthKey) {
   const [yearText, monthText] = String(monthKey || monthKeyFromDate()).split("-");
   const year = Number(yearText);
@@ -6365,7 +6373,7 @@ function renderPhaseAssigneeOptions(activeUserId = "") {
 function renderWorkOrderPhaseEditorRow(phase, index, options = {}) {
   const lockPhaseKey = options.lockPhaseKey === true && phase.phaseKey !== "custom";
   return `
-    <div class="phase-editor-row" data-phase-row="${index}">
+    <div class="phase-editor-row" data-phase-row="${index}" data-phase-db-id="${escapeHtml(phase.dbId || "")}">
       <div class="phase-editor-topline">
         <span class="phase-index">${index + 1}</span>
         ${
@@ -6393,7 +6401,7 @@ function renderWorkOrderPhaseEditorRow(phase, index, options = {}) {
         </label>
         <label>
           <span>Deadline</span>
-          <input class="input" type="date" data-phase-field="dueDate" data-phase-index="${index}" value="${escapeHtml(phase.dueDate || "")}" />
+          <input class="input" type="date" min="${todayDateOnly()}" data-phase-field="dueDate" data-phase-index="${index}" value="${escapeHtml(phase.dueDate || "")}" />
         </label>
         <label>
           <span>Estado</span>
@@ -7276,7 +7284,7 @@ function renderWorkOrderForm(order = null) {
         </div>
         <div class="field">
           <label>Deadline</label>
-          <input class="input" id="ot-due-date" type="date" value="${escapeHtml(dueDateValue)}" />
+          <input class="input" id="ot-due-date" type="date" min="${todayDateOnly()}" value="${escapeHtml(dueDateValue)}" />
         </div>
         <div class="field">
           <label>Prioridad</label>
@@ -12053,6 +12061,7 @@ function getWorkOrderPhaseFormValues() {
       const status = fieldValue("status") || "pending";
       return normalizedPhaseFromValues(
         {
+          dbId: row.dataset.phaseDbId || null,
           phaseKey,
           title: fieldValue("title") || workOrderPhaseTitle(phaseKey),
           description: fieldValue("description"),
@@ -12068,7 +12077,7 @@ function getWorkOrderPhaseFormValues() {
     .filter((phase) => phase.title);
 }
 
-function validateWorkOrderValues(values) {
+function validateWorkOrderValues(values, existingOrder = null) {
   if (!values.title) {
     showToast("Agrega un título para crear la OT");
     return false;
@@ -12076,6 +12085,21 @@ function validateWorkOrderValues(values) {
   if (values.artCount !== null && (!Number.isInteger(values.artCount) || values.artCount < 0)) {
     showToast("La cantidad de artes debe ser un número entero igual o mayor a 0");
     return false;
+  }
+  const originalDueDate = existingOrder?.dueDate || "";
+  if (isPastDateOnly(values.dueDate) && values.dueDate !== originalDueDate) {
+    showToast("La fecha de entrega no puede estar en el pasado.");
+    return false;
+  }
+  const originalPhases = workOrderPhases(existingOrder);
+  const originalPhasesById = new Map(originalPhases.filter((phase) => phase.dbId).map((phase) => [phase.dbId, phase]));
+  for (const phase of values.phases) {
+    if (!isPastDateOnly(phase.dueDate)) continue;
+    const originalPhase = phase.dbId ? originalPhasesById.get(phase.dbId) : null;
+    if (!originalPhase || phase.dueDate !== originalPhase.dueDate) {
+      showToast("La fecha de entrega no puede estar en el pasado.");
+      return false;
+    }
   }
   return true;
 }
@@ -12772,7 +12796,7 @@ async function updateWorkOrderFromForm() {
     return;
   }
   const values = getWorkOrderFormValues();
-  if (!validateWorkOrderValues(values)) return;
+  if (!validateWorkOrderValues(values, order)) return;
 
   if (isSupabaseMode()) {
     if (!order.dbId) {
