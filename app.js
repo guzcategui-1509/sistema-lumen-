@@ -1005,6 +1005,8 @@ const state = {
   workOrderConversationReplyingTo: "",
   workOrderConversationPublishing: false,
   workOrderPhaseCommentPublishingIds: new Set(),
+  workOrderCommentEditing: null,
+  workOrderCommentEditSaving: false,
   workOrderPhaseReorderSavingId: "",
   workOrderConversationResolvingId: "",
   mentionInbox: {
@@ -1014,6 +1016,8 @@ const state = {
   },
   mentionInboxOpen: false,
   focusedWorkOrderCommentId: "",
+  focusedWorkOrderPhaseId: "",
+  focusedWorkOrderPhaseCommentId: "",
   creatingWorkOrder: false,
   workOrderSubmitting: false,
   noPhaseOrderStatusProcessingId: "",
@@ -1386,6 +1390,16 @@ function mapDbWorkOrderPhaseComment(row) {
     body: row.body || "",
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
+    editedAt: row.edited_at || "",
+    mentions: (row.mentions || []).map((mention) => ({
+      id: mention.id,
+      userId: mention.mentioned_user_id,
+      mentionedByUserId: mention.mentioned_by_user_id,
+      eventKey: mention.event_key || "",
+      readAt: mention.read_at || "",
+      createdAt: mention.created_at || "",
+      name: mention.mentioned_profile?.full_name || "",
+    })),
   };
 }
 
@@ -1403,6 +1417,7 @@ function mapDbWorkOrderComment(row) {
     resolvedAt: row.resolved_at || "",
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
+    editedAt: row.edited_at || "",
     mentions: (row.mentions || []).map((mention) => ({
       id: mention.id,
       userId: mention.mentioned_user_id,
@@ -1544,7 +1559,12 @@ async function loadSupabaseData() {
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true })
       .order("id", { ascending: true }),
-    supabaseClient.from("work_order_phase_comments").select("*").order("created_at", { ascending: true }),
+    supabaseClient
+      .from("work_order_phase_comments")
+      .select(
+        "*,mentions:work_order_phase_comment_mentions(id,mentioned_user_id,mentioned_by_user_id,event_key,read_at,created_at,mentioned_profile:profiles!work_order_phase_comment_mentions_mentioned_user_id_fkey(full_name))",
+      )
+      .order("created_at", { ascending: true }),
     supabaseClient.from("production_planner_items").select("*").order("production_date", { ascending: true }),
     supabaseClient
       .from("email_notifications")
@@ -1980,6 +2000,8 @@ function buildWorkOrderUrl(orderCode, brandId, commentId = "") {
 
 const workOrderRouteParamNames = ["ot", "work_order_id", "order_id"];
 const workOrderCommentRouteParamNames = ["comment", "comment_id", "highlight"];
+const workOrderPhaseRouteParamNames = ["phase", "phase_id"];
+const workOrderPhaseCommentRouteParamNames = ["phase_comment", "phase_comment_id"];
 
 function firstRouteParam(params, names) {
   return names.map((name) => params.get(name)).find(Boolean) || "";
@@ -1990,25 +2012,47 @@ function clearWorkOrderConversationNavigationState() {
   state.workOrderCommentMentionDrafts = {};
   state.workOrderConversationResolvingId = "";
   state.focusedWorkOrderCommentId = "";
+  state.focusedWorkOrderPhaseId = "";
+  state.focusedWorkOrderPhaseCommentId = "";
+  state.workOrderCommentEditing = null;
+  state.workOrderCommentEditSaving = false;
   state.noPhaseOrderStatusDialog = null;
 }
 
-function workOrderNavigationUrl(order = null, commentId = "") {
+function workOrderNavigationUrl(
+  order = null,
+  commentId = "",
+  { phaseId = "", phaseCommentId = "" } = {},
+) {
   const url = new URL(window.location.href);
-  [...workOrderRouteParamNames, ...workOrderCommentRouteParamNames].forEach((name) => url.searchParams.delete(name));
+  [
+    ...workOrderRouteParamNames,
+    ...workOrderCommentRouteParamNames,
+    ...workOrderPhaseRouteParamNames,
+    ...workOrderPhaseCommentRouteParamNames,
+  ].forEach((name) => url.searchParams.delete(name));
   if (order) {
     url.searchParams.set("module", "work-orders");
     url.searchParams.set("brand", order.brandId);
     url.searchParams.set("ot", order.id);
     if (commentId) url.searchParams.set("comment", commentId);
+    if (phaseId) url.searchParams.set("phase", phaseId);
+    if (phaseCommentId) url.searchParams.set("phase_comment", phaseCommentId);
   }
   return url;
 }
 
-function setActiveWorkOrderNavigation(order = null, { commentId = "", historyMode = "push" } = {}) {
+function setActiveWorkOrderNavigation(
+  order = null,
+  { commentId = "", phaseId = "", phaseCommentId = "", historyMode = "push" } = {},
+) {
   const previousOrderId = state.viewingWorkOrderId || state.focusedWorkOrderId || "";
   const nextOrderId = order?.id || "";
-  if (previousOrderId !== nextOrderId || commentId !== state.focusedWorkOrderCommentId) {
+  if (
+    previousOrderId !== nextOrderId
+    || commentId !== state.focusedWorkOrderCommentId
+    || phaseCommentId !== state.focusedWorkOrderPhaseCommentId
+  ) {
     clearWorkOrderConversationNavigationState();
   }
 
@@ -2017,9 +2061,11 @@ function setActiveWorkOrderNavigation(order = null, { commentId = "", historyMod
   state.viewingWorkOrderId = nextOrderId;
   state.focusedWorkOrderId = nextOrderId;
   state.focusedWorkOrderCommentId = commentId;
+  state.focusedWorkOrderPhaseId = phaseId;
+  state.focusedWorkOrderPhaseCommentId = phaseCommentId;
   if (order?.brandId) state.currentBrandId = order.brandId;
 
-  const url = workOrderNavigationUrl(order, commentId);
+  const url = workOrderNavigationUrl(order, commentId, { phaseId, phaseCommentId });
   const method = historyMode === "replace" ? "replaceState" : "pushState";
   window.history[method]({ workOrderId: nextOrderId || null }, "", url);
 }
@@ -2028,12 +2074,18 @@ function applyWorkOrderRouteFromLocation({ normalize = true, showInvalidMessage 
   const params = new URLSearchParams(window.location.search);
   const orderParam = firstRouteParam(params, workOrderRouteParamNames);
   const commentParam = firstRouteParam(params, workOrderCommentRouteParamNames);
+  const phaseParam = firstRouteParam(params, workOrderPhaseRouteParamNames);
+  const phaseCommentParam = firstRouteParam(params, workOrderPhaseCommentRouteParamNames);
 
   if (!orderParam) {
     clearWorkOrderConversationNavigationState();
     state.viewingWorkOrderId = "";
     state.focusedWorkOrderId = "";
-    if (normalize && workOrderCommentRouteParamNames.some((name) => params.has(name))) {
+    if (
+      normalize
+      && [...workOrderCommentRouteParamNames, ...workOrderPhaseRouteParamNames, ...workOrderPhaseCommentRouteParamNames]
+        .some((name) => params.has(name))
+    ) {
       window.history.replaceState({ workOrderId: null }, "", workOrderNavigationUrl());
     }
     return null;
@@ -2058,10 +2110,15 @@ function applyWorkOrderRouteFromLocation({ normalize = true, showInvalidMessage 
   state.viewingWorkOrderId = order.id;
   state.focusedWorkOrderId = order.id;
   state.focusedWorkOrderCommentId = commentParam;
+  state.focusedWorkOrderPhaseId = phaseParam;
+  state.focusedWorkOrderPhaseCommentId = phaseCommentParam;
   markWorkOrderMentionCandidatesStale(order);
 
   if (normalize) {
-    const canonicalUrl = workOrderNavigationUrl(order, commentParam);
+    const canonicalUrl = workOrderNavigationUrl(order, commentParam, {
+      phaseId: phaseParam,
+      phaseCommentId: phaseCommentParam,
+    });
     if (canonicalUrl.href !== window.location.href) {
       window.history.replaceState({ workOrderId: order.id }, "", canonicalUrl);
     }
@@ -2080,7 +2137,11 @@ function handleWorkOrderNavigationPopState() {
 function clearConsumedWorkOrderCommentRoute() {
   const url = new URL(window.location.href);
   let changed = false;
-  workOrderCommentRouteParamNames.forEach((name) => {
+  [
+    ...workOrderCommentRouteParamNames,
+    ...workOrderPhaseRouteParamNames,
+    ...workOrderPhaseCommentRouteParamNames,
+  ].forEach((name) => {
     if (url.searchParams.has(name)) {
       url.searchParams.delete(name);
       changed = true;
@@ -3401,7 +3462,7 @@ async function loadWorkOrderConversation(order, { force = false } = {}) {
   const commentsPromise = supabaseClient
     .from("work_order_comments")
     .select(
-      "id,work_order_id,author_user_id,parent_comment_id,message,comment_type,requires_response,resolution_status,resolved_by,resolved_at,created_at,updated_at,mentions:work_order_comment_mentions(id,mentioned_user_id,mentioned_by_user_id,event_key,read_at,created_at,mentioned_profile:profiles!work_order_comment_mentions_mentioned_user_id_fkey(full_name))",
+      "id,work_order_id,author_user_id,parent_comment_id,message,comment_type,requires_response,resolution_status,resolved_by,resolved_at,created_at,updated_at,edited_at,mentions:work_order_comment_mentions(id,mentioned_user_id,mentioned_by_user_id,event_key,read_at,created_at,mentioned_profile:profiles!work_order_comment_mentions_mentioned_user_id_fkey(full_name))",
     )
     .eq("work_order_id", order.dbId)
     .order("created_at", { ascending: true })
@@ -3440,13 +3501,34 @@ function renderWorkOrderConversationTypeOptions(activeType = "comment") {
     .join("");
 }
 
-function renderWorkOrderConversationAuthor(comment) {
+function workOrderCommentWasEdited(comment) {
+  return Boolean(comment?.editedAt);
+}
+
+function canEditOwnWorkOrderComment(order, comment) {
+  return Boolean(
+    order
+    && comment
+    && !isArchivedWorkOrder(order)
+    && currentProfileId()
+    && comment.authorId === currentProfileId(),
+  );
+}
+
+function renderWorkOrderConversationAuthor(comment, order, commentKind = "conversation") {
   const author = users.find((user) => user.id === comment.authorId);
   return `
     <div class="work-order-conversation-author">
       <strong>${escapeHtml(author?.name || "Usuario interno")}</strong>
       <span>${escapeHtml(roleLabels[author?.role] || author?.role || "Rol no disponible")}</span>
       <time datetime="${escapeHtml(comment.createdAt)}">${escapeHtml(formatDateTime(comment.createdAt))}</time>
+      ${workOrderCommentWasEdited(comment) ? `<span class="work-order-comment-edited">· Editado</span>` : ""}
+      ${
+        canEditOwnWorkOrderComment(order, comment)
+          && !(state.workOrderCommentEditing?.kind === commentKind && state.workOrderCommentEditing?.id === comment.id)
+          ? `<button class="work-order-comment-edit-action" type="button" data-action="edit-work-order-comment" data-id="${escapeHtml(comment.id)}" data-comment-kind="${escapeHtml(commentKind)}" aria-label="Editar comentario">Editar</button>`
+          : ""
+      }
     </div>
   `;
 }
@@ -3461,14 +3543,14 @@ function workOrderMentionedUserName(userId) {
   return "";
 }
 
-function renderStructuredWorkOrderCommentMessage(comment) {
-  const mentions = Array.isArray(comment.mentions) ? comment.mentions : [];
-  if (!mentions.length) return renderLinkedText(comment.message);
+function renderStructuredMentionedText(value, mentions = []) {
+  const source = String(value || "");
+  const normalizedMentions = Array.isArray(mentions) ? mentions : [];
+  if (!normalizedMentions.length) return renderLinkedText(source);
 
-  const source = String(comment.message || "");
   const matches = [];
   const occupied = [];
-  mentions.forEach((mention) => {
+  normalizedMentions.forEach((mention) => {
     const name = mention.name || workOrderMentionedUserName(mention.userId);
     if (!name) return;
     const token = `@${name}`;
@@ -3494,6 +3576,41 @@ function renderStructuredWorkOrderCommentMessage(comment) {
   });
   html += renderLinkedText(source.slice(cursor));
   return html;
+}
+
+function renderStructuredWorkOrderCommentMessage(comment) {
+  const mentions = Array.isArray(comment.mentions) ? comment.mentions : [];
+  return renderStructuredMentionedText(comment.message, mentions);
+}
+
+function workOrderCommentEditContext(commentKind, commentId) {
+  return `edit-${commentKind}:${commentId}`;
+}
+
+function renderWorkOrderCommentEditForm(order, comment, commentKind = "conversation") {
+  const editing = state.workOrderCommentEditing;
+  if (!editing || editing.kind !== commentKind || editing.id !== comment.id) return "";
+  const contextId = workOrderCommentEditContext(commentKind, comment.id);
+  return `
+    <div class="work-order-comment-edit-form" data-work-order-comment-edit-form="${escapeHtml(comment.id)}">
+      <label for="work-order-comment-edit-${escapeHtml(comment.id)}">Editar comentario</label>
+      <textarea
+        class="textarea compact-textarea"
+        id="work-order-comment-edit-${escapeHtml(comment.id)}"
+        data-work-order-comment-edit-input
+        data-mention-draft-key="${escapeHtml(workOrderMentionDraftKey(order, contextId))}"
+        data-parent-comment-id="${escapeHtml(contextId)}"
+        maxlength="${commentKind === "phase" ? "2000" : "4000"}"
+      >${escapeHtml(editing.body)}</textarea>
+      ${renderWorkOrderMentionInput(order, contextId)}
+      <div class="row wrap work-order-comment-edit-actions">
+        <button class="button-ghost small" type="button" data-action="cancel-work-order-comment-edit">Cancelar</button>
+        <button class="button small" type="button" data-action="save-work-order-comment-edit" data-id="${escapeHtml(comment.id)}" data-comment-kind="${escapeHtml(commentKind)}" ${state.workOrderCommentEditSaving ? 'disabled aria-busy="true"' : ""}>
+          ${state.workOrderCommentEditSaving ? "Guardando..." : "Guardar cambios"}
+        </button>
+      </div>
+    </div>
+  `;
 }
 
 function renderWorkOrderMentionDraftSummary(order, parentCommentId = "") {
@@ -3526,11 +3643,13 @@ function renderWorkOrderMentionInput(order, parentCommentId = "") {
 }
 
 function renderWorkOrderConversationReply(order, reply) {
+  const isEditing = state.workOrderCommentEditing?.kind === "conversation"
+    && state.workOrderCommentEditing?.id === reply.id;
   return `
     <article class="work-order-conversation-reply" id="work-order-comment-${escapeHtml(reply.id)}" data-work-order-comment-id="${escapeHtml(reply.id)}">
-      ${renderWorkOrderConversationAuthor(reply)}
+      ${renderWorkOrderConversationAuthor(reply, order)}
       <span class="badge neutral">${escapeHtml(workOrderConversationTypeLabels[reply.commentType] || "Comentario")}</span>
-      <div class="work-order-conversation-message">${renderStructuredWorkOrderCommentMessage(reply)}</div>
+      ${isEditing ? renderWorkOrderCommentEditForm(order, reply) : `<div class="work-order-conversation-message">${renderStructuredWorkOrderCommentMessage(reply)}</div>`}
     </article>
   `;
 }
@@ -3564,17 +3683,19 @@ function renderWorkOrderConversationTopic(order, rootComment, replies) {
   const isResolved = rootComment.resolutionStatus === "resolved";
   const canWrite = canParticipateInWorkOrderConversation(order) && !isResolved;
   const canResolve = canResolveWorkOrderConversationTopic(order, rootComment);
+  const isEditing = state.workOrderCommentEditing?.kind === "conversation"
+    && state.workOrderCommentEditing?.id === rootComment.id;
   return `
     <article class="work-order-conversation-topic ${isResolved ? "is-resolved" : ""}" id="work-order-comment-${escapeHtml(rootComment.id)}" data-work-order-comment-id="${escapeHtml(rootComment.id)}">
       <div class="work-order-conversation-topic-head">
-        ${renderWorkOrderConversationAuthor(rootComment)}
+        ${renderWorkOrderConversationAuthor(rootComment, order)}
         <div class="row wrap work-order-conversation-badges">
           <span class="badge ${rootComment.commentType === "block" ? "red" : rootComment.commentType === "decision" ? "green" : "blue"}">${escapeHtml(workOrderConversationTypeLabels[rootComment.commentType] || "Comentario")}</span>
           ${rootComment.requiresResponse && !isResolved ? `<span class="badge amber">Requiere respuesta</span>` : ""}
           ${isResolved ? `<span class="badge green">Resuelto</span>` : `<span class="badge neutral">Abierto</span>`}
         </div>
       </div>
-      <div class="work-order-conversation-message">${renderStructuredWorkOrderCommentMessage(rootComment)}</div>
+      ${isEditing ? renderWorkOrderCommentEditForm(order, rootComment) : `<div class="work-order-conversation-message">${renderStructuredWorkOrderCommentMessage(rootComment)}</div>`}
       ${
         rootComment.resolvedAt
           ? `<div class="small-muted">Resuelto por ${escapeHtml(userName(rootComment.resolvedBy))} · ${escapeHtml(formatDateTime(rootComment.resolvedAt))}</div>`
@@ -3674,11 +3795,14 @@ function renderWorkOrderConversation(order) {
 function mapDbWorkOrderMentionInboxItem(row) {
   return {
     id: row.mention_id,
+    kind: row.mention_kind || "conversation",
     commentId: row.comment_id,
     workOrderDbId: row.work_order_id,
     orderCode: row.work_order_code || "OT",
     orderTitle: row.work_order_title || "Orden de trabajo",
     brandId: row.brand_id || "",
+    phaseId: row.phase_id || "",
+    phaseTitle: row.phase_title || "",
     authorId: row.author_user_id || "",
     authorName: row.author_name || "Usuario interno",
     authorRole: row.author_role || "",
@@ -3698,7 +3822,7 @@ async function loadMyWorkOrderMentions({ force = false } = {}) {
   if (!force && ["loading", "loaded"].includes(state.mentionInbox.status)) return;
   state.mentionInbox = { ...state.mentionInbox, status: "loading", error: "" };
 
-  const { data, error } = await supabaseClient.rpc("list_my_work_order_comment_mentions", {
+  const { data, error } = await supabaseClient.rpc("list_my_work_order_mentions", {
     page_size: 50,
     before_created_at: null,
   });
@@ -3734,8 +3858,9 @@ async function openWorkOrderMention(mentionId, actionElement) {
   if (!mention) return;
 
   if (!mention.readAt) {
-    const { data, error } = await supabaseClient.rpc("mark_work_order_comment_mention_read", {
+    const { data, error } = await supabaseClient.rpc("mark_work_order_mention_read", {
       target_mention_id: mention.id,
+      target_mention_kind: mention.kind,
     });
     if (error) {
       showToast(`No se pudo marcar la mención: ${error.message}`);
@@ -3755,7 +3880,12 @@ async function openWorkOrderMention(mentionId, actionElement) {
   }
 
   state.mentionInboxOpen = false;
-  setActiveWorkOrderNavigation(order, { commentId: mention.commentId, historyMode: "push" });
+  setActiveWorkOrderNavigation(order, {
+    commentId: mention.kind === "conversation" ? mention.commentId : "",
+    phaseId: mention.kind === "phase" ? mention.phaseId : "",
+    phaseCommentId: mention.kind === "phase" ? mention.commentId : "",
+    historyMode: "push",
+  });
   markWorkOrderMentionCandidatesStale(order);
   render();
 }
@@ -3797,7 +3927,7 @@ function renderWorkOrderMentionInboxPanel() {
                             <strong>${escapeHtml(item.authorName)}</strong>
                             ${item.readAt ? "" : `<span class="mention-unread-dot" aria-label="Sin leer"></span>`}
                           </span>
-                          <span>${escapeHtml(item.orderCode)} · ${escapeHtml(item.orderTitle)}</span>
+                          <span>${escapeHtml(item.orderCode)} · ${escapeHtml(item.orderTitle)}${item.phaseTitle ? ` · ${escapeHtml(item.phaseTitle)}` : ""}</span>
                           <span class="mention-inbox-excerpt">${escapeHtml(item.excerpt)}</span>
                           <time datetime="${escapeHtml(item.createdAt)}">${escapeHtml(formatDateTime(item.createdAt))}</time>
                         </button>
@@ -3812,20 +3942,28 @@ function renderWorkOrderMentionInboxPanel() {
 }
 
 function focusLinkedWorkOrderComment() {
-  if (!state.focusedWorkOrderCommentId) return;
+  if (!state.focusedWorkOrderCommentId && !state.focusedWorkOrderPhaseCommentId) return;
   const conversationOrder = selectedViewingOrder();
-  if (!conversationOrder || workOrderConversationState(conversationOrder).status !== "loaded") return;
+  if (!conversationOrder) return;
+  if (state.focusedWorkOrderCommentId && workOrderConversationState(conversationOrder).status !== "loaded") return;
   window.setTimeout(() => {
-    const comment = document.querySelector(
-      `[data-work-order-comment-id="${CSS.escape(state.focusedWorkOrderCommentId)}"]`,
-    );
+    const selector = state.focusedWorkOrderPhaseCommentId
+      ? `[data-work-order-phase-comment-id="${CSS.escape(state.focusedWorkOrderPhaseCommentId)}"]`
+      : `[data-work-order-comment-id="${CSS.escape(state.focusedWorkOrderCommentId)}"]`;
+    const comment = document.querySelector(selector);
     if (!comment) return;
     comment.classList.add("is-deep-linked");
     comment.scrollIntoView({ block: "center", behavior: "smooth" });
     window.setTimeout(() => comment.classList.remove("is-deep-linked"), 4200);
     clearConsumedWorkOrderCommentRoute();
     state.focusedWorkOrderCommentId = "";
+    state.focusedWorkOrderPhaseId = "";
+    state.focusedWorkOrderPhaseCommentId = "";
   }, 80);
+}
+
+function phaseCommentMentionContext(phaseId) {
+  return `phase:${phaseId}`;
 }
 
 function renderWorkOrderPhaseComments(phase, order) {
@@ -3848,15 +3986,20 @@ function renderWorkOrderPhaseComments(phase, order) {
             : comments.length
             ? comments
                 .map(
-                  (comment) => `
-                    <article class="phase-comment">
-                      <div class="phase-comment-meta">
-                        <strong>${escapeHtml(userName(comment.authorId))}</strong>
-                        <span>${escapeHtml(formatDate(comment.createdAt))}</span>
-                      </div>
-                      <p>${renderLinkedText(comment.body)}</p>
-                    </article>
-                  `,
+                  (comment) => {
+                    const isEditing = state.workOrderCommentEditing?.kind === "phase"
+                      && state.workOrderCommentEditing?.id === comment.id;
+                    return `
+                      <article class="phase-comment ${state.focusedWorkOrderPhaseCommentId === comment.id ? "is-deep-linked" : ""}" id="work-order-phase-comment-${escapeHtml(comment.id)}" data-work-order-phase-comment-id="${escapeHtml(comment.id)}">
+                        ${renderWorkOrderConversationAuthor(comment, order, "phase")}
+                        ${
+                          isEditing
+                            ? renderWorkOrderCommentEditForm(order, comment, "phase")
+                            : `<p>${renderStructuredMentionedText(comment.body, comment.mentions)}</p>`
+                        }
+                      </article>
+                    `;
+                  },
                 )
                 .join("")
             : `<div class="small-muted">Sin avances comentados en esta fase.</div>`
@@ -3866,7 +4009,12 @@ function renderWorkOrderPhaseComments(phase, order) {
         canComment
           ? `
             <div class="phase-comment-form">
-              <textarea class="textarea compact-textarea" data-phase-comment-input="${escapeHtml(phase.id)}" maxlength="2000" placeholder="Escribe un avance o pega un link de Drive, Canva, etc."></textarea>
+              <div class="work-order-conversation-message-field">
+                <textarea class="textarea compact-textarea" data-phase-comment-input="${escapeHtml(phase.id)}" data-mention-draft-key="${escapeHtml(
+                  workOrderMentionDraftKey(order, phaseCommentMentionContext(phase.id)),
+                )}" data-parent-comment-id="${escapeHtml(phaseCommentMentionContext(phase.id))}" maxlength="2000" placeholder="Escribe un avance, usa @ para mencionar o pega un link..."></textarea>
+                ${renderWorkOrderMentionInput(order, phaseCommentMentionContext(phase.id))}
+              </div>
               <button class="button-ghost small" data-action="add-work-order-phase-comment" data-id="${escapeHtml(phase.id)}" ${state.workOrderPhaseCommentPublishingIds.has(phase.id) ? 'disabled aria-busy="true"' : ""}>${state.workOrderPhaseCommentPublishingIds.has(phase.id) ? "Publicando..." : "Agregar comentario"}</button>
             </div>
           `
@@ -11494,6 +11642,9 @@ async function handleAction(action, id, actionElement = null) {
     "remove-work-order-phase": () => removeWorkOrderPhase(id),
     "complete-work-order-phase": () => completeWorkOrderPhase(id),
     "add-work-order-phase-comment": () => addWorkOrderPhaseComment(id),
+    "edit-work-order-comment": () => editWorkOrderComment(id, actionElement),
+    "cancel-work-order-comment-edit": () => cancelWorkOrderCommentEdit(),
+    "save-work-order-comment-edit": () => saveWorkOrderCommentEdit(id, actionElement),
     "publish-work-order-comment": () => publishWorkOrderComment(id, "", actionElement),
     "reply-work-order-comment": () => openWorkOrderCommentReply(id),
     "cancel-work-order-comment-reply": () => closeWorkOrderCommentReply(),
@@ -13783,6 +13934,9 @@ async function addWorkOrderPhaseComment(phaseId) {
     (candidate) => candidate.dataset.phaseCommentInput === phaseId,
   );
   const body = input?.value?.trim() || "";
+  const mentionContext = phaseCommentMentionContext(phase.id);
+  const structuredMentions = reconcileWorkOrderMentionDraft(order, mentionContext, body);
+  const mentionedUserIds = Array.from(new Set(structuredMentions.map((mention) => mention.userId)));
   if (!body) {
     showToast("Escribe un avance antes de guardar");
     return;
@@ -13813,11 +13967,13 @@ async function addWorkOrderPhaseComment(phaseId) {
         payload: {
           target_phase_id: targetId,
           comment_body: body,
+          mentioned_user_ids: mentionedUserIds,
         },
       });
       const { data, error } = await supabaseClient.rpc("add_work_order_phase_comment", {
         target_phase_id: targetId,
         comment_body: body,
+        mentioned_user_ids: mentionedUserIds,
       });
       debugInteraction("phase-comment:add:response", {
         rpc: "add_work_order_phase_comment",
@@ -13840,6 +13996,7 @@ async function addWorkOrderPhaseComment(phaseId) {
         comments: [...(candidate.comments || []), insertedComment],
       }));
       if (input) input.value = "";
+      clearWorkOrderMentionDraft(order, mentionContext);
       await refreshSupabaseData({ silent: true, preserveNavigation: true });
     } else {
       replaceLocalWorkOrderPhase(order, phase.id, (candidate) => ({
@@ -13854,10 +14011,16 @@ async function addWorkOrderPhaseComment(phaseId) {
             body,
             createdAt: new Date().toISOString(),
             updatedAt: "",
+            mentions: structuredMentions.map((mention) => ({
+              userId: mention.userId,
+              name: mention.name,
+              readAt: "",
+            })),
           },
         ],
       }));
       if (input) input.value = "";
+      clearWorkOrderMentionDraft(order, mentionContext);
       saveWorkOrders();
     }
 
@@ -13874,6 +14037,144 @@ async function addWorkOrderPhaseComment(phaseId) {
       submitButton.removeAttribute("aria-busy");
       submitButton.textContent = "Agregar comentario";
     }
+  }
+}
+
+function findEditableWorkOrderComment(commentKind, commentId) {
+  const order = selectedViewingOrder();
+  if (!order) return null;
+  if (commentKind === "phase") {
+    for (const phase of workOrderPhases(order)) {
+      const comment = (phase.comments || []).find((candidate) => candidate.id === commentId);
+      if (comment) return { order, phase, comment };
+    }
+    return null;
+  }
+  const comment = workOrderConversationState(order).comments.find((candidate) => candidate.id === commentId);
+  return comment ? { order, phase: null, comment } : null;
+}
+
+function initialMentionDraftFromComment(comment, body) {
+  const source = String(body || "");
+  return (comment.mentions || []).flatMap((mention) => {
+    const name = mention.name || workOrderMentionedUserName(mention.userId);
+    const token = name ? `@${name}` : "";
+    const start = token ? source.indexOf(token) : -1;
+    return start >= 0
+      ? [{ userId: mention.userId, name, token, start, end: start + token.length }]
+      : [];
+  });
+}
+
+function editWorkOrderComment(commentId, actionElement = null) {
+  const commentKind = actionElement?.dataset?.commentKind === "phase" ? "phase" : "conversation";
+  const found = findEditableWorkOrderComment(commentKind, commentId);
+  if (!found || !canEditOwnWorkOrderComment(found.order, found.comment)) {
+    showToast("Solo puedes editar tus propios comentarios en órdenes activas.");
+    return;
+  }
+  const body = commentKind === "phase" ? found.comment.body : found.comment.message;
+  const contextId = workOrderCommentEditContext(commentKind, commentId);
+  if (state.workOrderCommentEditing) {
+    clearWorkOrderMentionDraft(
+      found.order,
+      workOrderCommentEditContext(state.workOrderCommentEditing.kind, state.workOrderCommentEditing.id),
+    );
+  }
+  state.workOrderCommentEditing = { kind: commentKind, id: commentId, body };
+  setWorkOrderMentionDraft(found.order, contextId, {
+    mentions: initialMentionDraftFromComment(found.comment, body),
+    query: "",
+    tokenStart: -1,
+    activeIndex: 0,
+    open: false,
+  });
+  render();
+  window.setTimeout(() => document.querySelector("[data-work-order-comment-edit-input]")?.focus(), 0);
+}
+
+function cancelWorkOrderCommentEdit() {
+  const editing = state.workOrderCommentEditing;
+  const order = selectedViewingOrder();
+  if (editing && order) {
+    clearWorkOrderMentionDraft(order, workOrderCommentEditContext(editing.kind, editing.id));
+  }
+  state.workOrderCommentEditing = null;
+  state.workOrderCommentEditSaving = false;
+  render();
+}
+
+async function saveWorkOrderCommentEdit(commentId, actionElement = null) {
+  if (state.workOrderCommentEditSaving) return;
+  const commentKind = actionElement?.dataset?.commentKind === "phase" ? "phase" : "conversation";
+  const editing = state.workOrderCommentEditing;
+  const found = findEditableWorkOrderComment(commentKind, commentId);
+  if (!editing || editing.id !== commentId || editing.kind !== commentKind || !found) {
+    showToast("No se encontró la edición activa.");
+    return;
+  }
+  const input = document.querySelector("[data-work-order-comment-edit-input]");
+  const body = input?.value?.trim() || "";
+  const maxLength = commentKind === "phase" ? 2000 : 4000;
+  if (!body) {
+    showToast("El comentario no puede quedar vacío.");
+    input?.focus();
+    return;
+  }
+  if (body.length > maxLength) {
+    showToast(`El comentario no debe superar ${maxLength} caracteres.`);
+    input?.focus();
+    return;
+  }
+
+  const contextId = workOrderCommentEditContext(commentKind, commentId);
+  const mentions = reconcileWorkOrderMentionDraft(found.order, contextId, body);
+  const mentionedUserIds = Array.from(new Set(mentions.map((mention) => mention.userId)));
+  state.workOrderCommentEditing = { ...editing, body };
+  state.workOrderCommentEditSaving = true;
+  if (actionElement) {
+    actionElement.disabled = true;
+    actionElement.setAttribute("aria-busy", "true");
+  }
+
+  const rpcName = commentKind === "phase"
+    ? "update_work_order_phase_comment"
+    : "update_work_order_comment";
+  debugInteraction("work-order-comment:edit-start", {
+    rpc: rpcName,
+    commentId,
+    commentKind,
+    bodyLength: body.length,
+    mentionCount: mentionedUserIds.length,
+  });
+  try {
+    const { error } = await supabaseClient.rpc(rpcName, {
+      target_comment_id: commentId,
+      target_body: body,
+      target_mentioned_user_ids: mentionedUserIds,
+    });
+    if (error) {
+      debugInteraction("work-order-comment:edit-error", {
+        rpc: rpcName,
+        commentId,
+        code: error.code || "",
+        message: error.message || "",
+      });
+      showToast(`No se pudo guardar la edición: ${error.message}`);
+      return;
+    }
+
+    clearWorkOrderMentionDraft(found.order, contextId);
+    state.workOrderCommentEditing = null;
+    if (commentKind === "phase") {
+      await refreshSupabaseData({ silent: true, preserveNavigation: true });
+    } else {
+      await loadWorkOrderConversation(found.order, { force: true });
+    }
+    showToast("Comentario actualizado.");
+  } finally {
+    state.workOrderCommentEditSaving = false;
+    render();
   }
 }
 
