@@ -22,6 +22,7 @@ const ALL_BRANDS_ID = "all-brands";
 const OPERATIONS_MODE = true;
 const ENABLE_AI_ASSISTANT = false;
 const APP_BUILD_MARKER = "phase-debug-2026-07-24-v7d-fix-next-status";
+const phaseReorder = globalThis.LumenPhaseReorder;
 const DEBUG_INTERACTIONS =
   typeof window !== "undefined" &&
   (new URLSearchParams(window.location.search).has("debugInteractions") || window.localStorage?.getItem("lumen_debug_interactions") === "1");
@@ -55,6 +56,7 @@ function iconSvg(name, className = "ui-icon") {
     brands: '<svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4v10l-8 4-8-4V7z"/><path d="M12 3v18"/><path d="M4 7l8 4 8-4"/></svg>',
     menu: '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg>',
     close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>',
+    grip: '<svg viewBox="0 0 24 24"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>',
   };
   return `<span class="${className}" aria-hidden="true">${icons[name] || icons.dashboard}</span>`;
 }
@@ -1003,6 +1005,7 @@ const state = {
   workOrderConversationReplyingTo: "",
   workOrderConversationPublishing: false,
   workOrderPhaseCommentPublishingIds: new Set(),
+  workOrderPhaseReorderSavingId: "",
   workOrderConversationResolvingId: "",
   mentionInbox: {
     status: "idle",
@@ -1072,6 +1075,7 @@ const state = {
 };
 
 const workOrderMentionCandidateRequests = new Map();
+let activeWorkOrderPhaseDrag = null;
 
 const statusLabels = {
   draft: "Draft",
@@ -1349,7 +1353,7 @@ function mapDbWorkOrder(row) {
     artCount: row.art_count ?? null,
     isUrgent: Boolean(row.is_urgent),
     notifyOnEmail: row.notify_on_email,
-    phases: (row.phases || []).map(mapDbWorkOrderPhase).sort((a, b) => a.sortOrder - b.sortOrder),
+    phases: phaseReorder.sortedPhases((row.phases || []).map(mapDbWorkOrderPhase)),
     linkedContentId: null,
   };
 }
@@ -1366,7 +1370,7 @@ function mapDbWorkOrderPhase(row) {
     status: row.status || "pending",
     dueDate: row.due_date || "",
     completedAt: row.completed_at || "",
-    sortOrder: Number(row.sort_order || 0),
+    sortOrder: Number(row.sort_order ?? 0),
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
     comments: Array.isArray(row.comments) ? row.comments : [],
@@ -1534,7 +1538,12 @@ async function loadSupabaseData() {
       )
       .order("due_date", { ascending: true }),
     supabaseClient.from("brand_notification_recipients").select("brand_id,user_id"),
-    supabaseClient.from("work_order_phases").select("*").order("sort_order", { ascending: true }),
+    supabaseClient
+      .from("work_order_phases")
+      .select("*")
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true }),
     supabaseClient.from("work_order_phase_comments").select("*").order("created_at", { ascending: true }),
     supabaseClient.from("production_planner_items").select("*").order("production_date", { ascending: true }),
     supabaseClient
@@ -2642,7 +2651,7 @@ function workOrderPhaseTitle(phaseKey = "custom") {
 }
 
 function workOrderPhases(order) {
-  return (order?.phases || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
+  return phaseReorder.sortedPhases(order?.phases || []);
 }
 
 function normalizedPhaseFromValues(phase, index) {
@@ -2664,7 +2673,7 @@ function normalizedPhaseFromValues(phase, index) {
 }
 
 function normalizeWorkOrderPhases(phases = []) {
-  return phases.map(normalizedPhaseFromValues).sort((a, b) => a.sortOrder - b.sortOrder);
+  return phaseReorder.sortedPhases(phases.map(normalizedPhaseFromValues));
 }
 
 function phaseStatusClass(status = "pending") {
@@ -2827,6 +2836,22 @@ function canUpdateWorkOrderPhaseStatus(phase, order = null) {
   if (canManageWorkOrders()) return true;
   const currentId = currentProfileId();
   return Boolean(currentId && (phase.assignedTo === currentId || phase.assigned_to === currentId));
+}
+
+function canModifyWorkOrderPhaseStructure(order) {
+  if (!order || isArchivedWorkOrder(order)) return false;
+  if (!isSupabaseMode()) return true;
+  if (canManageWorkOrders()) return true;
+  const currentId = currentProfileId();
+  return Boolean(currentId && canCreateWorkOrders() && order.createdBy === currentId);
+}
+
+function canReorderWorkOrderPhases(order) {
+  return Boolean(
+    canModifyWorkOrderPhaseStructure(order)
+    && workOrderPhases(order).length > 1
+    && !state.workOrderPhaseReorderSavingId,
+  );
 }
 
 function canCommentOnWorkOrderPhase(phase, order = null) {
@@ -6501,6 +6526,7 @@ function renderWorkOrderPhaseProgress(order) {
     `;
   }
   const completedCount = phases.filter((phase) => phase.status === "completed").length;
+  const canReorder = canReorderWorkOrderPhases(order);
   return `
     <div class="process-timeline-card">
       <div class="section-header compact">
@@ -6510,11 +6536,31 @@ function renderWorkOrderPhaseProgress(order) {
         </div>
         <span class="badge blue">${completedCount}/${phases.length} completadas</span>
       </div>
-      <div class="phase-progress-track" aria-label="Progreso de fases de la orden">
+      <div
+        class="phase-progress-track"
+        data-phase-reorder-track
+        data-order-id="${escapeHtml(order.id)}"
+        aria-label="Progreso de fases de la orden"
+      >
         ${phases
           .map(
             (phase, index) => `
-              <div class="phase-progress-step ${phaseStatusClass(phase.status)}">
+              <div
+                class="phase-progress-step ${phaseStatusClass(phase.status)} ${canReorder ? "is-reorderable" : ""}"
+                data-phase-id="${escapeHtml(phaseReorder.phaseIdentity(phase))}"
+              >
+                ${
+                  canReorder
+                    ? `<button
+                        type="button"
+                        class="phase-reorder-handle"
+                        data-phase-reorder-handle
+                        aria-label="Reordenar fase ${index + 1}: ${escapeHtml(phase.title)}"
+                        aria-pressed="false"
+                        title="Arrastrar para reordenar"
+                      >${iconSvg("grip")}</button>`
+                    : ""
+                }
                 <span class="phase-dot">${index + 1}</span>
                 <div>
                   <strong>${escapeHtml(phase.title)}</strong>
@@ -11128,11 +11174,171 @@ function bindDelegatedActionEvents() {
   bindDocumentInteractionEvents();
 }
 
+function beginWorkOrderPhaseDrag(active, pointerY) {
+  const cardRect = active.card.getBoundingClientRect();
+  const ghost = document.createElement("div");
+  const ghostNumber = document.createElement("span");
+  const ghostTitle = document.createElement("strong");
+  const placeholder = document.createElement("div");
+
+  ghost.className = `phase-reorder-ghost ${active.card.classList.contains("done") ? "done" : ""}`;
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.style.left = `${cardRect.left}px`;
+  ghost.style.top = `${cardRect.top}px`;
+  ghost.style.width = `${cardRect.width}px`;
+  ghostNumber.className = "phase-dot";
+  ghostNumber.textContent = active.card.querySelector(".phase-dot")?.textContent || "";
+  ghostTitle.textContent = active.card.querySelector("strong")?.textContent || "Fase";
+  ghost.append(ghostNumber, ghostTitle);
+
+  placeholder.className = "phase-reorder-placeholder";
+  placeholder.setAttribute("aria-hidden", "true");
+  active.card.classList.add("is-drag-source");
+  active.track.classList.add("is-reordering");
+  active.handle.classList.add("is-grabbing");
+  active.handle.setAttribute("aria-pressed", "true");
+  document.body.classList.add("is-phase-reordering");
+  document.body.appendChild(ghost);
+
+  active.dragging = true;
+  active.ghost = ghost;
+  active.placeholder = placeholder;
+  active.ghost.style.transform = `translate3d(0, ${pointerY - active.startY}px, 0)`;
+}
+
+function updateWorkOrderPhaseDropTarget(active, pointerY) {
+  const cards = Array.from(active.track.querySelectorAll(".phase-progress-step"))
+    .filter((card) => card !== active.card);
+  const beforeCard = cards.find((card) => {
+    const rect = card.getBoundingClientRect();
+    return pointerY < rect.top + rect.height / 2;
+  });
+  if (beforeCard) active.track.insertBefore(active.placeholder, beforeCard);
+  else active.track.appendChild(active.placeholder);
+
+  const scrollPanel = active.track.closest(".drawer-panel");
+  if (!scrollPanel) return;
+  const panelRect = scrollPanel.getBoundingClientRect();
+  if (pointerY < panelRect.top + 56) scrollPanel.scrollBy({ top: -14 });
+  if (pointerY > panelRect.bottom - 56) scrollPanel.scrollBy({ top: 14 });
+}
+
+function orderedPhaseIdsFromDrag(active) {
+  const orderedIds = [];
+  Array.from(active.track.children).forEach((child) => {
+    if (child === active.placeholder) {
+      orderedIds.push(active.phaseId);
+      return;
+    }
+    if (child === active.card || !child.matches?.(".phase-progress-step")) return;
+    orderedIds.push(child.dataset.phaseId || "");
+  });
+  return orderedIds.filter(Boolean);
+}
+
+function clearWorkOrderPhaseDrag(active = activeWorkOrderPhaseDrag) {
+  if (!active) return;
+  try {
+    if (active.handle.hasPointerCapture?.(active.pointerId)) active.handle.releasePointerCapture(active.pointerId);
+  } catch {
+    // Pointer capture may already have ended when the browser cancels a touch gesture.
+  }
+  active.card.classList.remove("is-drag-source");
+  active.track.classList.remove("is-reordering");
+  active.handle.classList.remove("is-grabbing");
+  active.handle.setAttribute("aria-pressed", "false");
+  active.ghost?.remove();
+  active.placeholder?.remove();
+  document.body.classList.remove("is-phase-reordering");
+  activeWorkOrderPhaseDrag = null;
+}
+
+function handleWorkOrderPhasePointerDown(event) {
+  const handle = event.target.closest?.("[data-phase-reorder-handle]");
+  if (!handle || activeWorkOrderPhaseDrag || event.isPrimary === false) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  const card = handle.closest(".phase-progress-step");
+  const track = handle.closest("[data-phase-reorder-track]");
+  const order = findWorkOrderByAnyId(track?.dataset.orderId || "");
+  if (!card || !track || !canReorderWorkOrderPhases(order)) return;
+
+  event.preventDefault();
+  handle.focus({ preventScroll: true });
+  handle.setPointerCapture?.(event.pointerId);
+  activeWorkOrderPhaseDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    phaseId: card.dataset.phaseId || "",
+    orderId: order.id,
+    handle,
+    card,
+    track,
+    dragging: false,
+    ghost: null,
+    placeholder: null,
+  };
+}
+
+function handleWorkOrderPhasePointerMove(event) {
+  const active = activeWorkOrderPhaseDrag;
+  if (!active || event.pointerId !== active.pointerId) return;
+  const distance = Math.hypot(event.clientX - active.startX, event.clientY - active.startY);
+  if (!active.dragging && distance < 5) return;
+  event.preventDefault();
+  if (!active.dragging) beginWorkOrderPhaseDrag(active, event.clientY);
+  active.ghost.style.transform = `translate3d(0, ${event.clientY - active.startY}px, 0)`;
+  updateWorkOrderPhaseDropTarget(active, event.clientY);
+}
+
+function handleWorkOrderPhasePointerUp(event) {
+  const active = activeWorkOrderPhaseDrag;
+  if (!active || event.pointerId !== active.pointerId) return;
+  const orderedPhaseIds = active.dragging ? orderedPhaseIdsFromDrag(active) : [];
+  const orderId = active.orderId;
+  clearWorkOrderPhaseDrag(active);
+  if (orderedPhaseIds.length) reorderWorkOrderPhases(orderId, orderedPhaseIds);
+}
+
+function handleWorkOrderPhasePointerCancel(event) {
+  if (activeWorkOrderPhaseDrag && event.pointerId === activeWorkOrderPhaseDrag.pointerId) {
+    clearWorkOrderPhaseDrag();
+  }
+}
+
+function handleWorkOrderPhaseReorderKeydown(event) {
+  if (event.key === "Escape" && activeWorkOrderPhaseDrag) {
+    event.preventDefault();
+    clearWorkOrderPhaseDrag();
+    return;
+  }
+  const handle = event.target.closest?.("[data-phase-reorder-handle]");
+  if (!handle || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+  const track = handle.closest("[data-phase-reorder-track]");
+  const card = handle.closest(".phase-progress-step");
+  const order = findWorkOrderByAnyId(track?.dataset.orderId || "");
+  if (!track || !card || !canReorderWorkOrderPhases(order)) return;
+
+  const phaseIds = workOrderPhases(order).map(phaseReorder.phaseIdentity);
+  const currentIndex = phaseIds.indexOf(card.dataset.phaseId || "");
+  const nextIndex = event.key === "ArrowUp" ? currentIndex - 1 : currentIndex + 1;
+  if (currentIndex < 0 || nextIndex < 0 || nextIndex >= phaseIds.length) return;
+  event.preventDefault();
+  const [movedPhaseId] = phaseIds.splice(currentIndex, 1);
+  phaseIds.splice(nextIndex, 0, movedPhaseId);
+  reorderWorkOrderPhases(order.id, phaseIds);
+}
+
 function bindDocumentInteractionEvents() {
   if (typeof window === "undefined" || window.__lumenDocumentInteractionsAttached) return;
   document.addEventListener("click", handleDocumentActionClick, true);
   document.addEventListener("input", handleWorkOrderMentionInput);
   document.addEventListener("keydown", handleWorkOrderMentionKeydown);
+  document.addEventListener("keydown", handleWorkOrderPhaseReorderKeydown);
+  document.addEventListener("pointerdown", handleWorkOrderPhasePointerDown);
+  document.addEventListener("pointermove", handleWorkOrderPhasePointerMove, { passive: false });
+  document.addEventListener("pointerup", handleWorkOrderPhasePointerUp);
+  document.addEventListener("pointercancel", handleWorkOrderPhasePointerCancel);
   window.addEventListener("popstate", handleWorkOrderNavigationPopState);
   window.__lumenDocumentInteractionsAttached = true;
   debugInteraction("document-action-listener:bound", {
@@ -12211,6 +12417,75 @@ async function replaceSupabaseWorkOrderPhases(orderDbId, phases = []) {
     phases_payload: phasesPayload,
   });
   return { error };
+}
+
+async function reorderSupabaseWorkOrderPhases(orderDbId, phases = []) {
+  if (!orderDbId) return { data: null, error: new Error("missing_work_order_id") };
+  const phasesPayload = phases.map((phase) => ({
+    id: phase.dbId || phase.id,
+    updated_at: phase.updatedAt || null,
+  }));
+  if (phasesPayload.some((phase) => !phase.id || !phase.updated_at)) {
+    return { data: null, error: new Error("invalid_phase_reorder_payload") };
+  }
+  return supabaseClient.rpc("reorder_work_order_phases", {
+    target_work_order_id: orderDbId,
+    phases_payload: phasesPayload,
+  });
+}
+
+async function reorderWorkOrderPhases(orderId, orderedPhaseIds = []) {
+  const order = findWorkOrderByAnyId(orderId);
+  if (!order || !canReorderWorkOrderPhases(order)) return false;
+
+  const previousPhases = order.phases.map((phase) => ({ ...phase }));
+  try {
+    const candidatePhases = phaseReorder.applyPhaseOrder(previousPhases, orderedPhaseIds);
+    if (phaseReorder.hasSamePhaseOrder(previousPhases, candidatePhases)) return false;
+  } catch (error) {
+    console.warn("[Lumen phases] invalid reorder", error);
+    showToast("No se pudo actualizar el orden de las fases.");
+    return false;
+  }
+
+  state.workOrderPhaseReorderSavingId = order.id;
+
+  try {
+    const result = await phaseReorder.commitPhaseOrder({
+      phases: previousPhases,
+      orderedPhaseIds,
+      onChange: (phases) => {
+        order.phases = phases;
+        render();
+      },
+      persist: async (nextPhases) => {
+        if (!isSupabaseMode()) {
+          saveWorkOrders();
+          return nextPhases;
+        }
+        const { data, error } = await reorderSupabaseWorkOrderPhases(order.dbId, nextPhases);
+        if (error) throw error;
+        const rowsById = new Map((data || []).map((row) => [String(row.id), row]));
+        return nextPhases.map((phase, index) => {
+          const row = rowsById.get(phaseReorder.phaseIdentity(phase));
+          return {
+            ...phase,
+            sortOrder: Number(row?.sort_order ?? index),
+            updatedAt: row?.updated_at || phase.updatedAt,
+          };
+        });
+      },
+    });
+    order.phases = result.phases;
+    state.workOrderPhaseReorderSavingId = "";
+    showToast("Orden de fases actualizado");
+    return true;
+  } catch (error) {
+    console.warn("[Lumen phases] reorder failed", error);
+    state.workOrderPhaseReorderSavingId = "";
+    showToast("No se pudo actualizar el orden de las fases.");
+    return false;
+  }
 }
 
 async function queueWorkOrderAssignmentNotifications(orderId, code) {
