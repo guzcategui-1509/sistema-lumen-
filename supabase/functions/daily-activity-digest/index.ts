@@ -162,6 +162,8 @@ function activityLabel(activity: Activity, actorName: string) {
       return `${actorName} eliminó el archivo ${String(details.file_name || "")}`.trim();
     case "urgent_rebalanced":
       return `${actorName} aplicó un ajuste urgente de tareas y fecha`;
+    case "phases_reordered":
+      return `${actorName} reordenó las fases de la OT`;
     case "archived":
       return `${actorName} archivó la orden`;
     case "unarchived":
