@@ -139,15 +139,36 @@ test("restores the previous order when persistence fails", async () => {
 
 test("persistence receives the complete phases with only sortOrder renumbered", async () => {
   const phases = [
-    phase("a", 0),
-    phase("b", 1, { status: "in_progress", assignedTo: "user-b", dueDate: "2026-08-21" }),
-    phase("c", 2),
+    phase("phase-a", 0, {
+      title: "Diseño",
+      description: "Brief estable",
+      status: "in_progress",
+      assignedTo: "uuid-user-a",
+      dueDate: "2026-08-30",
+      completedAt: null,
+    }),
+    phase("phase-b", 1, {
+      title: "Edición",
+      description: "Mantener cortes aprobados",
+      status: "pending",
+      assignedTo: "uuid-user-b",
+      dueDate: "2026-08-31",
+      completedAt: null,
+    }),
+    phase("phase-c", 2, {
+      title: "Entrega",
+      description: "Entrega final",
+      status: "completed",
+      assignedTo: "uuid-user-c",
+      dueDate: "2026-09-01",
+      completedAt: "2026-08-29T18:25:00Z",
+    }),
   ];
   let persisted = [];
 
   await commitPhaseOrder({
     phases,
-    orderedPhaseIds: ["b", "c", "a"],
+    orderedPhaseIds: ["phase-b", "phase-c", "phase-a"],
     persist: async (nextPhases) => {
       persisted = nextPhases;
       return nextPhases;
@@ -155,7 +176,26 @@ test("persistence receives the complete phases with only sortOrder renumbered", 
   });
 
   assert.deepEqual(persisted.map((item) => item.sortOrder), [0, 1, 2]);
-  assert.equal(persisted[0].status, "in_progress");
-  assert.equal(persisted[0].assignedTo, "user-b");
-  assert.equal(persisted[0].dueDate, "2026-08-21");
+  assert.deepEqual(
+    persisted.map(({ id, title, description, status, assignedTo, dueDate, completedAt }) => ({
+      id,
+      title,
+      description,
+      status,
+      assignedTo,
+      dueDate,
+      completedAt,
+    })),
+    [phases[1], phases[2], phases[0]].map(
+      ({ id, title, description, status, assignedTo, dueDate, completedAt }) => ({
+        id,
+        title,
+        description,
+        status,
+        assignedTo,
+        dueDate,
+        completedAt,
+      }),
+    ),
+  );
 });
