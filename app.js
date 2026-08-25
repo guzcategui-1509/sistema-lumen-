@@ -68,6 +68,8 @@ const dataState = {
   error: "",
   session: null,
   profile: null,
+  clientsReady: false,
+  brandsReady: false,
   brandNotificationRecipientsReady: false,
   emailNotificationsReady: true,
   workOrderPhasesReady: false,
@@ -1509,6 +1511,9 @@ function loadActiveBrandRows() {
 async function loadSupabaseData() {
   if (!isSupabaseMode() || !dataState.session) return;
 
+  dataState.clientsReady = false;
+  dataState.brandsReady = false;
+
   const [
     profileResult,
     clientsResult,
@@ -1589,6 +1594,8 @@ async function loadSupabaseData() {
     })),
   );
   setCollection(brands, (brandsResult.data || []).map(mapDbBrand));
+  dataState.clientsReady = true;
+  dataState.brandsReady = true;
   setCollection(users, (profilesResult.data || []).map((profile) => mapDbUser(profile, membershipsResult.data || [])));
   dataState.brandNotificationRecipientsReady = !notificationRecipientsResult.error;
   dataState.productionPlannerReady = !productionPlannerResult.error;
@@ -2408,6 +2415,19 @@ function normalizeRoleKey(role = "") {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function canonicalRoleKey(role = "") {
+  const normalizedRole = normalizeRoleKey(role);
+  if (normalizedRole === "administrador") return "admin";
+  if (["director", "direccion"].includes(normalizedRole)) return "directora";
+  if (normalizedRole === "cuenta") return "cuentas";
+  return normalizedRole;
+}
+
+function canCreateBrands(role = dataState.profile?.role) {
+  if (!isSupabaseMode() && !role) return true;
+  return new Set(["admin", "directora", "cuentas", "ejecutivo"]).has(canonicalRoleKey(role));
 }
 
 function canAccessNotificationModule(role = dataState.profile?.role) {
@@ -5894,7 +5914,7 @@ function renderCalendarWorkspace() {
 
 function renderBrandsWorkspace() {
   const snapshots = brands.map(getBrandSnapshot);
-  const canCreateBrand = isSystemAdmin() || !isSupabaseMode();
+  const canCreateBrand = canCreateBrands();
   return `
     <section class="section">
       <section class="panel brand-hero brands-hero">
@@ -5946,7 +5966,7 @@ function renderBrandsWorkspace() {
 }
 
 function renderCreateBrandModal() {
-  if (!state.creatingBrand || (!isSystemAdmin() && isSupabaseMode())) return "";
+  if (!state.creatingBrand || !canCreateBrands()) return "";
   return `
     <div class="modal-backdrop" data-action="close-create-brand" aria-hidden="true"></div>
     <aside class="modal-panel" role="dialog" aria-modal="true" aria-label="Crear marca">
@@ -12082,8 +12102,8 @@ function addBrandToCanonicalCollection(row) {
 }
 
 function openCreateBrand() {
-  if (isSupabaseMode() && !isSystemAdmin()) {
-    showToast("Solo Admin o Dirección puede crear marcas");
+  if (!canCreateBrands()) {
+    showToast("No tienes permiso para crear marcas");
     return;
   }
   state.creatingBrand = true;
@@ -12099,8 +12119,13 @@ function closeCreateBrand() {
 
 async function saveBrand() {
   if (state.brandSubmitting) return;
-  if (isSupabaseMode() && !isSystemAdmin()) {
-    showToast("Solo Admin o Dirección puede crear marcas");
+  if (!canCreateBrands()) {
+    showToast("No tienes permiso para crear marcas");
+    return;
+  }
+
+  if (isSupabaseMode() && (!dataState.clientsReady || !dataState.brandsReady)) {
+    showToast("No se pudo verificar el catálogo de clientes y marcas");
     return;
   }
 
@@ -12138,19 +12163,23 @@ async function saveBrand() {
   try {
     let createdRow;
     if (isSupabaseMode()) {
-      const { data, error } = await supabaseClient
-        .from("brands")
-        .insert({
-          client_id: clientId,
-          name,
-          slug,
-          abbreviation,
-          is_active: true,
-        })
-        .select("*")
-        .single();
+      const { data, error } = await supabaseClient.rpc("create_brand", {
+        target_name: name,
+        target_client_id: clientId,
+        target_abbreviation: abbreviation,
+      });
       if (error) throw error;
-      createdRow = data;
+      createdRow = Array.isArray(data) ? data[0] : data;
+      if (
+        !createdRow?.id ||
+        createdRow.client_id !== clientId ||
+        !createdRow.name ||
+        !createdRow.slug ||
+        !createdRow.abbreviation ||
+        createdRow.is_active !== true
+      ) {
+        throw new Error("Supabase devolvió una marca incompleta");
+      }
     } else {
       createdRow = {
         id: crypto.randomUUID(),
@@ -12164,7 +12193,7 @@ async function saveBrand() {
 
     addBrandToCanonicalCollection(createdRow);
     state.creatingBrand = false;
-    showToast(`Marca ${name} creada`);
+    showToast(`Marca ${createdRow.name} creada`);
     render();
 
     if (isSupabaseMode()) {
@@ -12191,6 +12220,8 @@ async function logout() {
     await supabaseClient.auth.signOut();
     dataState.session = null;
     dataState.profile = null;
+    dataState.clientsReady = false;
+    dataState.brandsReady = false;
     state.workOrderConversations = {};
     state.workOrderMentionCandidates = {};
     state.workOrderCommentMentionDrafts = {};
