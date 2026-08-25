@@ -5647,26 +5647,36 @@ body.is-phase-reordering * {
 
 .work-order-detail-drawer {
   position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0 0 0 auto;
   z-index: 75;
+  display: flex;
   width: min(680px, calc(100vw - 22px));
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   padding: 14px;
+  overflow: hidden;
   pointer-events: none;
 }
 
 .drawer-panel {
   position: relative;
-  display: grid;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   gap: 14px;
-  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
   padding: 22px 18px 18px;
   border: 1px solid rgba(16, 35, 26, 0.12);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 32px 80px rgba(16, 35, 26, 0.24);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   pointer-events: auto;
 }
 
