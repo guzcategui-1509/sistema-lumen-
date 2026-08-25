@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 const {
   applyPhaseOrder,
   commitPhaseOrder,
+  movePhase,
+  phaseOrderAfterDrag,
   sortedPhases,
 } = require("../phase-reorder.js");
 
@@ -34,6 +36,48 @@ test("reorders the fourth phase into the first position", () => {
   const reordered = applyPhaseOrder(phases, ["d", "a", "b", "c"]);
 
   assert.deepEqual(reordered.map((item) => item.id), ["d", "a", "b", "c"]);
+});
+
+test("moves phases by insertion index without off-by-one errors", () => {
+  const ids = ["a", "b", "c", "d"];
+
+  assert.deepEqual(movePhase(ids, 0, 2), ["b", "c", "a", "d"]);
+  assert.deepEqual(movePhase(ids, 2, 0), ["c", "a", "b", "d"]);
+  assert.deepEqual(movePhase(ids, 1, 3), ["a", "c", "d", "b"]);
+  assert.deepEqual(movePhase(ids, 3, 1), ["a", "d", "b", "c"]);
+});
+
+test("rejects invalid move indexes without mutating the original order", () => {
+  const ids = ["a", "b", "c"];
+
+  assert.throws(() => movePhase(ids, -1, 1), /invalid_phase_move/);
+  assert.throws(() => movePhase(ids, 0, 3), /invalid_phase_move/);
+  assert.deepEqual(ids, ["a", "b", "c"]);
+});
+
+test("pointer release finalizes the drag independently of the release target", () => {
+  const phaseIds = ["a", "b", "c", "d"];
+  const reordered = phaseOrderAfterDrag({
+    phaseIds,
+    fromIndex: 0,
+    toIndex: 2,
+    dragging: true,
+  });
+
+  assert.deepEqual(reordered, ["b", "c", "a", "d"]);
+});
+
+test("pointer cancellation restores the original order", () => {
+  const phaseIds = ["a", "b", "c", "d"];
+  const reordered = phaseOrderAfterDrag({
+    phaseIds,
+    fromIndex: 0,
+    toIndex: 2,
+    dragging: true,
+    cancelled: true,
+  });
+
+  assert.deepEqual(reordered, phaseIds);
 });
 
 test("moving a completed phase preserves status, assignment and historical dates", () => {
@@ -91,4 +135,27 @@ test("restores the previous order when persistence fails", async () => {
     ["c", "a", "b"],
     ["a", "b", "c"],
   ]);
+});
+
+test("persistence receives the complete phases with only sortOrder renumbered", async () => {
+  const phases = [
+    phase("a", 0),
+    phase("b", 1, { status: "in_progress", assignedTo: "user-b", dueDate: "2026-08-21" }),
+    phase("c", 2),
+  ];
+  let persisted = [];
+
+  await commitPhaseOrder({
+    phases,
+    orderedPhaseIds: ["b", "c", "a"],
+    persist: async (nextPhases) => {
+      persisted = nextPhases;
+      return nextPhases;
+    },
+  });
+
+  assert.deepEqual(persisted.map((item) => item.sortOrder), [0, 1, 2]);
+  assert.equal(persisted[0].status, "in_progress");
+  assert.equal(persisted[0].assignedTo, "user-b");
+  assert.equal(persisted[0].dueDate, "2026-08-21");
 });
