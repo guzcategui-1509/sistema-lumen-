@@ -71,7 +71,7 @@ Cuando `config.js` tiene valores reales, la app muestra login y lee/escribe:
 
 - Ejecutar `supabase/launch_mvp.sql` en Supabase.
 - Si ya ejecutaste el schema antes de esta version, ejecuta tambien `supabase/patch_memberships_policy.sql`.
-- Ejecutar `supabase/patch_work_order_permissions_automations.sql` para responsables por marca y automatizaciones.
+- Ejecutar `supabase/patch_work_order_permissions_automations.sql` para responsables por marca. Las reglas mensuales heredadas quedan deshabilitadas.
 - Ejecutar `supabase/patch_ot_workflow_creators.sql` para estados nuevos de OT y permisos de creacion para Generador/Creativo.
 - Ejecutar `supabase/patch_daily_activity_digest.sql` para activar el resumen diario y reducir correos por cada cambio.
 - Cargar `clients`, `brands`, `profiles` y `brand_memberships`.
