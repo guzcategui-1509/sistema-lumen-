@@ -3383,7 +3383,7 @@ async function refreshWorkOrderMentionCandidates(order, { force = false } = {}) 
       setWorkOrderMentionCandidateState(order, {
         status: hasCachedItems ? "loaded" : "error",
         error: error.message || "No se pudieron cargar las personas.",
-        needsRefresh: true,
+        needsRefresh: false,
         refreshing: false,
       });
       return workOrderMentionCandidateState(order).items;
@@ -3418,7 +3418,6 @@ async function refreshWorkOrderMentionCandidates(order, { force = false } = {}) 
     if (workOrderMentionCandidateRequests.get(key) === request) {
       workOrderMentionCandidateRequests.delete(key);
     }
-    if (shouldRenderConversationForOrder(order)) render();
   }
 }
 
@@ -3430,10 +3429,10 @@ async function loadWorkOrderConversation(order, { force = false } = {}) {
   }
 
   const currentState = workOrderConversationState(order);
-  const shouldLoadComments = force || !["loading", "loaded"].includes(currentState.status);
+  const shouldLoadComments = force || currentState.status === "idle";
   const candidateState = workOrderMentionCandidateState(order);
   const shouldRefreshCandidates = canParticipateInWorkOrderConversation(order)
-    && (force || candidateState.status !== "loaded" || candidateState.needsRefresh);
+    && (force || candidateState.status === "idle" || candidateState.needsRefresh);
   const candidatesPromise = shouldRefreshCandidates
     ? refreshWorkOrderMentionCandidates(order, { force: true })
     : Promise.resolve(candidateState.items);
@@ -3444,7 +3443,6 @@ async function loadWorkOrderConversation(order, { force = false } = {}) {
   }
 
   setWorkOrderConversationState(order, { status: "loading", error: "" });
-  if (shouldRenderConversationForOrder(order)) render();
 
   const commentsPromise = supabaseClient
     .from("work_order_comments")
@@ -4192,6 +4190,26 @@ function clsStatus(status) {
   return "amber";
 }
 
+function captureWorkOrderDetailScrollPosition() {
+  const order = selectedViewingOrder();
+  const panel = document.querySelector(".drawer-panel");
+  if (!order || !panel) return null;
+  return {
+    orderKey: workOrderConversationKey(order),
+    scrollTop: panel.scrollTop || 0,
+  };
+}
+
+function restoreWorkOrderDetailScrollPosition(previousPosition) {
+  if (!previousPosition) return;
+  if (state.focusedWorkOrderCommentId || state.focusedWorkOrderPhaseCommentId) return;
+  const order = selectedViewingOrder();
+  if (!order || workOrderConversationKey(order) !== previousPosition.orderKey) return;
+  const panel = document.querySelector(".drawer-panel");
+  if (!panel) return;
+  panel.scrollTop = previousPosition.scrollTop;
+}
+
 function render() {
   if (isSupabaseMode() && dataState.loading && !dataState.initialized) {
     document.getElementById("app").innerHTML = renderLoadingScreen();
@@ -4222,6 +4240,7 @@ function render() {
   const brand = allBrands ? null : getBrand();
   const canCreate = canCreateWorkOrders();
   const canViewReports = canOpenModule("reports");
+  const detailScrollPosition = captureWorkOrderDetailScrollPosition();
   document.documentElement.style.setProperty("--brand-color", allBrands ? "#2d2d2d" : brand.color);
   document.getElementById("app").innerHTML = `
     <div class="workspace">
@@ -4298,6 +4317,7 @@ function render() {
     ${renderDebugInteractionsPanel()}
   `;
   bindEvents();
+  restoreWorkOrderDetailScrollPosition(detailScrollPosition);
   if (isSupabaseMode() && dataState.session && state.mentionInbox.status === "idle") {
     loadMyWorkOrderMentions().catch((error) => {
       debugInteraction("work-order-mentions:inbox-unhandled", { message: error?.message || "" });
