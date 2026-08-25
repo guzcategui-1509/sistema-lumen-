@@ -2489,6 +2489,13 @@ function userName(userId) {
   return users.find((user) => user.id === userId)?.name || "Sin asignar";
 }
 
+function phaseAssigneeLabel(userId) {
+  if (!userId) return "Sin responsable asignado";
+  const user = users.find((candidate) => candidate.id === userId);
+  if (user) return user.name;
+  return `Responsable asignado (${String(userId).slice(0, 8)})`;
+}
+
 function userEmail(userId) {
   return users.find((user) => user.id === userId)?.email || "";
 }
@@ -6542,9 +6549,16 @@ function renderPhaseStatusOptions(activeStatus = "pending") {
 }
 
 function renderPhaseAssigneeOptions(activeUserId = "") {
+  const availableUsers = availableWorkOrderAssigneeUsers(new Set(activeUserId ? [activeUserId] : []));
+  const hasActiveUserOption = !activeUserId || availableUsers.some((user) => user.id === activeUserId);
   return `
     <option value="">Sin responsable</option>
-    ${availableWorkOrderAssigneeUsers(new Set(activeUserId ? [activeUserId] : []))
+    ${
+      activeUserId && !hasActiveUserOption
+        ? `<option value="${escapeHtml(activeUserId)}" selected>${escapeHtml(phaseAssigneeLabel(activeUserId))}</option>`
+        : ""
+    }
+    ${availableUsers
       .map((user) => `<option value="${escapeHtml(user.id)}" ${activeUserId === user.id ? "selected" : ""}>${escapeHtml(user.name)} · ${escapeHtml(roleLabels[user.role] || user.role)}</option>`)
       .join("")}
   `;
@@ -6729,7 +6743,7 @@ function renderWorkOrderPhaseProgress(order) {
                   <strong>${escapeHtml(phase.title)}</strong>
                   <p>${renderLinkedText(phase.description || "Sin descripción")}</p>
                   <div class="phase-meta">
-                    <span>${escapeHtml(phase.assignedTo ? userName(phase.assignedTo) : "Sin responsable asignado")}</span>
+                    <span>${escapeHtml(phaseAssigneeLabel(phase.assignedTo))}</span>
                     <span>${phase.dueDate ? escapeHtml(formatDate(phase.dueDate)) : "Sin deadline"}</span>
                     <span>${escapeHtml(workOrderPhaseStatusLabels[phase.status] || phase.status)}</span>
                     ${phase.completedAt ? `<span>Completada ${escapeHtml(formatDate(phase.completedAt))}</span>` : ""}
@@ -12427,6 +12441,49 @@ function getWorkOrderPhaseFormValues() {
     .filter((phase) => phase.title);
 }
 
+function phaseIntegrityKey(phase, index) {
+  return phase?.dbId || phase?.id || `${phase?.phaseKey || "custom"}:${phase?.title || ""}:${index}`;
+}
+
+function validateLoadedPhaseIntegrityBeforeSave(order, nextPhases = []) {
+  const originalPhases = normalizeWorkOrderPhases(workOrderPhases(order));
+  if (!originalPhases.length) return null;
+  const normalizedNextPhases = normalizeWorkOrderPhases(nextPhases);
+  if (!normalizedNextPhases.length) {
+    return {
+      reason: "missing_phase_rows",
+      message: "No se guardó la OT porque las fases cargadas no están disponibles. Recarga antes de guardar.",
+    };
+  }
+  const nextByKey = new Map(normalizedNextPhases.map((phase, index) => [phaseIntegrityKey(phase, index), phase]));
+  for (const [index, originalPhase] of originalPhases.entries()) {
+    const key = phaseIntegrityKey(originalPhase, index);
+    const nextPhase = nextByKey.get(key);
+    if (!nextPhase) {
+      return {
+        reason: "missing_original_phase",
+        phaseId: originalPhase.dbId || originalPhase.id,
+        message: `No se guardó la OT porque falta la fase "${originalPhase.title}". Recarga antes de guardar.`,
+      };
+    }
+    if (originalPhase.assignedTo && !nextPhase.assignedTo) {
+      return {
+        reason: "assigned_to_would_be_cleared",
+        phaseId: originalPhase.dbId || originalPhase.id,
+        message: `No se guardó la OT porque la fase "${originalPhase.title}" perdería su responsable asignado.`,
+      };
+    }
+    if (originalPhase.dueDate && !nextPhase.dueDate) {
+      return {
+        reason: "due_date_would_be_cleared",
+        phaseId: originalPhase.dbId || originalPhase.id,
+        message: `No se guardó la OT porque la fase "${originalPhase.title}" perdería su deadline.`,
+      };
+    }
+  }
+  return null;
+}
+
 function validateWorkOrderValues(values, existingOrder = null) {
   if (!values.title) {
     showToast("Agrega un título para crear la OT");
@@ -13214,12 +13271,31 @@ async function updateWorkOrderFromForm() {
     showToast("Selecciona una OT para editar");
     return;
   }
+  if (isSupabaseMode() && order.dbId && !dataState.workOrderPhasesReady) {
+    debugInteraction("work-order-edit:blocked-phases-not-ready", {
+      orderId: order.dbId,
+      code: order.id,
+    });
+    showToast("No se pudieron cargar las fases de esta OT. Recarga antes de guardar cambios.");
+    return;
+  }
   const values = getWorkOrderFormValues();
   if (!validateWorkOrderValues(values, order)) return;
 
   if (isSupabaseMode()) {
     if (!order.dbId) {
       showToast("Esta OT no tiene ID de Supabase");
+      return;
+    }
+    const phaseIntegrityError = validateLoadedPhaseIntegrityBeforeSave(order, values.phases);
+    if (phaseIntegrityError) {
+      debugInteraction("work-order-edit:blocked-phase-integrity", {
+        orderId: order.dbId,
+        code: order.id,
+        reason: phaseIntegrityError.reason,
+        phaseId: phaseIntegrityError.phaseId || "",
+      });
+      showToast(phaseIntegrityError.message || "No se guardó la OT porque las fases no están completas.");
       return;
     }
 
