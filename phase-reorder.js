@@ -17,6 +17,32 @@
     return phases.slice().sort(comparePhases);
   }
 
+  function movePhase(items = [], fromIndex, toIndex) {
+    const nextItems = items.slice();
+    const normalizedFromIndex = Number(fromIndex);
+    const normalizedToIndex = Number(toIndex);
+
+    if (
+      !Number.isInteger(normalizedFromIndex)
+      || !Number.isInteger(normalizedToIndex)
+      || normalizedFromIndex < 0
+      || normalizedFromIndex >= nextItems.length
+      || normalizedToIndex < 0
+      || normalizedToIndex >= nextItems.length
+    ) {
+      throw new Error("invalid_phase_move");
+    }
+
+    const [movedItem] = nextItems.splice(normalizedFromIndex, 1);
+    nextItems.splice(normalizedToIndex, 0, movedItem);
+    return nextItems;
+  }
+
+  function phaseOrderAfterDrag({ phaseIds = [], fromIndex, toIndex, dragging = false, cancelled = false } = {}) {
+    if (!dragging || cancelled) return phaseIds.slice();
+    return movePhase(phaseIds, fromIndex, toIndex);
+  }
+
   function applyPhaseOrder(phases = [], orderedPhaseIds = []) {
     const current = sortedPhases(phases);
     const phaseById = new Map(current.map((phase) => [phaseIdentity(phase), phase]));
@@ -68,6 +94,8 @@
     commitPhaseOrder,
     comparePhases,
     hasSamePhaseOrder,
+    movePhase,
+    phaseOrderAfterDrag,
     phaseIdentity,
     sortedPhases,
   };
