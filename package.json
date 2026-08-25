@@ -5,7 +5,7 @@
   "description": "Lumen Workspace MVP interno para ordenes de trabajo, equipo y notificaciones.",
   "scripts": {
     "dev": "python3 -m http.server 4174 --bind 127.0.0.1",
-    "check": "node --check app.js && node --check phase-reorder.js && node --test tests/phase-reorder.test.js && node --test tests/work-order-conversation-loading.test.js"
+    "check": "node --check app.js && node --check phase-reorder.js && node --test tests/phase-reorder.test.js && node --test tests/work-order-conversation-loading.test.js && node --test tests/work-order-phase-assignment-preservation.test.js"
   },
   "keywords": [
     "lumen",
