@@ -5647,7 +5647,9 @@ body.is-phase-reordering * {
 
 .work-order-detail-drawer {
   position: fixed;
-  inset: 0 0 0 auto;
+  top: 0;
+  right: 0;
+  bottom: 0;
   z-index: 75;
   display: flex;
   width: min(680px, calc(100vw - 22px));
@@ -5656,7 +5658,7 @@ body.is-phase-reordering * {
   min-height: 0;
   padding: 14px;
   overflow: hidden;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .drawer-panel {
@@ -5667,6 +5669,7 @@ body.is-phase-reordering * {
   gap: 14px;
   min-width: 0;
   min-height: 0;
+  height: calc(100dvh - 28px);
   max-height: 100%;
   padding: 22px 18px 18px;
   border: 1px solid rgba(16, 35, 26, 0.12);
@@ -5674,8 +5677,9 @@ body.is-phase-reordering * {
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 32px 80px rgba(16, 35, 26, 0.24);
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: scroll;
   overscroll-behavior: contain;
+  touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
   pointer-events: auto;
 }
@@ -6202,6 +6206,7 @@ body.is-phase-reordering * {
   }
 
   .drawer-panel {
+    height: 100dvh;
     border-radius: 0;
   }
 
