@@ -11378,27 +11378,19 @@ function updateWorkOrderPhaseDropTarget(active, pointerY) {
     const rect = card.getBoundingClientRect();
     return pointerY < rect.top + rect.height / 2;
   });
-  if (beforeCard) active.track.insertBefore(active.placeholder, beforeCard);
-  else active.track.appendChild(active.placeholder);
+  if (beforeCard) {
+    active.toIndex = cards.indexOf(beforeCard);
+    active.track.insertBefore(active.placeholder, beforeCard);
+  } else {
+    active.toIndex = cards.length;
+    active.track.appendChild(active.placeholder);
+  }
 
   const scrollPanel = active.track.closest(".drawer-panel");
   if (!scrollPanel) return;
   const panelRect = scrollPanel.getBoundingClientRect();
   if (pointerY < panelRect.top + 56) scrollPanel.scrollBy({ top: -14 });
   if (pointerY > panelRect.bottom - 56) scrollPanel.scrollBy({ top: 14 });
-}
-
-function orderedPhaseIdsFromDrag(active) {
-  const orderedIds = [];
-  Array.from(active.track.children).forEach((child) => {
-    if (child === active.placeholder) {
-      orderedIds.push(active.phaseId);
-      return;
-    }
-    if (child === active.card || !child.matches?.(".phase-progress-step")) return;
-    orderedIds.push(child.dataset.phaseId || "");
-  });
-  return orderedIds.filter(Boolean);
 }
 
 function clearWorkOrderPhaseDrag(active = activeWorkOrderPhaseDrag) {
@@ -11427,6 +11419,11 @@ function handleWorkOrderPhasePointerDown(event) {
   const order = findWorkOrderByAnyId(track?.dataset.orderId || "");
   if (!card || !track || !canReorderWorkOrderPhases(order)) return;
 
+  const initialPhaseIds = workOrderPhases(order).map(phaseReorder.phaseIdentity);
+  const phaseId = card.dataset.phaseId || "";
+  const fromIndex = initialPhaseIds.indexOf(phaseId);
+  if (fromIndex < 0) return;
+
   event.preventDefault();
   handle.focus({ preventScroll: true });
   handle.setPointerCapture?.(event.pointerId);
@@ -11434,8 +11431,11 @@ function handleWorkOrderPhasePointerDown(event) {
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
-    phaseId: card.dataset.phaseId || "",
+    phaseId,
     orderId: order.id,
+    initialPhaseIds,
+    fromIndex,
+    toIndex: fromIndex,
     handle,
     card,
     track,
@@ -11459,7 +11459,19 @@ function handleWorkOrderPhasePointerMove(event) {
 function handleWorkOrderPhasePointerUp(event) {
   const active = activeWorkOrderPhaseDrag;
   if (!active || event.pointerId !== active.pointerId) return;
-  const orderedPhaseIds = active.dragging ? orderedPhaseIdsFromDrag(active) : [];
+  let orderedPhaseIds = [];
+  if (active.dragging) {
+    try {
+      orderedPhaseIds = phaseReorder.phaseOrderAfterDrag({
+        phaseIds: active.initialPhaseIds,
+        fromIndex: active.fromIndex,
+        toIndex: active.toIndex,
+        dragging: true,
+      });
+    } catch (error) {
+      console.warn("[Lumen phases] invalid drop target", error);
+    }
+  }
   const orderId = active.orderId;
   clearWorkOrderPhaseDrag(active);
   if (orderedPhaseIds.length) reorderWorkOrderPhases(orderId, orderedPhaseIds);
@@ -11502,8 +11514,8 @@ function bindDocumentInteractionEvents() {
   document.addEventListener("keydown", handleWorkOrderPhaseReorderKeydown);
   document.addEventListener("pointerdown", handleWorkOrderPhasePointerDown);
   document.addEventListener("pointermove", handleWorkOrderPhasePointerMove, { passive: false });
-  document.addEventListener("pointerup", handleWorkOrderPhasePointerUp);
-  document.addEventListener("pointercancel", handleWorkOrderPhasePointerCancel);
+  window.addEventListener("pointerup", handleWorkOrderPhasePointerUp, true);
+  window.addEventListener("pointercancel", handleWorkOrderPhasePointerCancel, true);
   window.addEventListener("popstate", handleWorkOrderNavigationPopState);
   window.__lumenDocumentInteractionsAttached = true;
   debugInteraction("document-action-listener:bound", {
