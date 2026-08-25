@@ -135,7 +135,7 @@ Desplegar:
 - `email-worker`
 - `weekly-digest`
 - `daily-activity-digest`
-- `monthly-work-orders`
+- `monthly-work-orders` (tombstone `410 Gone`; no crea órdenes)
 
 Secrets requeridos en Supabase Functions:
 
@@ -152,7 +152,7 @@ Secrets requeridos en Supabase Functions:
 
 Para programar crons, usar uno de estos archivos:
 
-- `supabase/schedule_email_automation.sql` para weekly digest, daily digest, monthly orders y procesar emails.
+- `supabase/schedule_email_automation.sql` para weekly digest, daily digest y procesar emails. El script retira cualquier cron mensual heredado de OTs.
 - `supabase/schedule_daily_activity_digest.sql` solo si se quiere activar el resumen diario de manera independiente.
 
 No activar envios recurrentes al equipo completo sin probar primero con usuarios controlados.
