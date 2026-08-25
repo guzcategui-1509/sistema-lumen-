@@ -563,20 +563,6 @@ const notificationRuleCatalog = [
     recipients: "Responsables y creadores de OTs con cambios",
     enabled: true,
   },
-  {
-    id: "monthly-content-matrix",
-    title: "Matriz mensual de contenido",
-    channel: "Orden automática + correo",
-    recipients: "Cuentas + Generador/Creativo por marca",
-    enabled: true,
-  },
-  {
-    id: "monthly-paid-placement",
-    title: "Colocación mensual de pauta",
-    channel: "Orden automática + correo",
-    recipients: "Cuentas + Medios/Pauta por marca",
-    enabled: true,
-  },
 ];
 
 const weeklyDigestConfig = {
@@ -1153,6 +1139,7 @@ const workOrderCategoryOptions = {
   cotizacion: "Cotización",
   diseno: "Diseño",
   edicion: "Edición",
+  pauta: "Pauta",
   produccion: "Producción",
 };
 
@@ -9018,8 +9005,6 @@ const notificationRuleTypeMap = {
   overdue: ["overdue"],
   "weekly-digest": ["weekly_digest"],
   "daily-activity-digest": ["daily_digest"],
-  "monthly-content-matrix": ["assignment"],
-  "monthly-paid-placement": ["assignment"],
 };
 
 function normalizeEmailStatus(value) {
@@ -9271,16 +9256,6 @@ function renderNotifications() {
                 <div class="mini-card">
                   <strong>5. Automatizacion</strong>
                   <span class="muted">El estado técnico superior muestra la evidencia disponible de ejecuciones.</span>
-                </div>
-                <div class="mini-card">
-                  <strong>6. Matriz mensual</strong>
-                  <span class="muted">El 25 se crean OTs para la matriz de contenido del mes objetivo, excepto Proyectos, Pitch, Constructivos, Lumen Podcast y Bonafont.</span>
-                  <button class="button-ghost small" data-action="run-monthly-content-matrix">Probar matrices</button>
-                </div>
-                <div class="mini-card">
-                  <strong>7. Colocacion de pauta</strong>
-                  <span class="muted">Se crean OTs de pauta para marcas activas, excepto Constructivos, Lumen, Proyectos y Pitch.</span>
-                  <button class="button-ghost small" data-action="run-monthly-paid-placement">Probar pauta</button>
                 </div>
               </div>
               <div class="admin-note">
@@ -11685,8 +11660,6 @@ async function handleAction(action, id, actionElement = null) {
     "send-email-queue": () => sendEmailQueue(),
     "run-daily-digest-now": () => runDailyDigestNow(),
     "run-weekly-digest-now": () => runWeeklyDigestNow(),
-    "run-monthly-content-matrix": () => runMonthlyWorkOrderAutomation("content_matrix"),
-    "run-monthly-paid-placement": () => runMonthlyWorkOrderAutomation("paid_placement"),
     "new-production-planner-item": () => openProductionPlannerItem(),
     "edit-production-planner-item": () => openProductionPlannerItem(id),
     "cancel-production-planner-edit": () => cancelProductionPlannerEdit(),
@@ -14547,7 +14520,6 @@ function edgeFunctionFailureMessage(functionName, details) {
     "daily-activity-digest": "resumen diario",
     "weekly-digest": "resumen semanal",
     "email-worker": "envío de correos pendientes",
-    "monthly-work-orders": "automatización mensual",
   };
   const label = names[functionName] || functionName;
   const bodyText = typeof details.body === "string" ? details.body : JSON.stringify(details.body || {});
@@ -14607,25 +14579,6 @@ async function invokeEmailFunction(functionName, successMessage, extraBody = {},
     showToast(edgeFunctionFailureMessage(functionName, details));
     return null;
   }
-}
-
-async function runMonthlyWorkOrderAutomation(kind) {
-  const labels = {
-    content_matrix: "matrices de contenido",
-    paid_placement: "órdenes de pauta",
-  };
-  const confirmed = window.confirm(
-    `Esto creará ${labels[kind] || "órdenes automáticas"} y dejará los correos preparados para los responsables. ¿Continuar?`,
-  );
-  if (!confirmed) return null;
-
-  const data = await invokeEmailFunction(
-    "monthly-work-orders",
-    (result) => `${result?.created ?? 0} OTs creadas y ${result?.emails_queued ?? 0} correos preparados`,
-    { kind },
-  );
-  if (data) await loadSupabaseData();
-  return data;
 }
 
 async function queueWeeklyDigest() {

@@ -46,7 +46,7 @@ En `config.js`, `appUrl` es opcional. Si se llena con la URL de Vercel, los boto
 - `weekly-digest`: prepara el resumen semanal para todo el equipo interno activo.
 - `daily-activity-digest`: prepara un solo correo por persona con la actividad de sus OTs en las últimas 24 horas.
 - `email-worker`: envia los correos preparados con Brevo.
-- `monthly-work-orders`: crea OTs automaticas mensuales y deja sus correos listos.
+- `monthly-work-orders`: endpoint deshabilitado que responde `410 Gone` para neutralizar cron o clientes antiguos. No crea OTs.
 
 Desde la app:
 
@@ -73,8 +73,8 @@ supabase functions deploy email-worker --no-verify-jwt
 supabase functions deploy monthly-work-orders --no-verify-jwt
 ```
 
-Usamos `--no-verify-jwt` porque las funciones validan internamente dos modos seguros:
-usuario autorizado desde la app, o `x-cron-secret` para automatizaciones.
+Usamos `--no-verify-jwt` porque las funciones activas validan internamente dos modos seguros:
+usuario autorizado desde la app, o `x-cron-secret` para automatizaciones. `monthly-work-orders` permanece desplegada solo como tombstone sin efectos.
 
 ## Automatizacion lunes 8:00
 
