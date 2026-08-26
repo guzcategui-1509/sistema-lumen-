@@ -17,6 +17,20 @@
     return phases.slice().sort(comparePhases);
   }
 
+  function getInsertionIndex(pointerY, rects = []) {
+    if (!Number.isFinite(pointerY) || !Array.isArray(rects)) return null;
+
+    for (let index = 0; index < rects.length; index += 1) {
+      const rect = rects[index];
+      const top = rect?.top;
+      const bottom = rect?.bottom;
+      if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= top) return null;
+      if (pointerY < top + (bottom - top) / 2) return index;
+    }
+
+    return rects.length;
+  }
+
   function movePhase(items = [], fromIndex, toIndex) {
     const nextItems = items.slice();
     const normalizedFromIndex = Number(fromIndex);
@@ -93,6 +107,7 @@
     applyPhaseOrder,
     commitPhaseOrder,
     comparePhases,
+    getInsertionIndex,
     hasSamePhaseOrder,
     movePhase,
     phaseOrderAfterDrag,
