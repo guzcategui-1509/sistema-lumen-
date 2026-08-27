@@ -11286,6 +11286,8 @@ function beginWorkOrderPhaseDrag(active, pointerY) {
   active.track.classList.add("is-reordering");
   active.handle.classList.add("is-grabbing");
   active.handle.setAttribute("aria-pressed", "true");
+  active.sourceWasHidden = active.card.hidden;
+  active.card.hidden = true;
   document.body.classList.add("is-phase-reordering");
   document.body.appendChild(ghost);
 
@@ -11296,25 +11298,28 @@ function beginWorkOrderPhaseDrag(active, pointerY) {
 }
 
 function updateWorkOrderPhaseDropTarget(active, pointerY) {
+  active.toIndex = null;
+  active.placeholder?.remove();
+  if (!active.track?.isConnected || !active.card?.isConnected || !active.placeholder) return null;
+
   const cards = Array.from(active.track.querySelectorAll(".phase-progress-step"))
     .filter((card) => card !== active.card);
-  const beforeCard = cards.find((card) => {
-    const rect = card.getBoundingClientRect();
-    return pointerY < rect.top + rect.height / 2;
-  });
-  if (beforeCard) {
-    active.toIndex = cards.indexOf(beforeCard);
-    active.track.insertBefore(active.placeholder, beforeCard);
-  } else {
-    active.toIndex = cards.length;
-    active.track.appendChild(active.placeholder);
-  }
+  const rects = cards.map((card) => card.getBoundingClientRect());
+  const targetIndex = phaseReorder.getInsertionIndex(pointerY, rects);
+  if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex > cards.length) return null;
 
+  active.track.insertBefore(active.placeholder, cards[targetIndex] || null);
+  active.toIndex = targetIndex;
+  return targetIndex;
+}
+
+function autoScrollWorkOrderPhaseDrawer(active, pointerY) {
+  if (!Number.isFinite(pointerY)) return;
   const scrollPanel = active.track.closest(".drawer-panel");
   if (!scrollPanel) return;
   const panelRect = scrollPanel.getBoundingClientRect();
-  if (pointerY < panelRect.top + 56) scrollPanel.scrollBy({ top: -14 });
-  if (pointerY > panelRect.bottom - 56) scrollPanel.scrollBy({ top: 14 });
+  if (pointerY < panelRect.top + 56) scrollPanel.scrollBy({ top: -14, behavior: "auto" });
+  if (pointerY > panelRect.bottom - 56) scrollPanel.scrollBy({ top: 14, behavior: "auto" });
 }
 
 function clearWorkOrderPhaseDrag(active = activeWorkOrderPhaseDrag) {
@@ -11325,6 +11330,7 @@ function clearWorkOrderPhaseDrag(active = activeWorkOrderPhaseDrag) {
     // Pointer capture may already have ended when the browser cancels a touch gesture.
   }
   active.card.classList.remove("is-drag-source");
+  active.card.hidden = Boolean(active.sourceWasHidden);
   active.track.classList.remove("is-reordering");
   active.handle.classList.remove("is-grabbing");
   active.handle.setAttribute("aria-pressed", "false");
@@ -11359,7 +11365,7 @@ function handleWorkOrderPhasePointerDown(event) {
     orderId: order.id,
     initialPhaseIds,
     fromIndex,
-    toIndex: fromIndex,
+    toIndex: null,
     handle,
     card,
     track,
@@ -11377,6 +11383,7 @@ function handleWorkOrderPhasePointerMove(event) {
   event.preventDefault();
   if (!active.dragging) beginWorkOrderPhaseDrag(active, event.clientY);
   active.ghost.style.transform = `translate3d(0, ${event.clientY - active.startY}px, 0)`;
+  autoScrollWorkOrderPhaseDrawer(active, event.clientY);
   updateWorkOrderPhaseDropTarget(active, event.clientY);
 }
 
@@ -11386,12 +11393,15 @@ function handleWorkOrderPhasePointerUp(event) {
   let orderedPhaseIds = [];
   if (active.dragging) {
     try {
-      orderedPhaseIds = phaseReorder.phaseOrderAfterDrag({
-        phaseIds: active.initialPhaseIds,
-        fromIndex: active.fromIndex,
-        toIndex: active.toIndex,
-        dragging: true,
-      });
+      const finalTargetIndex = updateWorkOrderPhaseDropTarget(active, event.clientY);
+      if (Number.isInteger(finalTargetIndex)) {
+        orderedPhaseIds = phaseReorder.phaseOrderAfterDrag({
+          phaseIds: active.initialPhaseIds,
+          fromIndex: active.fromIndex,
+          toIndex: finalTargetIndex,
+          dragging: true,
+        });
+      }
     } catch (error) {
       console.warn("[Lumen phases] invalid drop target", error);
     }

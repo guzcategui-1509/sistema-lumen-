@@ -1,12 +1,24 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   applyPhaseOrder,
   commitPhaseOrder,
+  getInsertionIndex,
   movePhase,
   phaseOrderAfterDrag,
   sortedPhases,
 } = require("../phase-reorder.js");
+
+const appSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
+
+function appFunctionSource(functionName) {
+  const start = appSource.indexOf(`function ${functionName}`);
+  assert.notEqual(start, -1, `${functionName} must exist`);
+  const nextFunction = appSource.indexOf("\nfunction ", start + 1);
+  return appSource.slice(start, nextFunction === -1 ? undefined : nextFunction);
+}
 
 function phase(id, sortOrder, overrides = {}) {
   return {
@@ -41,10 +53,81 @@ test("reorders the fourth phase into the first position", () => {
 test("moves phases by insertion index without off-by-one errors", () => {
   const ids = ["a", "b", "c", "d"];
 
+  assert.deepEqual(movePhase(ids, 0, 1), ["b", "a", "c", "d"]);
+  assert.deepEqual(movePhase(ids, 0, 3), ["b", "c", "d", "a"]);
+  assert.deepEqual(movePhase(ids, 3, 0), ["d", "a", "b", "c"]);
+  assert.deepEqual(movePhase(ids, 3, 1), ["a", "d", "b", "c"]);
+  assert.deepEqual(movePhase(ids, 1, 2), ["a", "c", "b", "d"]);
   assert.deepEqual(movePhase(ids, 0, 2), ["b", "c", "a", "d"]);
   assert.deepEqual(movePhase(ids, 2, 0), ["c", "a", "b", "d"]);
   assert.deepEqual(movePhase(ids, 1, 3), ["a", "c", "d", "b"]);
-  assert.deepEqual(movePhase(ids, 3, 1), ["a", "d", "b", "c"]);
+});
+
+test("calculates insertion targets from remaining-card midpoints", () => {
+  const remainingRects = [
+    { top: 100, bottom: 180 },
+    { top: 190, bottom: 270 },
+    { top: 280, bottom: 360 },
+  ];
+
+  assert.equal(getInsertionIndex(90, remainingRects), 0);
+  assert.equal(getInsertionIndex(140, remainingRects), 1);
+  assert.equal(getInsertionIndex(185, remainingRects), 1);
+  assert.equal(getInsertionIndex(230, remainingRects), 2);
+  assert.equal(getInsertionIndex(360, remainingRects), remainingRects.length);
+});
+
+test("source geometry is excluded from the insertion target", () => {
+  const sourceRect = { top: 100, bottom: 180 };
+  const remainingRects = [
+    { top: 190, bottom: 270 },
+    { top: 280, bottom: 360 },
+    { top: 370, bottom: 450 },
+  ];
+
+  assert.equal(getInsertionIndex(320, remainingRects), 2);
+  assert.equal(getInsertionIndex(320, [sourceRect, ...remainingRects]), 3);
+});
+
+test("recalculation uses geometry after drawer scrolling", () => {
+  const beforeScroll = [
+    { top: 200, bottom: 280 },
+    { top: 290, bottom: 370 },
+    { top: 380, bottom: 460 },
+  ];
+  const afterScroll = beforeScroll.map((rect) => ({
+    top: rect.top - 100,
+    bottom: rect.bottom - 100,
+  }));
+
+  assert.equal(getInsertionIndex(325, beforeScroll), 1);
+  assert.equal(getInsertionIndex(325, afterScroll), 3);
+});
+
+test("invalid pointer or card geometry fails closed", () => {
+  assert.equal(getInsertionIndex(Number.NaN, [{ top: 10, bottom: 20 }]), null);
+  assert.equal(getInsertionIndex(null, [{ top: 10, bottom: 20 }]), null);
+  assert.equal(getInsertionIndex(15, [{ top: 10, bottom: 10 }]), null);
+  assert.equal(getInsertionIndex(15, [{ top: 10, bottom: Number.NaN }]), null);
+});
+
+test("drag integration measures stable geometry and recalculates on pointerup", () => {
+  const beginDrag = appFunctionSource("beginWorkOrderPhaseDrag");
+  const updateTarget = appFunctionSource("updateWorkOrderPhaseDropTarget");
+  const pointerMove = appFunctionSource("handleWorkOrderPhasePointerMove");
+  const pointerUp = appFunctionSource("handleWorkOrderPhasePointerUp");
+  const clearDrag = appFunctionSource("clearWorkOrderPhaseDrag");
+
+  assert.match(beginDrag, /active\.card\.hidden = true/);
+  assert.match(clearDrag, /active\.card\.hidden = Boolean\(active\.sourceWasHidden\)/);
+  assert.ok(updateTarget.indexOf("active.placeholder?.remove()") < updateTarget.indexOf("getBoundingClientRect()"));
+  assert.match(updateTarget, /filter\(\(card\) => card !== active\.card\)/);
+  assert.match(updateTarget, /phaseReorder\.getInsertionIndex\(pointerY, rects\)/);
+  assert.ok(pointerMove.indexOf("autoScrollWorkOrderPhaseDrawer") < pointerMove.indexOf("updateWorkOrderPhaseDropTarget"));
+  assert.match(pointerUp, /updateWorkOrderPhaseDropTarget\(active, event\.clientY\)/);
+  assert.match(pointerUp, /if \(Number\.isInteger\(finalTargetIndex\)\)/);
+  assert.match(pointerUp, /toIndex: finalTargetIndex/);
+  assert.doesNotMatch(pointerUp, /toIndex: active\.toIndex/);
 });
 
 test("rejects invalid move indexes without mutating the original order", () => {
